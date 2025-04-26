@@ -1,0 +1,74 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = "postgresql://neondb_owner:npg_BAOlRDb87PZw@ep-frosty-boat-a1w2k2yn-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
+}
+
+model User {
+  id        Int       @id @default(autoincrement())
+  email     String    @unique
+  password  String
+  role      String    @default("user")
+  image     String?
+  name      String?
+  createdAt DateTime  @default(now())
+  reviews   Review[]
+  products  Product[] // optional: lets you access products for this seller
+}
+
+model Product {
+  id          Int      @id @default(autoincrement())
+  title       String
+  description String
+  price       Float
+  images      String[]
+  isPublished Boolean  @default(false)
+  isFeatured  Boolean  @default(false)
+  slug        String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sellerId Int
+  seller   User @relation(fields: [sellerId], references: [id])
+
+  categories Category[] @relation("ProductCategories") // ✅ FIXED
+  variants   Variant[]
+  reviews    Review[]
+}
+
+model Variant {
+  id        Int     @id @default(autoincrement())
+  size      String?
+  color     String?
+  price     Float
+  stock     Int
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model Category {
+  id       Int       @id @default(autoincrement())
+  name     String    @unique
+  products Product[] @relation("ProductCategories")
+}
+
+model Review {
+  id        Int      @id @default(autoincrement())
+  rating    Int
+  comment   String?
+  userId    Int
+  productId Int
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+}
