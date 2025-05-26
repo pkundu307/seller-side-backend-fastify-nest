@@ -7,9 +7,14 @@ import { AuthModule } from './auth/auth.module';
 import { CheckModule } from './check/check.module';
 import { ProfileModule } from './profile/profile.module';
 import { ProductsModule } from './products/products.module';
+import { BusinessModule } from './business/business.module';
+import { KeepAliveService } from './utils/keep-alive.service';
+import { PrismaService } from './prisma/prisma.service';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
+    ScheduleModule.forRoot(),
     ConfigModule.forRoot(),
     PrismaModule,
     UserModule,
@@ -23,7 +28,10 @@ import { ProductsModule } from './products/products.module';
     CheckModule,
     ProfileModule,
     ProductsModule,
+    BusinessModule,
     
   ],
+  providers: [KeepAliveService, PrismaService],
+
 })
 export class AppModule {}

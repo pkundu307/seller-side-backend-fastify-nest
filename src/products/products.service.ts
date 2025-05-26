@@ -5,8 +5,8 @@ import { PrismaService } from 'src/prisma/prisma.service';
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(data: any, sellerId: number) {
-    const {
+  async create(data: any) {
+    let {
       title,
       description,
       price,
@@ -14,6 +14,8 @@ export class ProductsService {
       categories,
       variants,
     } = data;
+    console.log(price);
+    price = Number(price);
 
     // create or connect categories
     const categoryConnections = categories.map((catName) => ({
@@ -28,7 +30,7 @@ export class ProductsService {
         price,
         images,
         slug: title.toLowerCase().replace(/\s+/g, '-'),
-        sellerId,
+       businessId: data.userId,
         categories: {
           connectOrCreate: categoryConnections,
         },
@@ -42,4 +44,13 @@ export class ProductsService {
       },
     });
   }
+  async findAll() {
+    return this.prisma.product.findMany({
+      include: {
+        categories: true,
+        variants: true,
+      },
+    });
+  }
+
 }
