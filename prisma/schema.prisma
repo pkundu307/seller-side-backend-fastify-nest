@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = "postgresql://neondb_owner:npg_BAOlRDb87PZw@ep-frosty-boat-a1w2k2yn-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -36,27 +36,75 @@ model Business {
   businessId  String?     @unique @default(uuid())
   products Product[]  // Products under this business
   reviews  Review[]   // Optional: can infer reviews through products
+  createdAt DateTime   @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  
 }
 
 model Product {
-  id          Int        @id @default(autoincrement())
-  title       String
-  description String
-  price       Float
-  images      String[]
-  isPublished Boolean     @default(false)
-  isFeatured  Boolean     @default(false)
-  slug        String      @unique
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id            Int        @id @default(autoincrement())
+  title         String
+  description   String
+  price         Float
+  images        String[]
+  slug          String      @unique
 
-  businessId Int
-  business   Business     @relation(fields: [businessId], references: [id])
+  businessId    Int
+  business      Business     @relation(fields: [businessId], references: [id])
 
-  categories Category[]   @relation("ProductCategories")
-  variants   Variant[]
-  reviews    Review[]
+  categories    Category[]   @relation("ProductCategories")
+  variants      Variant[]
+  reviews       Review[]
+
+  isPublished       Boolean?   @default(false)
+  isFeatured        Boolean?   @default(false)
+  createdAt         DateTime?  @default(now())
+  updatedAt         DateTime?  @updatedAt
+
+  itemType               String?   @db.VarChar(128)
+  itemCategory           String?   @db.VarChar(128)
+  itemCode               String?   @db.VarChar(128)
+  itemDescription        String?
+  isMrpEnabled           Boolean?
+  isWholesaleEnabled     Boolean?
+  isSerializationEnabled Boolean?
+  isBatchingEnabled      Boolean?
+  sellingPrice           Decimal?
+  sellingPriceType       String?   @db.VarChar(64)
+  purchasePrice          Decimal?
+  purchasePriceType      String?   @db.VarChar(64)
+  mrp                    Decimal?
+  wholesalePrice         Decimal?
+  wholesalePriceType     String?   @db.VarChar(64)
+  wholesaleQuantity      Int?
+  discountPercent        Decimal?
+  discountAmount         Decimal?
+  hsnCode                String?   @db.VarChar(128)
+  sacCode                String?   @db.VarChar(128)
+  tax                    String?   @db.VarChar(128)
+  cess                   String?   @db.VarChar(128)
+  unit                   String?   @db.VarChar(128)
+  isSecondUnitEnabled    Boolean?
+  secondUnit             String?   @db.VarChar(128)
+  conversionRate         Decimal?
+  openingStock           Decimal?
+  openingStockDate       DateTime?
+  closingStock           Decimal?
+  isMinStockAlertEnabled Boolean?
+  minStockCount          Decimal?
+  itemImage              String?
+  serialNoLabel          String?
+
+  itemBatchingId         String?
+  itemBatching           ItemBatching? @relation(fields: [itemBatchingId], references: [id])
+
+  itemSerialisationId    String?
+  itemSerialisation      ItemSerialisation? @relation(fields: [itemSerialisationId], references: [id])
+
+  itemUnitId             String?
+  itemUnit               ItemUnit? @relation(fields: [itemUnitId], references: [id])
 }
+
 
 model Variant {
   id        Int      @id @default(autoincrement())
@@ -70,10 +118,15 @@ model Variant {
 }
 
 model Category {
-  id       Int       @id @default(autoincrement())
-  name     String    @unique
-  products Product[] @relation("ProductCategories")
+  id         Int         @id @default(autoincrement())
+  name       String
+  parentId   Int?        
+  parent     Category?   @relation("CategoryToSub", fields: [parentId], references: [id])
+  children   Category[]  @relation("CategoryToSub")
+
+  products   Product[]   @relation("ProductCategories")
 }
+
 
 model Review {
   id        Int      @id @default(autoincrement())
@@ -89,4 +142,215 @@ model Review {
   user      User     @relation(fields: [userId], references: [id])
   product   Product  @relation(fields: [productId], references: [id])
   business  Business @relation(fields: [businessId], references: [id])
+}
+
+model CustomField {
+  id        String   @id @default(uuid())
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Optional: relation back to Sale
+  saleId    String?   @unique
+  sale      Sale?    @relation(fields: [saleId], references: [id])
+}
+
+model Sale {
+  id                          String   @id @default(uuid())
+  businessId                  String
+  partyId                     String
+  saleType                    String   @db.VarChar(128)
+  invoicePrefix               String   @db.VarChar(128)
+  invoiceNo                   Int
+  invoiceDate                 DateTime
+  isDueDateEnabled            Boolean
+  dueDate                     DateTime
+  paymentTerm                 Int
+  partyType                   String   @db.VarChar(128)
+  partyName                   String   @db.VarChar(256)
+  businessName                String   @db.VarChar(256)
+  billingAddress              String
+  shippingAddress             String
+  placeOfSupply               String   @db.VarChar(128)
+  phoneNo                     String   @db.VarChar(36)
+  taxId                       String   @db.VarChar(128)
+  panNo                       String   @db.VarChar(128)
+  isDiscountAfterTaxEnabled   Boolean
+  discountPercent             Decimal
+  discountAmount              Decimal
+  totalTaxableAmount          Decimal
+  totalTaxAmount              Decimal
+  isAutoRoundoffEnabled       Boolean
+  roundoffType                String   @db.VarChar(64)
+  roundoffAmount              Decimal
+  totalAmount                 Decimal
+  isSettled                   Boolean
+  balanceAmount               Decimal
+  termCondition               String
+  notes                       String
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+  isScanItemEnabled           Boolean
+  isConverted                 Boolean
+
+  // Embedded or relational fields
+  saleItems                   SaleItem[] // You'll define this model
+  saleTaxes                   SaleTax[]  // You'll define this model
+  saleAdditionalCharges       SaleAdditionalCharge[] // You'll define this model
+  salePaymentModes            SalePaymentMode[] // You'll define this model
+  customField                 CustomField? // Define this model
+
+  // Relations
+  party                       String
+}
+model SaleItem {
+  saleItemId             String   @id @default(uuid())
+  itemId                 String
+  itemName               String   @db.VarChar(512)
+  itemDescription        String
+  hsnCode                String   @db.VarChar(128)
+  sacCode                String   @db.VarChar(128)
+  batchNo                String   @db.VarChar(128)
+  manufactureDate        DateTime
+  expiryDate             DateTime
+  quantity               Decimal
+  price                  Decimal
+  priceType              String   @db.VarChar(64)
+  unit                   String   @db.VarChar(128)
+  discountPercent        Decimal
+  discountAmount         Decimal
+  taxableAmount          Decimal
+  tax                    String   @db.VarChar(128)
+  taxAmount              Decimal
+  cess                   String   @db.VarChar(128)
+  cessAmount             Decimal
+  amount                 Decimal
+  isMrpEnabled           Boolean
+  isWholesaleEnabled     Boolean
+  isSerialisationEnabled Boolean
+  isBatchingEnabled      Boolean
+  sellingPrice           Decimal
+  sellingPriceType       String   @db.VarChar(64)
+  purchasePrice          Decimal
+  purchasePriceType      String   @db.VarChar(64)
+  mrp                    Decimal
+  wholesalePrice         Decimal
+  wholesalePriceType     String   @db.VarChar(64)
+  wholesaleQuantity      Decimal
+  itemCode               String   @db.VarChar(128)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  // Optional relation back to Sale (you can uncomment and link once you add the field)
+  saleId                String
+  sale                  Sale     @relation(fields: [saleId], references: [id])
+}
+model SaleAdditionalCharge {
+  saleAdditionalChargeId String   @id @default(uuid())
+  name                   String   @db.VarChar(256)
+  amount                 Decimal
+  tax                    String   @db.VarChar(128)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  // Optional relation to Sale (add saleId field if needed later)
+  saleId                 String
+  sale                   Sale @relation(fields: [saleId], references: [id])
+}
+model SalePaymentMode {
+  salePaymentModeId   String   @id @default(uuid())
+  bankCashChequeId    String
+  accountName         String   @db.VarChar(256)
+  paymentMode         String   @db.VarChar(128)
+  amount              Decimal
+  ifsc                String   @db.VarChar(20)
+  acNo                String   @db.VarChar(20)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Optional relation to Sale if needed
+  saleId              String
+  sale                Sale @relation(fields: [saleId], references: [id])
+}
+model SaleTax {
+  saleTaxId      String   @id @default(uuid())
+  taxRate        Decimal
+  taxableAmount  Decimal
+  cgst           Decimal
+  sgst           Decimal
+  igst           Decimal
+  cess           Decimal
+  total          Decimal
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  hsnCode        String   @db.VarChar(128)
+  sacCode        String   @db.VarChar(128)
+
+  // Optional relation to Sale (uncomment and customize as needed)
+  saleId         String
+  sale           Sale @relation(fields: [saleId], references: [id])
+}
+
+model ItemBatching {
+  id                    String   @id @default(uuid()) @map("item_batching_id")
+  batchNo               String   @db.VarChar(128)
+  manufactureDate       DateTime
+  expiryDate            DateTime
+  sellingPrice          Decimal
+  sellingPriceType      String   @db.VarChar(64)
+  purchasePrice         Decimal
+  purchasePriceType     String   @db.VarChar(64)
+  mrp                   Decimal
+  unit                  String   @db.VarChar(128)
+  isSecondUnitEnabled   Boolean
+  secondUnit            String   @db.VarChar(128)
+  conversionRate        Decimal
+  openingStock          Decimal
+  openingStockDate      DateTime
+  closingStock          Decimal
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Optional reverse relation if Item references ItemBatching
+products Product[]
+}
+model ItemSerialisation {
+  id             String   @id @default(uuid()) @map("item_serialisation_id")
+  serialNo       String   @db.VarChar(128)
+  serialNoDate   DateTime
+  isAvailable    Boolean
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Optional reverse relation if needed
+  products       Product[]
+}
+model ItemUnit {
+  id         String   @id @default(uuid())
+  businessId String
+  unitName   String   @db.VarChar(128)
+  isEnabled  Boolean
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Optional relation to Business or Item
+  products   Product[] // If you want to link items to this unit
+  // business   Business @relation(fields: [businessId], references: [id])
+}
+model StockActivity {
+  id            String   @id @default(uuid())
+  businessId    String
+  itemId        String
+  activityType  String   @db.VarChar(128)
+  invoicePrefix String   @db.VarChar(128)
+  invoiceNo     Int
+  quantity      Decimal
+  closingStock  Decimal
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Optional foreign key references
+  // item         Item     @relation(fields: [itemId], references: [id])
+  // business     Business @relation(fields: [businessId], references: [id])
 }

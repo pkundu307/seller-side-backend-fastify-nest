@@ -11,6 +11,7 @@ import { BusinessModule } from './business/business.module';
 import { KeepAliveService } from './utils/keep-alive.service';
 import { PrismaService } from './prisma/prisma.service';
 import { ScheduleModule } from '@nestjs/schedule';
+import { CategoryModule } from './category/category.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     ProfileModule,
     ProductsModule,
     BusinessModule,
+    CategoryModule,
     
   ],
   providers: [KeepAliveService, PrismaService],
