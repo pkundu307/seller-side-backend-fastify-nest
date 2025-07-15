@@ -1,35 +1,35 @@
-import { Controller, Post, Get, Body, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  UseGuards,
+  Req,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { BusinessService } from './business.service';
-import { CreateBusinessDto } from './dto/business.dto';
-import { AuthGuard } from '@nestjs/passport';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { CreateBusinessDto } from './dto/create-business.dto';
+import { FastifyRequest } from 'fastify';
 
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-
-@ApiTags('business')
-@ApiBearerAuth()
-@UseGuards(AuthGuard('jwt'))
 @Controller('business')
 export class BusinessController {
   constructor(private readonly businessService: BusinessService) {}
 
-  @Post()
-  @ApiOperation({ summary: 'Create a new business' })
-  async createBusiness(@Req() req, @Body() dto: CreateBusinessDto) {
-    const ownerId = req.user.id; // Comes from JWT payload
-    console.log('====================================');
-    console.log(req.user.id);
-    console.log('====================================');
-    return this.businessService.createBusiness(dto, ownerId);
+  @UseGuards(JwtAuthGuard)
+@Post()
+@HttpCode(HttpStatus.CREATED)
+async create(@Body() dto: CreateBusinessDto, @Req() req: FastifyRequest) {
+  const user = req.user as any;
+  return this.businessService.createBusiness(dto, user.id);
+}
+
+
+  @UseGuards(JwtAuthGuard)
+  @Get('/mine')
+  async getAll(@Req() req: FastifyRequest) {
+    const user = req.user as any;
+    return this.businessService.getAllBusinesses(user.id);
   }
-
-  
-
-  @Get('mine')
-  @ApiOperation({ summary: 'Get businesses owned by the logged-in user' })
-  async getMyBusinesses(@Req() req) {
-    const ownerId = req.user.sub;
-    return this.businessService.getMyBusinesses(ownerId);
-  }
-
-  
 }

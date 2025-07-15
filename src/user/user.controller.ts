@@ -1,31 +1,41 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, Get, Req } from '@nestjs/common';
 import { UserService } from './user.service';
-import { CreateUserDto, LoginUserDto } from './dto/user.dto';
+import { CreateUserDto } from './dto/create-user.dto';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { LoginUserDto } from './dto/login-user.dto';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { FastifyRequest } from 'fastify';
 
-@ApiTags('users')
+@ApiTags('Users')
 @Controller('users')
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
-  @Post()
-  @ApiOperation({ summary: 'Create a new user' })
-  @ApiResponse({ status: 201, description: 'User created successfully' })
-  @ApiResponse({ status: 400, description: 'User already exists' })
-  async create(@Body() createUserDto: CreateUserDto) {
-    const user = await this.userService.createUser(createUserDto);
-
-    // Avoid returning password to client
-    const { password, ...safeUser } = user;
-    return safeUser;
+  @Post('register')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Register a new user' })
+  @ApiResponse({
+    status: 201,
+    description: 'The user has been successfully created.',
+  })
+  @ApiResponse({ status: 400, description: 'Bad Request - Invalid input data.' })
+  @ApiResponse({ status: 409, description: 'Conflict - Email already exists.' })
+  async register(@Body() createUserDto: CreateUserDto) {
+    return this.userService.create(createUserDto);
   }
 
-  @Get()
-  @ApiOperation({ summary: 'Get all users' })
-  async findAll() {
-    const users = await this.userService.getUsers();
-
-    // Strip passwords from users before returning
-    return users.map(({ password, ...rest }) => rest);
+   @Post('login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Login user' })
+  @ApiResponse({ status: 200, description: 'Login successful' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async login(@Body() loginUserDto: LoginUserDto) {
+    return this.userService.loginUser(loginUserDto.email, loginUserDto.password);
+  }
+   @UseGuards(JwtAuthGuard)
+  @Get('profile')
+  async getProfile(@Req() req: FastifyRequest) {
+    const user = req.user as any;
+    return this.userService.getUserProfile(user.id);
   }
 }

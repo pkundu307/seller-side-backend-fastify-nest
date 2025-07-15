@@ -11,7 +11,7 @@ export class KeepAliveService {
   @Cron('*/4 * * * *') // every 4 minutes
   async keepDbAlive() {
     try {
-      await this.prisma.user.findFirst(); // simple DB call
+      await this.prisma.user.findMany(); // simple DB call
       console.log('✅ DB ping successful');
     } catch (err) {
       console.error('❌ DB keep-alive failed:', err.message);

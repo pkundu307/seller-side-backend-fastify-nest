@@ -8,7 +8,7 @@ datasource db {
 }
 
 model User {
-  id         Int        @id @default(autoincrement())
+  id         String     @id @default(uuid())
   email      String     @unique
   password   String
   role       String     @default("user") // user, seller, admin
@@ -20,8 +20,9 @@ model User {
   reviews    Review[]   // A user can write multiple reviews
 }
 
+
 model Business {
-  id          Int        @id @default(autoincrement())
+  id          String     @id @default(uuid())
   name        String
   gstNumber   String     @unique
   address     String
@@ -31,38 +32,39 @@ model Business {
   postalCode  String
   phone       String
   isVerified  Boolean    @default(false)
-  ownerId Int
-  owner   User       @relation(fields: [ownerId], references: [id])
-  businessId  String?     @unique @default(uuid())
-  products Product[]  // Products under this business
-  reviews  Review[]   // Optional: can infer reviews through products
-  createdAt DateTime   @default(now())
-  updatedAt DateTime @default(now()) @updatedAt
   
+  ownerId     String
+  owner       User       @relation(fields: [ownerId], references: [id])
+  
+  products    Product[]  // Products under this business
+  reviews     Review[]   // Optional: can infer reviews through products
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @default(now()) @updatedAt
 }
 
+
 model Product {
-  id            Int        @id @default(autoincrement())
-  title         String
-  description   String
-  price         Float
-  images        String[]
-  slug          String      @unique
+  id                     String   @id @default(uuid())
+  title                  String
+  description            String
+  price                  Float
+  images                 String[]
+  slug                   String   @unique
 
-  businessId    Int
-  business      Business     @relation(fields: [businessId], references: [id])
+  businessId             String
+  business               Business @relation(fields: [businessId], references: [id])
 
-  categories    Category[]   @relation("ProductCategories")
-  variants      Variant[]
-  reviews       Review[]
+  variants               Variant[]
+  reviews                Review[]
 
-  isPublished       Boolean?   @default(false)
-  isFeatured        Boolean?   @default(false)
-  createdAt         DateTime?  @default(now())
-  updatedAt         DateTime?  @updatedAt
+  isPublished            Boolean?   @default(false)
+  isFeatured             Boolean?   @default(false)
+  createdAt              DateTime?  @default(now())
+  updatedAt              DateTime?  @updatedAt
 
   itemType               String?   @db.VarChar(128)
-  itemCategory           String?   @db.VarChar(128)
+  itemCategory           String
   itemCode               String?   @db.VarChar(128)
   itemDescription        String?
   isMrpEnabled           Boolean?
@@ -107,13 +109,13 @@ model Product {
 
 
 model Variant {
-  id        Int      @id @default(autoincrement())
+  id        String   @id @default(uuid())
   size      String?
   color     String?
   price     Float
   stock     Int
 
-  productId Int
+  productId String
   product   Product @relation(fields: [productId], references: [id])
 }
 
@@ -124,24 +126,23 @@ model Category {
   parent     Category?   @relation("CategoryToSub", fields: [parentId], references: [id])
   children   Category[]  @relation("CategoryToSub")
 
-  products   Product[]   @relation("ProductCategories")
 }
 
 
 model Review {
-  id        Int      @id @default(autoincrement())
-  rating    Int
-  comment   String?
+  id          String   @id @default(uuid())
+  rating      Int
+  comment     String?
 
-  userId    Int
-  productId Int
-  businessId Int
+  userId      String
+  productId   String
+  businessId  String
 
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 
-  user      User     @relation(fields: [userId], references: [id])
-  product   Product  @relation(fields: [productId], references: [id])
-  business  Business @relation(fields: [businessId], references: [id])
+  user        User     @relation(fields: [userId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
+  business    Business @relation(fields: [businessId], references: [id])
 }
 
 model CustomField {
@@ -160,6 +161,7 @@ model Sale {
   id                          String   @id @default(uuid())
   businessId                  String
   partyId                     String
+
   saleType                    String   @db.VarChar(128)
   invoicePrefix               String   @db.VarChar(128)
   invoiceNo                   Int
@@ -195,15 +197,16 @@ model Sale {
   isConverted                 Boolean
 
   // Embedded or relational fields
-  saleItems                   SaleItem[] // You'll define this model
-  saleTaxes                   SaleTax[]  // You'll define this model
-  saleAdditionalCharges       SaleAdditionalCharge[] // You'll define this model
-  salePaymentModes            SalePaymentMode[] // You'll define this model
-  customField                 CustomField? // Define this model
+  saleItems                   SaleItem[]
+  saleTaxes                   SaleTax[]
+  saleAdditionalCharges       SaleAdditionalCharge[]
+  salePaymentModes            SalePaymentMode[]
+  customField                 CustomField?
 
-  // Relations
+  // Possibly redundant — consider removing or renaming if unclear
   party                       String
 }
+
 model SaleItem {
   saleItemId             String   @id @default(uuid())
   itemId                 String

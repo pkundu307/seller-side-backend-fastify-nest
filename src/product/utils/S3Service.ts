@@ -1,9 +1,8 @@
 // src/products/util/S3Service.ts
-
+import { env } from 'process';
+import { Injectable } from '@nestjs/common';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
-import { Injectable } from '@nestjs/common';
-import { env } from 'process';
 
 @Injectable()
 export class S3Service {
