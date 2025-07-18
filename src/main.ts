@@ -7,6 +7,7 @@ import {
 import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import multipart from '@fastify/multipart'; // <-- Use 'multipart' as the import name for clarity
+import passport from '@fastify/passport';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -16,10 +17,9 @@ async function bootstrap() {
 
   // 1. Use NestJS's built-in CORS handling
   // This is the platform-agnostic and recommended way.
-  app.enableCors({
-    origin:'http://localhost:5173', // For development. In production, list specific domains.
-    credentials: true,
-  });
+app.enableCors({
+  origin: '*',
+});
 
   // 2. Register Fastify plugins
   // It's good practice to include limits for security.
@@ -48,6 +48,8 @@ async function bootstrap() {
   SwaggerModule.setup('api', app, document);
 
   // 5. Start the application
+  //  await app.register(passport.initialize());
+  // await app.register(passport.secureSession());
   await app.listen(3000, '0.0.0.0'); // Listen on all network interfaces
 }
 bootstrap();

@@ -10,7 +10,7 @@ import { CategoryModule } from './category/category.module';
 import { UserModule } from './user/user.module';
 import { AuthModule } from './auth/auth.module';
 import { BusinessModule } from './business/business.module';
-import { ProductModule } from './product/product.module';
+import { ProductsModule } from './products/products.module';
 
 @Module({
   imports: [
@@ -20,6 +20,7 @@ import { ProductModule } from './product/product.module';
 
      JwtModule.registerAsync({
           useFactory: () => ({
+             global: true,
             secret: "prasanna",
             signOptions: { expiresIn: '1h' },
           }),
@@ -35,8 +36,7 @@ import { ProductModule } from './product/product.module';
    
     BusinessModule,
    
-    ProductModule,
-    
+    ProductsModule    
   ],
   providers: [KeepAliveService, PrismaService],
 

@@ -61,6 +61,7 @@ export class UserService {
   // Your existing loginUser function remains the same
  async loginUser(email: string, password: string) {
     const user = await this.prisma.user.findUnique({ where: { email } });
+console.log(user);
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
       throw new UnauthorizedException('Invalid email or password');

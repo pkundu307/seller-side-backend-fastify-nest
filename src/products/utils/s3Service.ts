@@ -1,8 +1,9 @@
 // src/products/util/S3Service.ts
-import { env } from 'process';
-import { Injectable } from '@nestjs/common';
+
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
+import { Injectable } from '@nestjs/common';
+import { env } from 'process';
 
 @Injectable()
 export class S3Service {
@@ -44,6 +45,6 @@ if(!process.env.Bucket) {
 
     await this.s3.send(command);
 
-    return `https://.s3${process.env.Bucket}.${process.env.region}.amazonaws.com/${uniqueName}`;
+    return `https://${process.env.Bucket}.s3.${process.env.region}.amazonaws.com/${uniqueName}`;
   }
 }
