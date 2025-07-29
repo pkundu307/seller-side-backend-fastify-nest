@@ -8,11 +8,13 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
-  Get
+  Get,
+  Query
 } from '@nestjs/common';
 import { FastifyRequest } from 'fastify';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ProductsService } from './products.service';
+import { PaginationQueryDto } from './dto/pagination-query.dto';
 
 @Controller('products')
 export class ProductsController {
@@ -119,8 +121,29 @@ export class ProductsController {
     }
   }
 
-  @Get('pop')
-  async getAllProducts() {
-    return this.productsService.getAllProducts();
+
+  @UseGuards(JwtAuthGuard)
+  @Get('business/:businessId')
+  async getProductsForBusiness(
+    @Param('businessId') businessId: string,
+    @Req() req: FastifyRequest,
+    @Query() paginationQuery: PaginationQueryDto,
+  ) {
+       const user = req.user as any;
+    return this.productsService.getProductsByBusiness(businessId, paginationQuery,user.id);
+  }
+
+  // --- NEW ENDPOINT: GET A SINGLE PRODUCT BY ID FOR A BUSINESS ---
+  @UseGuards(JwtAuthGuard)
+  @Get('business/:businessId/:productId')
+  async getProductById(
+    @Req() req: FastifyRequest,
+    @Param('businessId') businessId: string,
+    @Param('productId') productId: string,
+  ) {
+    const user = req.user as any;
+    console.log(user);
+    
+    return this.productsService.getProductByIdForBusiness(businessId, productId,user.id);
   }
 }

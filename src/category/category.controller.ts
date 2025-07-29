@@ -18,4 +18,9 @@ export class CategoryController {
     }
     return this.categoryService.getChildrenByParentId(parentId);
   }
+
+    @Get('search')
+  async searchCategories(@Query('q') query: string) {
+    return this.categoryService.searchCategories(query);
+  }
 }

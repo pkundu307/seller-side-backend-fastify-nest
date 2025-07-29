@@ -11,6 +11,8 @@ import { UserModule } from './user/user.module';
 import { AuthModule } from './auth/auth.module';
 import { BusinessModule } from './business/business.module';
 import { ProductsModule } from './products/products.module';
+import { CustomerUserModule } from './customer-user/customer-user.module';
+import { CustomerModule } from './customer/customer.module';
 
 @Module({
   imports: [
@@ -36,7 +38,11 @@ import { ProductsModule } from './products/products.module';
    
     BusinessModule,
    
-    ProductsModule    
+    ProductsModule,
+   
+    CustomerUserModule,
+   
+    CustomerModule    
   ],
   providers: [KeepAliveService, PrismaService],
 

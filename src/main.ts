@@ -18,8 +18,7 @@ async function bootstrap() {
   // 1. Use NestJS's built-in CORS handling
   // This is the platform-agnostic and recommended way.
 app.enableCors({
-  origin: '*',
-});
+  origin: '*',});
 
   // 2. Register Fastify plugins
   // It's good practice to include limits for security.
@@ -50,6 +49,6 @@ app.enableCors({
   // 5. Start the application
   //  await app.register(passport.initialize());
   // await app.register(passport.secureSession());
-  await app.listen(3000, '0.0.0.0'); // Listen on all network interfaces
+  await app.listen(3001, '0.0.0.0'); // Listen on all network interfaces
 }
 bootstrap();
