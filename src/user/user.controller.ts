@@ -33,6 +33,8 @@ export class UserController {
   })
   @ApiResponse({ status: 409, description: 'Conflict - Email already exists.' })
   async register(@Body() createUserDto: CreateUserDto) {
+        console.log('--- INSIDE CONTROLLER ---', createUserDto); 
+
     return this.userService.create(createUserDto);
   }
 

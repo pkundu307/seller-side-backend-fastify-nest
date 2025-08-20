@@ -4,6 +4,18 @@ CREATE TYPE "AuthSource" AS ENUM ('self', 'google');
 -- CreateEnum
 CREATE TYPE "CustomerType" AS ENUM ('basic', 'pro', 'user');
 
+-- CreateEnum
+CREATE TYPE "PaymentMethod" AS ENUM ('online', 'cash_on_delivery');
+
+-- CreateEnum
+CREATE TYPE "PaymentStatus" AS ENUM ('pending', 'completed', 'failed');
+
+-- CreateEnum
+CREATE TYPE "OrderStatus" AS ENUM ('pending', 'processing', 'shipped', 'delivered', 'cancelled');
+
+-- CreateEnum
+CREATE TYPE "OrderInitiateStatus" AS ENUM ('pending', 'completed');
+
 -- CreateTable
 CREATE TABLE "CustomerUser" (
     "id" TEXT NOT NULL,
@@ -33,6 +45,35 @@ CREATE TABLE "User" (
 );
 
 -- CreateTable
+CREATE TABLE "Coupon" (
+    "id" TEXT NOT NULL,
+    "code" TEXT NOT NULL,
+    "active" BOOLEAN NOT NULL DEFAULT true,
+    "valueByPercentage" DECIMAL(65,30),
+    "valueByAmount" DECIMAL(65,30),
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Coupon_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Address" (
+    "id" TEXT NOT NULL,
+    "street" TEXT NOT NULL,
+    "city" TEXT NOT NULL,
+    "state" TEXT NOT NULL,
+    "postalCode" TEXT NOT NULL,
+    "country" TEXT NOT NULL,
+    "customerUserId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Address_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "Business" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -52,54 +93,65 @@ CREATE TABLE "Business" (
 );
 
 -- CreateTable
+CREATE TABLE "Order" (
+    "id" TEXT NOT NULL,
+    "totalAmount" DECIMAL(65,30) NOT NULL,
+    "customerUserId" TEXT NOT NULL,
+    "paymentMethod" "PaymentMethod" NOT NULL,
+    "paymentStatus" "PaymentStatus" NOT NULL DEFAULT 'pending',
+    "status" "OrderStatus" NOT NULL DEFAULT 'pending',
+    "selectedAddress" JSONB NOT NULL,
+    "discount" DECIMAL(65,30) NOT NULL DEFAULT 0,
+    "taxAmount" DECIMAL(65,30) NOT NULL DEFAULT 0,
+    "shippingFee" DECIMAL(65,30) NOT NULL DEFAULT 0,
+    "trackingNumber" TEXT,
+    "estimatedDeliveryDate" TIMESTAMP(3),
+    "cancellationReason" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Order_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "OrderItem" (
+    "id" TEXT NOT NULL,
+    "quantity" INTEGER NOT NULL,
+    "priceAtTimeOfOrder" DECIMAL(65,30) NOT NULL,
+    "note" TEXT,
+    "customizationImage" TEXT,
+    "orderId" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "variantId" TEXT,
+
+    CONSTRAINT "OrderItem_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "CartItem" (
+    "id" TEXT NOT NULL,
+    "quantity" INTEGER NOT NULL,
+    "productId" TEXT NOT NULL,
+    "variantId" TEXT,
+    "customerUserId" TEXT NOT NULL,
+
+    CONSTRAINT "CartItem_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "Product" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
-    "description" TEXT NOT NULL,
-    "price" DOUBLE PRECISION NOT NULL,
+    "description" TEXT,
+    "isCustomizable" BOOLEAN NOT NULL DEFAULT false,
     "images" TEXT[],
-    "isPublished" BOOLEAN DEFAULT false,
-    "isFeatured" BOOLEAN DEFAULT false,
+    "isPublished" BOOLEAN NOT NULL DEFAULT false,
+    "isFeatured" BOOLEAN NOT NULL DEFAULT false,
     "slug" TEXT NOT NULL,
-    "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
     "businessId" TEXT NOT NULL,
-    "cess" VARCHAR(128),
-    "closingStock" DECIMAL(65,30),
-    "conversionRate" DECIMAL(65,30),
-    "discountAmount" DECIMAL(65,30),
-    "discountPercent" DECIMAL(65,30),
-    "hsnCode" VARCHAR(128),
-    "isBatchingEnabled" BOOLEAN,
-    "isMinStockAlertEnabled" BOOLEAN,
-    "isMrpEnabled" BOOLEAN,
-    "isSecondUnitEnabled" BOOLEAN,
-    "isSerializationEnabled" BOOLEAN,
-    "isWholesaleEnabled" BOOLEAN,
-    "itemBatchingId" TEXT,
-    "itemCategory" TEXT NOT NULL,
-    "itemCode" VARCHAR(128),
-    "itemDescription" TEXT,
-    "itemImage" TEXT,
-    "itemSerialisationId" TEXT,
-    "itemType" VARCHAR(128),
-    "itemUnitId" TEXT,
-    "minStockCount" DECIMAL(65,30),
-    "mrp" DECIMAL(65,30),
-    "openingStock" DECIMAL(65,30),
-    "openingStockDate" TIMESTAMP(3),
-    "purchasePrice" DECIMAL(65,30),
-    "purchasePriceType" VARCHAR(64),
-    "sacCode" VARCHAR(128),
-    "secondUnit" VARCHAR(128),
-    "sellingPrice" DECIMAL(65,30),
-    "sellingPriceType" VARCHAR(64),
-    "serialNoLabel" TEXT,
-    "tax" VARCHAR(128),
-    "unit" VARCHAR(128),
-    "wholesalePrice" DECIMAL(65,30),
-    "wholesalePriceType" VARCHAR(64),
-    "wholesaleQuantity" INTEGER,
+    "categoryId" INTEGER NOT NULL,
 
     CONSTRAINT "Product_pkey" PRIMARY KEY ("id")
 );
@@ -107,22 +159,72 @@ CREATE TABLE "Product" (
 -- CreateTable
 CREATE TABLE "Variant" (
     "id" TEXT NOT NULL,
-    "size" TEXT,
-    "color" TEXT,
-    "price" DOUBLE PRECISION NOT NULL,
+    "sku" TEXT NOT NULL,
+    "price" DECIMAL(65,30) NOT NULL,
     "stock" INTEGER NOT NULL,
+    "isDefault" BOOLEAN NOT NULL DEFAULT false,
+    "weightInGrams" INTEGER,
+    "images" TEXT[],
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "hsnCode" TEXT,
+    "sacCode" TEXT,
+    "mrp" DECIMAL(65,30),
+    "purchasePrice" DECIMAL(65,30),
+    "purchasePriceType" VARCHAR(64),
+    "sellingPriceType" VARCHAR(64),
+    "tax" VARCHAR(128),
+    "unit" VARCHAR(128),
+    "minStockCount" DECIMAL(65,30),
+    "isMinStockAlertEnabled" BOOLEAN,
+    "openingStock" DECIMAL(65,30),
+    "openingStockDate" TIMESTAMP(3),
     "productId" TEXT NOT NULL,
 
     CONSTRAINT "Variant_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
-CREATE TABLE "Category" (
+CREATE TABLE "category" (
+    "id" SERIAL NOT NULL,
+    "name" VARCHAR(255) NOT NULL,
+    "slug" TEXT NOT NULL,
+    "parentId" INTEGER,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "category_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Attribute" (
     "id" SERIAL NOT NULL,
     "name" TEXT NOT NULL,
-    "parentId" INTEGER,
+    "categoryId" INTEGER NOT NULL,
 
-    CONSTRAINT "Category_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "Attribute_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "VariantAttributeValue" (
+    "id" SERIAL NOT NULL,
+    "value" TEXT NOT NULL,
+    "variantId" TEXT NOT NULL,
+    "attributeId" INTEGER NOT NULL,
+
+    CONSTRAINT "VariantAttributeValue_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "OrderInitiate" (
+    "id" TEXT NOT NULL,
+    "order_id" TEXT NOT NULL,
+    "status" "OrderInitiateStatus" NOT NULL DEFAULT 'pending',
+    "customerUserId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "OrderInitiate_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -130,10 +232,10 @@ CREATE TABLE "Review" (
     "id" TEXT NOT NULL,
     "rating" INTEGER NOT NULL,
     "comment" TEXT,
-    "userId" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "businessId" TEXT NOT NULL,
+    "customerUserId" TEXT NOT NULL,
 
     CONSTRAINT "Review_pkey" PRIMARY KEY ("id")
 );
@@ -348,15 +450,6 @@ CREATE TABLE "StockActivity" (
     CONSTRAINT "StockActivity_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "category" (
-    "id" INTEGER NOT NULL,
-    "name" VARCHAR(255) NOT NULL,
-    "parentid" INTEGER,
-
-    CONSTRAINT "category_pkey" PRIMARY KEY ("id")
-);
-
 -- CreateIndex
 CREATE UNIQUE INDEX "CustomerUser_email_key" ON "CustomerUser"("email");
 
@@ -364,43 +457,85 @@ CREATE UNIQUE INDEX "CustomerUser_email_key" ON "CustomerUser"("email");
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "Coupon_code_key" ON "Coupon"("code");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "Business_gstNumber_key" ON "Business"("gstNumber");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "CartItem_customerUserId_productId_variantId_key" ON "CartItem"("customerUserId", "productId", "variantId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Product_slug_key" ON "Product"("slug");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "Variant_sku_key" ON "Variant"("sku");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "category_slug_key" ON "category"("slug");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Attribute_name_categoryId_key" ON "Attribute"("name", "categoryId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "VariantAttributeValue_variantId_attributeId_key" ON "VariantAttributeValue"("variantId", "attributeId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "CustomField_saleId_key" ON "CustomField"("saleId");
+
+-- AddForeignKey
+ALTER TABLE "Address" ADD CONSTRAINT "Address_customerUserId_fkey" FOREIGN KEY ("customerUserId") REFERENCES "CustomerUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Business" ADD CONSTRAINT "Business_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "Order" ADD CONSTRAINT "Order_customerUserId_fkey" FOREIGN KEY ("customerUserId") REFERENCES "CustomerUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "OrderItem" ADD CONSTRAINT "OrderItem_orderId_fkey" FOREIGN KEY ("orderId") REFERENCES "Order"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "OrderItem" ADD CONSTRAINT "OrderItem_variantId_fkey" FOREIGN KEY ("variantId") REFERENCES "Variant"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CartItem" ADD CONSTRAINT "CartItem_variantId_fkey" FOREIGN KEY ("variantId") REFERENCES "Variant"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CartItem" ADD CONSTRAINT "CartItem_customerUserId_fkey" FOREIGN KEY ("customerUserId") REFERENCES "CustomerUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "Product" ADD CONSTRAINT "Product_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Product" ADD CONSTRAINT "Product_itemBatchingId_fkey" FOREIGN KEY ("itemBatchingId") REFERENCES "ItemBatching"("item_batching_id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Product" ADD CONSTRAINT "Product_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "category"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Product" ADD CONSTRAINT "Product_itemSerialisationId_fkey" FOREIGN KEY ("itemSerialisationId") REFERENCES "ItemSerialisation"("item_serialisation_id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Variant" ADD CONSTRAINT "Variant_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Product" ADD CONSTRAINT "Product_itemUnitId_fkey" FOREIGN KEY ("itemUnitId") REFERENCES "ItemUnit"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "category" ADD CONSTRAINT "category_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "category"("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
 
 -- AddForeignKey
-ALTER TABLE "Variant" ADD CONSTRAINT "Variant_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Attribute" ADD CONSTRAINT "Attribute_categoryId_fkey" FOREIGN KEY ("categoryId") REFERENCES "category"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Category" ADD CONSTRAINT "Category_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "Category"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "VariantAttributeValue" ADD CONSTRAINT "VariantAttributeValue_variantId_fkey" FOREIGN KEY ("variantId") REFERENCES "Variant"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "VariantAttributeValue" ADD CONSTRAINT "VariantAttributeValue_attributeId_fkey" FOREIGN KEY ("attributeId") REFERENCES "Attribute"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "OrderInitiate" ADD CONSTRAINT "OrderInitiate_customerUserId_fkey" FOREIGN KEY ("customerUserId") REFERENCES "CustomerUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Review" ADD CONSTRAINT "Review_customerUserId_fkey" FOREIGN KEY ("customerUserId") REFERENCES "CustomerUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Review" ADD CONSTRAINT "Review_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Review" ADD CONSTRAINT "Review_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Review" ADD CONSTRAINT "Review_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "CustomField" ADD CONSTRAINT "CustomField_saleId_fkey" FOREIGN KEY ("saleId") REFERENCES "Sale"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -416,6 +551,3 @@ ALTER TABLE "SalePaymentMode" ADD CONSTRAINT "SalePaymentMode_saleId_fkey" FOREI
 
 -- AddForeignKey
 ALTER TABLE "SaleTax" ADD CONSTRAINT "SaleTax_saleId_fkey" FOREIGN KEY ("saleId") REFERENCES "Sale"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "category" ADD CONSTRAINT "fk_parent" FOREIGN KEY ("parentid") REFERENCES "category"("id") ON DELETE NO ACTION ON UPDATE NO ACTION;

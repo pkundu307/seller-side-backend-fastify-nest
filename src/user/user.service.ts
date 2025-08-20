@@ -20,8 +20,11 @@ export class UserService {
 
   async create(createUserDto: CreateUserDto) {
     const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(createUserDto.password, saltRounds);
-    console.log(createUserDto);
+        console.log('--- INSIDE SERVICE ---', createUserDto);
+    console.log('--- PASSWORD PROPERTY ---', createUserDto.password);
+
+    const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+    console.log(hashedPassword);
     
     try {
             const user = await this.prisma.user.create({
@@ -92,6 +95,7 @@ console.log(user);
         id: true,
         name: true,
         email: true,
+        role: true,
       },
     });
 

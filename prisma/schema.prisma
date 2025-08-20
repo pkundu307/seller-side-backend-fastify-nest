@@ -20,17 +20,36 @@ model CustomerUser {
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
 
-  orders     Order[]      // Opposite relation field for Order.customerUser
+  orders         Order[] // Opposite relation field for Order.customerUser
   orderInitiates OrderInitiate[] // Opposite relation field for OrderInitiate.customerUser
-  addresses  Address[]    // Opposite relation field for Address.customerUser
-  cartItems       CartItem[] 
-    reviews         Review[] // <-- ADD THIS LINE
-
+  addresses      Address[] // Opposite relation field for Address.customerUser
+  cartItems      CartItem[]
+  reviews        Review[] // <-- ADD THIS LINE
 }
 
 enum AuthSource {
   self
   google
+}
+enum Unit {
+  PCS
+  GRAM
+  KG
+  LITER
+}
+enum VariantStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+
+
+
+enum PriceType {
+  MRP
+  Discounted
+  Offer
 }
 
 enum CustomerType {
@@ -50,38 +69,40 @@ model User {
   createdAt  DateTime   @default(now())
   businesses Business[]
 }
+
 model Coupon {
-  id                String    @id @default(uuid())
-  code              String    @unique // The unique coupon code
-  active            Boolean   @default(true) // Whether the coupon is active or not
+  id     String  @id @default(uuid())
+  code   String  @unique // The unique coupon code
+  active Boolean @default(true) // Whether the coupon is active or not
 
   // A coupon can discount by a percentage OR a fixed amount.
   // Making them optional allows for flexibility.
-  valueByPercentage Decimal?  // Stored as Decimal for precision
-  valueByAmount     Decimal?  // Stored as Decimal for financial accuracy
+  valueByPercentage Decimal? // Stored as Decimal for precision
+  valueByAmount     Decimal? // Stored as Decimal for financial accuracy
 
-  expiresAt         DateTime  // The date the coupon is no longer valid
+  expiresAt DateTime // The date the coupon is no longer valid
 
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Address {
-  id           String @id @default(uuid())
-  street       String
-  city         String
-  state        String
-  postalCode   String
-  country      String
+  id         String @id @default(uuid())
+  street     String
+  city       String
+  state      String
+  postalCode String
+  country    String
 
   // This creates the one-to-many relationship.
   // One CustomerUser can have many Address records.
   customerUserId String
   customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
+
 model Business {
   id         String    @id @default(uuid())
   name       String
@@ -100,66 +121,69 @@ model Business {
   products   Product[]
   reviews    Review[]
 }
+
 //=================================================
 //  ORDER AND RELATED MODELS
 //=================================================
 
 // This is the main Order model
 model Order {
-  id                      String         @id @default(uuid())
-  totalAmount             Decimal // Use Decimal for money to avoid floating point errors
-  
+  id          String  @id @default(uuid())
+  totalAmount Decimal // Use Decimal for money to avoid floating point errors
+
   // Relation to the customer who placed the order
-  customerUserId          String
-  customerUser            CustomerUser   @relation(fields: [customerUserId], references: [id])
+  customerUserId String
+  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
 
   // Payment Details
-  paymentMethod           PaymentMethod
-  paymentStatus           PaymentStatus  @default(pending)
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(pending)
 
   // Order Status
-  status                  OrderStatus    @default(pending)
-  
+  status OrderStatus @default(pending)
+
   // Address is stored as a JSON blob. This is a snapshot of the address
   // at the time of the order, so it won't change if the user updates their profile.
-  selectedAddress         Json
+  selectedAddress Json
 
   // Optional Fields
-  discount                Decimal        @default(0)
-  taxAmount               Decimal        @default(0)
-  shippingFee             Decimal        @default(0)
-  trackingNumber          String?
-  estimatedDeliveryDate   DateTime?
-  cancellationReason      String?
+  discount              Decimal   @default(0)
+  taxAmount             Decimal   @default(0)
+  shippingFee           Decimal   @default(0)
+  trackingNumber        String?
+  estimatedDeliveryDate DateTime?
+  cancellationReason    String?
 
   // An order can have many items. This links to the OrderItem table.
-  items                   OrderItem[]
+  items OrderItem[]
 
-  createdAt               DateTime       @default(now())
-  updatedAt               DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
-
 
 // This is the "join table" connecting Orders and Products.
 // It also holds information specific to that item in that order.
 model OrderItem {
-  id                      String    @id @default(uuid())
-  quantity                Int
-  priceAtTimeOfOrder      Decimal   // Good practice to store the price, as product price might change later
+  id                 String  @id @default(uuid())
+  quantity           Int
+  priceAtTimeOfOrder Decimal // Good practice to store the price, as product price might change later
 
   // --- NEW FEATURES ADDED HERE ---
-  note                    String?   // Optional note for this specific item in the order.
-  customizationImage      String?   // URL for the uploaded image if the product is customizable.
+  note               String? // Optional note for this specific item in the order.
+  customizationImage String? // URL for the uploaded image if the product is customizable.
 
   // Relation to the specific Order
-  orderId                 String
-  order                   Order     @relation(fields: [orderId], references: [id])
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id])
 
   // Relation to the specific Product
-  productId               String
-  product                 Product   @relation(fields: [productId], references: [id])
-}
+  productId String
+  // product                 Product   @relation(fields: [productId], references: [id])
 
+  // Relation to the specific Variant (optional, as not all order items may have a variant)
+  variantId String?
+  variant   Variant? @relation(fields: [variantId], references: [id])
+}
 
 // --- ENUMS for the Order model ---
 
@@ -183,152 +207,170 @@ enum OrderStatus {
 }
 
 model CartItem {
-  id             String       @id @default(uuid())
-  quantity       Int
+  id       String @id @default(uuid())
+  quantity Int
 
   // Relation to the Product being added to the cart
-  productId      String
-  product        Product      @relation(fields: [productId], references: [id])
+  productId String
+  // product        Product      @relation(fields: [productId], references: [id])
+
+  // Optional relation to the Variant being added to the cart
+  variantId String?
+  variant   Variant? @relation(fields: [variantId], references: [id])
 
   // Relation to the Customer whose cart this is
   customerUserId String
   customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
 
   // This is a crucial constraint: it ensures that a user can only have
-  // ONE cart entry for any given product. Prevents duplicate rows.
-  @@unique([customerUserId, productId])
+  // ONE cart entry for any given product and variant. Prevents duplicate rows.
+  @@unique([customerUserId, productId, variantId])
 }
+
 model Product {
-  id                     String             @id @default(uuid())
-  title                  String
-  description            String
-  price                  Float
-  isCustomizable         Boolean            @default(false) // <-- ADD THIS LINE
-  images                 String[]
-  isPublished            Boolean?           @default(false)
-  isFeatured             Boolean?           @default(false)
-  slug                   String             @unique
-  createdAt              DateTime?          @default(now())
-  updatedAt              DateTime?          @updatedAt
-  businessId             String
-  cess                   String?            @db.VarChar(128)
-    attributeValues ProductAttributeValue[]
-  closingStock           Decimal?
-  conversionRate         Decimal?
-  discountAmount         Decimal?
-  discountPercent        Decimal?
-  hsnCode                String?            @db.VarChar(128)
-  isBatchingEnabled      Boolean?
-  isMinStockAlertEnabled Boolean?
-  isMrpEnabled           Boolean?
-  isSecondUnitEnabled    Boolean?
-  isSerializationEnabled Boolean?
-  isWholesaleEnabled     Boolean?
-  itemBatchingId         String?
-  itemCategory           String
-  itemCode               String?            @db.VarChar(128)
-  itemDescription        String?
-  itemImage              String?
-  itemSerialisationId    String?
-  itemType               String?            @db.VarChar(128)
-  itemUnitId             String?
-  minStockCount          Decimal?
-  mrp                    Decimal?
-  openingStock           Decimal?
-  openingStockDate       DateTime?
-  purchasePrice          Decimal?
-  purchasePriceType      String?            @db.VarChar(64)
-  sacCode                String?            @db.VarChar(128)
-  secondUnit             String?            @db.VarChar(128)
-  sellingPrice           Decimal?
-  sellingPriceType       String?            @db.VarChar(64)
-  serialNoLabel          String?
-  tax                    String?            @db.VarChar(128)
-  unit                   String?            @db.VarChar(128)
-  wholesalePrice         Decimal?
-  wholesalePriceType     String?            @db.VarChar(64)
-  wholesaleQuantity      Int?
-  business               Business           @relation(fields: [businessId], references: [id])
-  itemBatching           ItemBatching?      @relation(fields: [itemBatchingId], references: [id])
-  itemSerialisation      ItemSerialisation? @relation(fields: [itemSerialisationId], references: [id])
-  itemUnit               ItemUnit?          @relation(fields: [itemUnitId], references: [id])
-  reviews                Review[]
-  variants               Variant[]
-  cartItems              CartItem[]         // <-- Added opposite relation for CartItem
-  orderItems             OrderItem[]        // <-- Added opposite relation for OrderItem
+  id             String   @id @default(uuid())
+  title          String
+  description    String?  @db.Text
+  isCustomizable Boolean  @default(false)
+  images         String[]
+  isPublished    Boolean  @default(false)
+  isFeatured     Boolean  @default(false)
+  slug           String   @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // --- CORE RELATIONS ---
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  variants Variant[]
+  reviews  Review[]
+  // Note: cartItems and orderItems are removed as they belong on the Variant
 }
 
 model Variant {
-  id        String  @id @default(uuid())
-  size      String?
-  color     String?
-  price     Float
-  stock     Int
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
+  id                String     @id @default(uuid())
+  sku               String     @unique
+  price             Decimal    @db.Decimal(10, 2)
+  stock             Int
+  isDefault         Boolean    @default(false) // Good practice to have a default variant
+  weightInGrams     Int?
+  images            String[] // Variants can have their own images (e.g., different colors)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  status VariantStatus @default(DRAFT)
+  // --- ALL INVENTORY/LOGISTICS FIELDS MOVED HERE ---
+  hsnCode           String?
+  sacCode           String?
+  mrp               Decimal?   @db.Decimal(10, 2)
+  purchasePrice     Decimal?   @db.Decimal(10, 2)
+  purchasePriceType String?    @db.VarChar(64)
+  sellingPriceType  PriceType?
+
+  tax                    String?   @db.VarChar(128)
+  unit Unit?
+  isMinStockAlertEnabled Boolean?
+  minStockCount          Decimal?  @db.Decimal(10, 2)
+  openingStock           Decimal?  @db.Decimal(10, 2)
+  openingStockDate       DateTime?
+  // You would also move the relations for batching, serialization, etc. here if they are variant-specific
+  // itemBatchingId   String?
+  // ... and so on
+
+  // --- RELATIONS ---
+  productId       String
+  product         Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+  attributeValues VariantAttributeValue[]
+  cartItems       CartItem[] // A specific variant is added to the cart
+  orderItems      OrderItem[] // A specific variant is added to an order
+
+  @@index([productId])
 }
 
-
 model Category {
-  id        Int        @id @default(autoincrement())
-  name      String     @db.VarChar(255)
-  parentId  Int?
-  parent    Category?  @relation("SubCategories", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_parent")
-  children  Category[] @relation("SubCategories")
-  
-  // --- ADD THESE LINES ---
-  // A category can have many defined attribute types
+  id       Int        @id @default(autoincrement())
+  name     String     @db.VarChar(255)
+  slug     String     @unique
+  parentId Int?
+  parent   Category?  @relation("SubCategories", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children Category[] @relation("SubCategories")
+
+  // This is the key back-relation. It doesn't take up database space.
+  products Product[] // <-- ADD THIS LINE
+
   attributes Attribute[]
-  
-  
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
   @@map("category")
 }
 
 model Attribute {
-  id          Int      @id @default(autoincrement())
-  name        String   // e.g., "Size"
-  
-  // An attribute belongs to a specific category
-  categoryId  Int
-  category    Category @relation(fields: [categoryId], references: [id])
-  
-  // This attribute can have many different values across many products
-  productValues ProductAttributeValue[]
+  id         Int      @id @default(autoincrement())
+  name       String // e.g., "Size", "Material"
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  position   Int      @default(0)
 
-  // Ensure that an attribute name is unique within a given category
+  // This relation now correctly reflects it's for variants
+  variantValues VariantAttributeValue[]
+  options       AttributeOption[]
+
   @@unique([name, categoryId])
 }
 
+model AttributeOption {
+  id    Int    @id @default(autoincrement())
+  value String // The actual value, e.g., "Red", "Large", "256GB"
+
+  // An option belongs to one attribute type
+  attributeId Int
+  attribute   Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  slug        String    
+  position    Int       @default(0)
+
+  // This option can be chosen for many different variants
+  variantValues VariantAttributeValue[]
+
+  // The value must be unique for a given attribute. 
+  // You can't have two "Red" options for the "Color" attribute.
+  @@unique([attributeId, value])
+  @@map("attribute_option")
+}
 
 // Stores the actual value of a specific attribute for a specific product
 // e.g., Product XYZ's "Size" is "XL"
-model ProductAttributeValue {
-  id         Int      @id @default(autoincrement())
-  value      String   // e.g., "XL", "Red", "Cotton", "iPhone 15 Pro"
-  
-  // Links this value back to a specific product
-  productId  String
-  product    Product  @relation(fields: [productId], references: [id])
-  
-  // Links this value back to a specific attribute type
-  attributeId Int
-  attribute   Attribute @relation(fields: [attributeId], references: [id])
+model VariantAttributeValue {
+  id Int @id @default(autoincrement())
 
-  // A product can only have one value for a given attribute type
-  // (e.g., a shirt can't be both "XL" and "L" at the same time)
-  @@unique([productId, attributeId])
+  // The link to the variant this value belongs to.
+  variantId String
+  variant   Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  // The link to the specific option that was chosen.
+  // This replaces the old `value: String` and `attributeId: Int` fields.
+  attributeOptionId Int
+  attributeOption   AttributeOption @relation(fields: [attributeOptionId], references: [id], onDelete: Cascade)
+
+  // Add the opposite relation to Attribute
+  attributeId Int
+  attribute   Attribute @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  @@map("variant_attribute_value")
 }
+
 model OrderInitiate {
-  id        String   @id @default(uuid())
-  order_id  String   // This likely holds an external ID from a payment gateway like Razorpay or Stripe
-  status    OrderInitiateStatus @default(pending)
+  id       String              @id @default(uuid())
+  order_id String // This likely holds an external ID from a payment gateway like Razorpay or Stripe
+  status   OrderInitiateStatus @default(pending)
 
   // Relation to the customer who initiated the order
   customerUserId String
   customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
-  
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -337,22 +379,23 @@ enum OrderInitiateStatus {
   pending
   completed
 }
+
 // This is the new, correct model
 model Review {
-  id             String       @id @default(uuid())
-  rating         Int
-  comment        String?
-  productId      String
-  createdAt      DateTime     @default(now())
-  businessId     String
-  
+  id         String   @id @default(uuid())
+  rating     Int
+  comment    String?
+  productId  String
+  createdAt  DateTime @default(now())
+  businessId String
+
   // --- This is the corrected relationship ---
   customerUserId String
   customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
-  
+
   // --- These relationships are correct ---
-  business       Business     @relation(fields: [businessId], references: [id])
-  product        Product      @relation(fields: [productId], references: [id])
+  business Business @relation(fields: [businessId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id])
 }
 
 model CustomField {
@@ -494,45 +537,45 @@ model SaleTax {
 }
 
 model ItemBatching {
-  id                  String    @id @default(uuid()) @map("item_batching_id")
-  batchNo             String    @db.VarChar(128)
+  id                  String   @id @default(uuid()) @map("item_batching_id")
+  batchNo             String   @db.VarChar(128)
   manufactureDate     DateTime
   expiryDate          DateTime
   sellingPrice        Decimal
-  sellingPriceType    String    @db.VarChar(64)
+  sellingPriceType    String   @db.VarChar(64)
   purchasePrice       Decimal
-  purchasePriceType   String    @db.VarChar(64)
+  purchasePriceType   String   @db.VarChar(64)
   mrp                 Decimal
-  unit                String    @db.VarChar(128)
+  unit                String   @db.VarChar(128)
   isSecondUnitEnabled Boolean
-  secondUnit          String    @db.VarChar(128)
+  secondUnit          String   @db.VarChar(128)
   conversionRate      Decimal
   openingStock        Decimal
   openingStockDate    DateTime
   closingStock        Decimal
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  products            Product[]
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  // products            Product[]
 }
 
 model ItemSerialisation {
-  id           String    @id @default(uuid()) @map("item_serialisation_id")
-  serialNo     String    @db.VarChar(128)
+  id           String   @id @default(uuid()) @map("item_serialisation_id")
+  serialNo     String   @db.VarChar(128)
   serialNoDate DateTime
   isAvailable  Boolean
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  products     Product[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  // products     Product[]
 }
 
 model ItemUnit {
-  id         String    @id @default(uuid())
+  id         String   @id @default(uuid())
   businessId String
-  unitName   String    @db.VarChar(128)
+  unitName   String   @db.VarChar(128)
   isEnabled  Boolean
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  products   Product[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  // products   Product[]
 }
 
 model StockActivity {
@@ -547,4 +590,3 @@ model StockActivity {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
-

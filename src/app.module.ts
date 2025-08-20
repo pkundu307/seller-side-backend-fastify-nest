@@ -13,6 +13,7 @@ import { BusinessModule } from './business/business.module';
 import { ProductsModule } from './products/products.module';
 import { CustomerUserModule } from './customer-user/customer-user.module';
 import { CustomerModule } from './customer/customer.module';
+import { AttributesModule } from './attributes/attributes.module';
 
 @Module({
   imports: [
@@ -42,7 +43,9 @@ import { CustomerModule } from './customer/customer.module';
    
     CustomerUserModule,
    
-    CustomerModule    
+    CustomerModule,
+   
+    AttributesModule    
   ],
   providers: [KeepAliveService, PrismaService],
 
