@@ -17,7 +17,10 @@ async function bootstrap() {
   // 1. CORS Configuration (Your setup is fine for development)
   // For production, you should restrict this to your frontend's domain.
   app.enableCors({
-    origin: '*', // Example: 'https://your-frontend.com' in production
+    origin: true, // Reflects the request origin. More flexible than '*' for credentials.
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS', // Explicitly allow PATCH
+    allowedHeaders: 'Content-Type, Accept, Authorization', // Explicitly allow Authorization
+    credentials: true,
   });
 
   // 2. Fastify Multipart Plugin (Your setup is excellent)

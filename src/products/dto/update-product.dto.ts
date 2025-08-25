@@ -1,82 +1,75 @@
-import { PartialType } from '@nestjs/swagger';
-import { CreateProductDto } from './create-product.dto';
-
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import {
-  IsArray,
-  IsBoolean,
-  IsInt,
-  IsNotEmpty,
-  IsNumber,
-  IsOptional,
-  IsString,
-  IsUUID,
-  Min,
-  ValidateNested,
-} from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsArray, ValidateNested, IsInt, IsNotEmpty, IsNumber, IsUUID } from 'class-validator';
 
-// DTO for updating a single variant's data
-class UpdateVariantDto {
-  @ApiProperty({ description: 'The unique ID of the variant to update.', example: '...'})
-  @IsUUID()
-  @IsNotEmpty()
-  id: string; // The ID is required to know WHICH variant to update
-
-  @ApiPropertyOptional({ example: 'NEW-SKU-123' })
-  @IsString()
-  @IsOptional()
-  sku?: string;
-
-  @ApiPropertyOptional({ example: 49.99 })
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  price?: number;
-  
-  @ApiPropertyOptional({ example: 59.99 })
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  mrp?: number;
-
-  @ApiPropertyOptional({ example: 150 })
+// DTO for individual attributes within a variant
+class UpdateVariantAttributeDto {
   @IsInt()
-  @Min(0)
-  @IsOptional()
-  stock?: number;
+  attributeId: number;
 
-  // Note: Handling image updates (uploads/deletions) in a PATCH request is complex.
-  // It's often better to have separate endpoints like POST /variants/:variantId/images.
-  // We will focus on the data fields for this DTO.
+  @IsInt()
+  attributeOptionId: number;
 }
 
-// Main DTO for the entire update request
-export class UpdateProductDto {
-  @ApiPropertyOptional({ example: 'My Updated Product Title' })
-  @IsString()
+// DTO for a single variant
+class UpdateVariantDto {
   @IsOptional()
+  @IsUUID() // ID must be a UUID if it exists (for existing variants)
+  id?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  sku: string;
+
+  @IsNumber()
+  price: number;
+  
+  @IsNumber()
+  mrp: number;
+
+  @IsInt()
+  stock: number;
+  
+  @IsString()
+  status: 'DRAFT' | 'ACTIVE' | 'INACTIVE';
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => UpdateVariantAttributeDto)
+  attributeValues: UpdateVariantAttributeDto[];
+  
+  // Existing images are just strings (URLs)
+  @IsArray()
+  @IsString({ each: true })
+  images: string[];
+}
+
+// Main DTO for the entire update payload
+export class UpdateProductDto {
+  @IsOptional()
+  @IsString()
   title?: string;
 
-  @ApiPropertyOptional({ example: 'An updated, more detailed description.' })
+  @IsOptional()
   @IsString()
-  @IsOptional()
   description?: string;
-
-  @ApiPropertyOptional({ example: true })
-  @IsBoolean()
+  
   @IsOptional()
+  @IsBoolean()
   isFeatured?: boolean;
-
-  @ApiPropertyOptional({ example: false })
-  @IsBoolean()
+  
   @IsOptional()
-  isPublished?: boolean;
+  @IsBoolean()
+  isCustomizable?: boolean;
 
-  @ApiPropertyOptional({ type: [UpdateVariantDto], description: 'An array of variants with their updated data.' })
+  // The 'variants' field will be a JSON string that we parse into this shape
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => UpdateVariantDto)
+  variants: UpdateVariantDto[];
+
+  // This will be a JSON string of URLs to delete
   @IsOptional()
-  variants?: UpdateVariantDto[];
+  @IsArray()
+  @IsString({ each: true })
+  imagesToDelete?: string[];
 }

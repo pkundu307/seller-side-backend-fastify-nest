@@ -237,77 +237,160 @@ async createProduct(businessId: string, formData: any) {
       .trim();
   }
 
-
-   async updateProduct(
-    businessId: string,
+ async updateProduct(
     productId: string,
     userId: string,
     dto: UpdateProductDto,
+    newProductImages: any[],
+    newVariantImagesMap: Map<string, any[]>,
   ) {
-    // 1. SECURITY: Verify the product exists AND belongs to the user's business.
-    // This is the most crucial step. It combines fetching and authorization.
-    const product = await this.prisma.product.findFirst({
-      where: {
-        id: productId,
-        businessId: businessId,
-        business: {
-          ownerId: userId,
-        },
-      },
-      select: { id: true }, // We only need to know if it exists
+    // --- STEP 1: PREPARATION (Outside the transaction) ---
+
+    // 1a. Authorization & Fetch Existing Product (Read operation is fine here)
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      include: { business: true, variants: { include: { attributeValues: true } } },
     });
 
     if (!product) {
-      throw new NotFoundException(
-        `Product with ID "${productId}" not found or you do not have permission to access it.`,
-      );
+      throw new NotFoundException(`Product with ID "${productId}" not found.`);
+    }
+    if (product.business.ownerId !== userId) {
+      throw new ForbiddenException('You do not have permission to modify this product.');
     }
 
-    // 2. DATABASE TRANSACTION: All updates must succeed or all must fail.
-    return this.prisma.$transaction(async (tx) => {
-      // A. Update the top-level Product fields if they are provided
-      const { variants, ...productData } = dto;
-      if (Object.keys(productData).length > 0) {
+    // 1b. Handle all image deletions and uploads first
+    if (dto.imagesToDelete && dto.imagesToDelete.length > 0) {
+      console.log('Deleting images from S3:', dto.imagesToDelete);
+        await this.s3Service.deleteImages(dto.imagesToDelete);
+    }
+
+    const newUploadedUrls: string[] = [];
+    const uploadAndTrack = async (file: any): Promise<string> => {
+      const url = await this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype);
+      newUploadedUrls.push(url);
+      return url;
+    };
+
+    try {
+      // 1c. Upload new main product images
+      const newProductImageUrls = await Promise.all(newProductImages.map(uploadAndTrack));
+      const finalProductImages = [
+        ...product.images.filter(url => !dto.imagesToDelete?.includes(url)),
+        ...newProductImageUrls,
+      ];
+      
+      // 1d. Prepare all variant data, including uploading their new images
+      const preparedVariantsData = await Promise.all(
+        dto.variants.map(async (variantDto, index) => {
+          const newVariantImages = newVariantImagesMap.get(index.toString()) || [];
+          const newVariantImageUrls = await Promise.all(newVariantImages.map(uploadAndTrack));
+
+          const finalVariantImages = [
+            ...(variantDto.images || []).filter(url => !dto.imagesToDelete?.includes(url)),
+            ...newVariantImageUrls,
+          ];
+
+          return {
+            dto: variantDto,
+            finalImages: finalVariantImages,
+          };
+        }),
+      );
+
+      // --- STEP 2: EXECUTION (Inside the transaction) ---
+      // Now, all async I/O is complete. We can run a fast, atomic DB transaction.
+
+      return await this.prisma.$transaction(async (tx) => {
+        // 2a. Update the Product itself
         await tx.product.update({
           where: { id: productId },
-          data: productData,
-        });
-      }
-
-      // B. Update the Variant fields if they are provided
-      if (variants && variants.length > 0) {
-        // Use Promise.all to run all variant updates concurrently
-        await Promise.all(
-          variants.map(async (variantDto) => {
-            const { id, ...variantData } = variantDto;
-
-            // Convert price/mrp to Decimal for Prisma
-            const dataToUpdate: Prisma.VariantUpdateInput = {
-              ...variantData,
-              price: variantData.price !== undefined ? new Prisma.Decimal(variantData.price) : undefined,
-              mrp: variantData.mrp !== undefined ? new Prisma.Decimal(variantData.mrp) : undefined,
-            };
-
-            await tx.variant.update({
-              where: { id: id },
-              data: dataToUpdate,
-            });
-          }),
-        );
-      }
-      
-      // 3. RETURN SUCCESS: Optionally, fetch and return the fully updated product
-      // This provides the frontend with the fresh state of the data.
-      return tx.product.findUnique({
-        where: { id: productId },
-        include: {
-          category: { select: { id: true, name: true } },
-          variants: {
-             orderBy: { createdAt: 'asc' },
-             include: { /* ... your desired variant includes ... */ }
+          data: {
+            title: dto.title ?? product.title,
+            description: dto.description ?? product.description,
+            isFeatured: dto.isFeatured ?? product.isFeatured,
+            isCustomizable: dto.isCustomizable ?? product.isCustomizable,
+            slug: dto.title && dto.title !== product.title ? this.generateSlug(dto.title) : undefined,
+            images: finalProductImages,
           },
+        });
+
+        // 2b. Process Variants
+        const existingVariantIds = product.variants.map(v => v.id);
+        const incomingVariantIds = dto.variants.map(v => v.id).filter(Boolean);
+
+        const variantsToDelete = existingVariantIds.filter(id => !incomingVariantIds.includes(id));
+        if (variantsToDelete.length > 0) {
+          await tx.variant.deleteMany({ where: { id: { in: variantsToDelete } } });
         }
-      });
-    });
+        
+        for (const preparedVariant of preparedVariantsData) {
+          const { dto: variantDto, finalImages } = preparedVariant;
+
+          const variantData = {
+            sku: variantDto.sku,
+            price: new Prisma.Decimal(variantDto.price),
+            mrp: new Prisma.Decimal(variantDto.mrp),
+            stock: variantDto.stock,
+            status: variantDto.status,
+            images: finalImages,
+          };
+
+          const attributeValuesData = {
+            deleteMany: {},
+            create: variantDto.attributeValues.map(attr => ({
+              attribute: { connect: { id: attr.attributeId } },
+              attributeOption: { connect: { id: attr.attributeOptionId } },
+            })),
+          };
+          
+          if (variantDto.id && existingVariantIds.includes(variantDto.id)) {
+            // UPDATE existing variant
+            await tx.variant.update({
+              where: { id: variantDto.id },
+              data: { ...variantData, attributeValues: attributeValuesData },
+            });
+          } else {
+            // CREATE new variant
+            await tx.variant.create({
+              data: {
+                ...variantData,
+                product: { connect: { id: productId } },
+                attributeValues: { create: attributeValuesData.create },
+              },
+            });
+          }
+        }
+
+        // 2c. Return the fully updated product
+        return tx.product.findUnique({
+          where: { id: productId },
+          include: { 
+            variants: { 
+              include: { 
+                attributeValues: {
+                  include: { attribute: true, attributeOption: true }
+                } 
+              } 
+            },
+            category: true 
+          },
+        });
+      },
+      {
+          maxWait: 15000,
+          timeout: 30000, 
+        }
+    );
+
+    } catch (error) {
+      // Rollback S3 uploads if any part of the process fails
+      if (newUploadedUrls.length > 0) {
+        console.error('An error occurred. Rolling back S3 uploads:', newUploadedUrls);
+        // await this.s3Service.deleteImages(newUploadedUrls);
+      }
+      throw error; // Re-throw the original error
+    }
   }
+
 }
