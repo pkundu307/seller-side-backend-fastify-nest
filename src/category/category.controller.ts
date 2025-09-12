@@ -76,4 +76,15 @@ export class CategoryController { // Renamed for consistency
     // Call the new service method
     return this.categoriesService.getAttributesByCategoryId(categoryId);
   }
+
+
+
+
+   @Get('tree')
+  @ApiOperation({ summary: 'Get all categories as a nested tree structure' })
+  @ApiResponse({ status: 200, description: 'Returns the complete category tree.' })
+  getAllCategoriesAsTree() {
+    // This endpoint is public and cached, so no auth guard is needed.
+    return this.categoriesService.getAllCategoriesAsTree();
+  }
 }

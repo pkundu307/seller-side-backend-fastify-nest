@@ -1,7 +1,19 @@
+// src/products/dto/update-product.dto.ts
 import { Type } from 'class-transformer';
-import { IsString, IsOptional, IsBoolean, IsArray, ValidateNested, IsInt, IsNotEmpty, IsNumber, IsUUID } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsArray,
+  ValidateNested,
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsUUID,
+  IsJSON, // <-- Import IsJSON
+} from 'class-validator';
 
-// DTO for individual attributes within a variant
+// UpdateVariantAttributeDto and UpdateVariantDto remain unchanged...
 class UpdateVariantAttributeDto {
   @IsInt()
   attributeId: number;
@@ -9,35 +21,25 @@ class UpdateVariantAttributeDto {
   @IsInt()
   attributeOptionId: number;
 }
-
-// DTO for a single variant
 class UpdateVariantDto {
   @IsOptional()
-  @IsUUID() // ID must be a UUID if it exists (for existing variants)
+  @IsUUID()
   id?: string;
-
   @IsString()
   @IsNotEmpty()
   sku: string;
-
   @IsNumber()
   price: number;
-  
   @IsNumber()
   mrp: number;
-
   @IsInt()
   stock: number;
-  
   @IsString()
   status: 'DRAFT' | 'ACTIVE' | 'INACTIVE';
-
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => UpdateVariantAttributeDto)
   attributeValues: UpdateVariantAttributeDto[];
-  
-  // Existing images are just strings (URLs)
   @IsArray()
   @IsString({ each: true })
   images: string[];
@@ -52,24 +54,36 @@ export class UpdateProductDto {
   @IsOptional()
   @IsString()
   description?: string;
-  
+
   @IsOptional()
   @IsBoolean()
   isFeatured?: boolean;
-  
+
   @IsOptional()
   @IsBoolean()
   isCustomizable?: boolean;
 
-  // The 'variants' field will be a JSON string that we parse into this shape
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => UpdateVariantDto)
   variants: UpdateVariantDto[];
 
-  // This will be a JSON string of URLs to delete
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   imagesToDelete?: string[];
+
+  // --- NEW FIELDS ---
+
+  @IsOptional()
+  @IsJSON() // Validate that the string is valid JSON
+  customizationConfig?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  deleteModel3d?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  deleteSlicenseDocument?: boolean;
 }

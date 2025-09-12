@@ -1,9 +1,11 @@
+// src/auth/auth.controller.ts
 import { Body, Controller, Post, Get, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register-user.dto';
 import { LoginDto } from './dto/login-user.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { auth } from 'google-auth-library';
 
 @Controller('auth')
 export class AuthController {

@@ -14,6 +14,8 @@ import { ProductsModule } from './products/products.module';
 import { CustomerUserModule } from './customer-user/customer-user.module';
 import { CustomerModule } from './customer/customer.module';
 import { AttributesModule } from './attributes/attributes.module';
+import { AdminModule } from './admin/admin.module';
+import { BannerModule } from './banner/banner.module';
 
 @Module({
   imports: [
@@ -45,7 +47,11 @@ import { AttributesModule } from './attributes/attributes.module';
    
     CustomerModule,
    
-    AttributesModule    
+    AttributesModule,
+   
+    AdminModule,
+   
+    BannerModule    
   ],
   providers: [KeepAliveService, PrismaService],
 

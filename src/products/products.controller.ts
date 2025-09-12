@@ -59,66 +59,48 @@ export class ProductsController {
   }
 
   // REFINED: This parser is now simpler and more robust.
-  private async parseMultipartData(req: FastifyRequest): Promise<any> {
-    if (!req.isMultipart()) {
-      throw new BadRequestException('Request is not multipart/form-data.');
-    }
+private async parseMultipartData(req: FastifyRequest): Promise<any> {
+  if (!req.isMultipart()) {
+    throw new BadRequestException('Request is not multipart/form-data.');
+  }
 
-    const formData: any = { variants: [] };
-    const productImages: Array<{
-      buffer: Buffer;
-      filename: string;
-      mimetype: string;
-    }> = [];
-    // Changed: Create a map to store variant images by variant index/SKU
-    const variantImagesMap = new Map<
-      string,
-      Array<{ buffer: Buffer; filename: string; mimetype: string }>
-    >();
+  const formData: any = { variants: [] };
+  const productImages: Array<{ buffer: Buffer; filename: string; mimetype: string }> = [];
+  const variantImagesMap = new Map<string, Array<{ buffer: Buffer; filename: string; mimetype: string }>>();
 
-    for await (const part of req.parts()) {
-      if (part.type === 'file') {
-        if (part.fieldname === 'images') {
-          // Main product images
-          const buffer = await part.toBuffer();
-          productImages.push({
-            buffer,
-            filename: part.filename,
-            mimetype: part.mimetype,
-          });
-        } else if (part.fieldname.startsWith('variantImages_')) {
-          // Extract variant identifier from fieldname (e.g., "variantImages_0", "variantImages_TSHIRT-RED-M")
-          const variantId = part.fieldname.replace('variantImages_', '');
-          const buffer = await part.toBuffer();
+  for await (const part of req.parts() as any) {
+    if ("file" in part) {
+      // it's a file
+      const buffer = await part.toBuffer();
 
-          if (!variantImagesMap.has(variantId)) {
-            variantImagesMap.set(variantId, []);
-          }
-          variantImagesMap.get(variantId)!.push({
-            buffer,
-            filename: part.filename,
-            mimetype: part.mimetype,
-          });
+      if (part.fieldname === 'images') {
+        productImages.push({ buffer, filename: part.filename, mimetype: part.mimetype });
+      } else if (part.fieldname.startsWith('variantImages_')) {
+        const variantId = part.fieldname.replace('variantImages_', '');
+        if (!variantImagesMap.has(variantId)) {
+          variantImagesMap.set(variantId, []);
         }
-      } else if (part.type === 'field') {
-        if (part.fieldname === 'variants') {
-          try {
-            formData.variants = JSON.parse(part.value as string);
-          } catch (e) {
-            throw new BadRequestException(
-              'Invalid JSON format for the "variants" field.',
-            );
-          }
-        } else {
-          formData[part.fieldname] = part.value;
+        variantImagesMap.get(variantId)!.push({ buffer, filename: part.filename, mimetype: part.mimetype });
+      }
+    } else if ("value" in part) {
+      // it's a field
+      if (part.fieldname === 'variants') {
+        try {
+          formData.variants = JSON.parse(part.value as string);
+        } catch {
+          throw new BadRequestException('Invalid JSON format for the "variants" field.');
         }
+      } else {
+        formData[part.fieldname] = part.value;
       }
     }
-
-    formData.images = productImages;
-    formData.variantImagesMap = variantImagesMap;
-    return formData;
   }
+
+  formData.images = productImages;
+  formData.variantImagesMap = variantImagesMap;
+  return formData;
+}
+
 
   // REWRITTEN: This validation logic now matches the new schema.
   private validateProductData(formData: any): void {
@@ -200,10 +182,9 @@ export class ProductsController {
   }
 
   @UseGuards(JwtAuthGuard)
-  @Patch(':productId') // Simplified route, businessId can be inferred
+  @Patch(':productId')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update a product and its variants' })
-  // ... ApiResponse decorators
   async updateProduct(
     @Param('productId') productId: string,
     @Req() req: FastifyRequest,
@@ -215,10 +196,8 @@ export class ProductsController {
     }
 
     const user = req.user as any;
-    // console.log(productId,user);
-    
 
-    // 1. Parse all multipart data (files and fields)
+    // 1. Parse all multipart data
     const formData = await this.parseMultipartUpdateData(req);
 
     // 2. Manually validate the parsed DTO
@@ -227,64 +206,185 @@ export class ProductsController {
       throw new BadRequestException(validationErrors);
     }
 
-    // 3. Call the service with the validated DTO and file data
+    // 3. Call the service with all the parsed data
     return this.productsService.updateProduct(
       productId,
       user.id,
       formData.dto,
       formData.newProductImages,
       formData.newVariantImagesMap,
+      formData.newModel3dFile, // Pass new file
+      formData.newSlicenseDocumentFile, // Pass new file
     );
   }
 
-  private async parseMultipartUpdateData(req: FastifyRequest): Promise<{
-    dto: UpdateProductDto;
-    newProductImages: any[];
-    newVariantImagesMap: Map<string, any[]>;
-    }> {
-    const fields: any = {};
-    const newProductImages: any[] = [];
-    const newVariantImagesMap = new Map<string, any[]>();
+  // --- MODIFIED PARSER ---
+private async parseMultipartUpdateData(req: FastifyRequest): Promise<{
+  dto: UpdateProductDto;
+  newProductImages: any[];
+  newVariantImagesMap: Map<string, any[]>;
+  newModel3dFile?: any;
+  newSlicenseDocumentFile?: any;
+}> {
+  const fields: any = {};
+  const newProductImages: any[] = [];
+  const newVariantImagesMap = new Map<string, any[]>();
+  let newModel3dFile: any | undefined;
+  let newSlicenseDocumentFile: any | undefined;
 
-    for await (const part of req.parts()) {
-      if (part.type === 'file') {
-        const buffer = await part.toBuffer();
-        const fileData = {
-          buffer,
-          filename: part.filename,
-          mimetype: part.mimetype,
-        };
+  for await (const part of req.parts() as any) {
+    if ("file" in part) {
+      const buffer = await part.toBuffer();
+      const fileData = { buffer, filename: part.filename, mimetype: part.mimetype };
 
-        if (part.fieldname === 'images') {
-          newProductImages.push(fileData);
-        } else if (part.fieldname.startsWith('variantImages_')) {
-          const variantIndex = part.fieldname.replace('variantImages_', '');
-          if (!newVariantImagesMap.has(variantIndex)) {
-            newVariantImagesMap.set(variantIndex, []);
-          }
-          newVariantImagesMap.get(variantIndex)!.push(fileData);
+      if (part.fieldname === 'images') {
+        newProductImages.push(fileData);
+      } else if (part.fieldname.startsWith('variantImages_')) {
+        const variantIndex = part.fieldname.replace('variantImages_', '');
+        if (!newVariantImagesMap.has(variantIndex)) {
+          newVariantImagesMap.set(variantIndex, []);
         }
-      } else {
-        // field
-        fields[part.fieldname] = part.value;
+        newVariantImagesMap.get(variantIndex)!.push(fileData);
+      } else if (part.fieldname === 'model3d') {
+        newModel3dFile = fileData;
+      } else if (part.fieldname === 'slicenseDocument') {
+        newSlicenseDocumentFile = fileData;
       }
+    } else if ("value" in part) {
+      fields[part.fieldname] = part.value;
     }
-
-    // Reconstruct the DTO from parsed fields
-    const dtoData: any = {
-      title: fields.title,
-      description: fields.description,
-      isFeatured: fields.isFeatured === 'true',
-      isCustomizable: fields.isCustomizable === 'true',
-      variants: fields.variants ? JSON.parse(fields.variants) : [],
-      imagesToDelete: fields.imagesToDelete
-        ? JSON.parse(fields.imagesToDelete)
-        : [],
-    };
-
-    // Use class-transformer to create an instance of our DTO
-    const dto = plainToInstance(UpdateProductDto, dtoData);
-
-    return { dto, newProductImages, newVariantImagesMap };
   }
+
+  const dtoData: any = {
+    title: fields.title,
+    description: fields.description,
+    isFeatured: fields.isFeatured === 'true',
+    isCustomizable: fields.isCustomizable === 'true',
+    variants: fields.variants ? JSON.parse(fields.variants) : [],
+    imagesToDelete: fields.imagesToDelete ? JSON.parse(fields.imagesToDelete) : [],
+    customizationConfig: fields.customizationConfig,
+    deleteModel3d: fields.deleteModel3d === 'true',
+    deleteSlicenseDocument: fields.deleteSlicenseDocument === 'true',
+  };
+
+  const dto = plainToInstance(UpdateProductDto, dtoData);
+
+  return {
+    dto,
+    newProductImages,
+    newVariantImagesMap,
+    newModel3dFile,
+    newSlicenseDocumentFile,
+  };
+}
+
+
+  // private async parseMultipartUpdateData(req: FastifyRequest): Promise<{
+  //   dto: UpdateProductDto;
+  //   newProductImages: any[];
+  //   newVariantImagesMap: Map<string, any[]>;
+  // }> {
+  //   const fields: any = {};
+  //   const newProductImages: any[] = [];
+  //   const newVariantImagesMap = new Map<string, any[]>();
+
+  //   for await (const part of req.parts()) {
+  //     if (part.type === 'file') {
+  //       const buffer = await part.toBuffer();
+  //       const fileData = {
+  //         buffer,
+  //         filename: part.filename,
+  //         mimetype: part.mimetype,
+  //       };
+
+  //       if (part.fieldname === 'images') {
+  //         newProductImages.push(fileData);
+  //       } else if (part.fieldname.startsWith('variantImages_')) {
+  //         const variantIndex = part.fieldname.replace('variantImages_', '');
+  //         if (!newVariantImagesMap.has(variantIndex)) {
+  //           newVariantImagesMap.set(variantIndex, []);
+  //         }
+  //         newVariantImagesMap.get(variantIndex)!.push(fileData);
+  //       }
+  //     } else {
+  //       // field
+  //       fields[part.fieldname] = part.value;
+  //     }
+  //   }
+
+  //   // Reconstruct the DTO from parsed fields
+  //   const dtoData: any = {
+  //     title: fields.title,
+  //     description: fields.description,
+  //     isFeatured: fields.isFeatured === 'true',
+  //     isCustomizable: fields.isCustomizable === 'true',
+  //     variants: fields.variants ? JSON.parse(fields.variants) : [],
+  //     imagesToDelete: fields.imagesToDelete
+  //       ? JSON.parse(fields.imagesToDelete)
+  //       : [],
+  //   };
+
+  //   // Use class-transformer to create an instance of our DTO
+  //   const dto = plainToInstance(UpdateProductDto, dtoData);
+
+  //   return { dto, newProductImages, newVariantImagesMap };
+  // }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('stats/:businessId')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get key inventory statistics for a business' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns inventory dashboard statistics.',
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  @ApiResponse({ status: 404, description: 'Business not found.' })
+  async getDashboardStats(
+    @Param('businessId') businessId: string,
+    @Req() req: FastifyRequest,
+  ) {
+    const user = req.user as any;
+    return this.productsService.getInventoryStats(businessId, user.id);
+  }
+
+
+
+    @Get('featured/category/:categoryId') // Moved out of admin, no auth guards
+  @ApiOperation({
+    summary: 'Get all featured products by category with reduced details (Customer-facing)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns a list of featured products with minimal details.',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid category ID provided.' })
+  @ApiResponse({ status: 404, description: 'Category not found.' })
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async getFeaturedProductsByCategory(
+    @Param('categoryId') categoryId: string,
+    @Query() paginationQuery: PaginationQueryDto,
+  ) {
+    const id = parseInt(categoryId, 10);
+    if (isNaN(id)) {
+      throw new BadRequestException(
+        'Invalid category ID provided. Must be a number.',
+      );
+    }
+    return this.productsService.getFeaturedProductsByCategory(
+      id,
+      paginationQuery,
+    );
+  }
+
+  @Get('public/:productId')
+  @ApiOperation({ summary: 'Customer: Get comprehensive details of a single product by ID' })
+  @ApiResponse({ status: 200, description: 'Returns full details of a published product.' })
+  @ApiResponse({ status: 404, description: 'Product not found or not published.' })
+  async getProductDetailsForCustomer(
+    @Param('productId') productId: string,
+  ) {
+    return this.productsService.getProductDetailsForCustomer(productId);
+  }
+  
 }

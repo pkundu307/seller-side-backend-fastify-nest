@@ -5,7 +5,19 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service'; // Adjust path if needed
 import { AddAttributesBatchDto } from './dto/create-attribute.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
+import { Category } from '@prisma/client';
+import * as NodeCache from 'node-cache';
 import { error } from 'console';
+
+export interface CategoryTreeNode extends Category {
+  children: CategoryTreeNode[];
+}
+export interface SimplifiedCategoryNode {
+  id: number;
+  name: string;
+  parentId: number | null;
+  children: SimplifiedCategoryNode[];
+}
 // src/utils/slugify.ts
 export function slugify(text: string): string {
   return text
@@ -24,6 +36,8 @@ export type CategoryPathSearchResult = {
 
 @Injectable()
 export class CategoryService {
+    private cache = new NodeCache({ stdTTL: 600 });
+
   constructor(private prisma: PrismaService) {}
 
   // --- CATEGORY CRUD ---
@@ -216,6 +230,58 @@ return results.map((p) => ({
 
     // Return only the attributes array, as before.
     return category.attributes;
+  }
+
+
+
+  async getAllCategoriesAsTree(): Promise<SimplifiedCategoryNode[]> {
+    const cacheKey = 'all_categories_tree_simplified'; // Use a distinct cache key
+
+    // Check cache for the simplified tree
+    const cachedTree = this.cache.get<SimplifiedCategoryNode[]>(cacheKey);
+    if (cachedTree) {
+      console.log('Returning simplified categories from cache.');
+      return cachedTree;
+    }
+
+    // Fetch ONLY the required fields from the database for performance.
+    const allCategories = await this.prisma.category.findMany({
+      select: {
+        id: true,
+        name: true,
+        parentId: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    // The tree-building logic remains the same, but the types are updated.
+    const categoryMap = new Map<number, SimplifiedCategoryNode>();
+    const rootCategories: SimplifiedCategoryNode[] = [];
+
+    // First pass: create a map and initialize children array
+    allCategories.forEach(category => {
+      // Construct the node explicitly to match the new interface
+      const treeNode: SimplifiedCategoryNode = { ...category, children: [] };
+      categoryMap.set(category.id, treeNode);
+    });
+
+    // Second pass: link children to their parents
+    allCategories.forEach(category => {
+      if (category.parentId) {
+        const parent = categoryMap.get(category.parentId);
+        if (parent) {
+          parent.children.push(categoryMap.get(category.id)!);
+        }
+      } else {
+        rootCategories.push(categoryMap.get(category.id)!);
+      }
+    });
+    
+    // Store the newly built simplified tree in the cache
+    this.cache.set(cacheKey, rootCategories);
+    console.log('Simplified categories fetched from DB and cached.');
+
+    return rootCategories;
   }
 
 }

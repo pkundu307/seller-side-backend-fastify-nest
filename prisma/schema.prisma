@@ -68,6 +68,7 @@ model User {
   name       String?
   createdAt  DateTime   @default(now())
   businesses Business[]
+  performedActivities ActivityLog[] @relation("PerformedUserActivities")
 }
 
 model Coupon {
@@ -109,6 +110,7 @@ model Business {
   gstNumber  String    @unique
   address    String
   city       String
+  category   String   @default("General")
   state      String
   country    String
   postalCode String
@@ -120,6 +122,7 @@ model Business {
   owner      User      @relation(fields: [ownerId], references: [id])
   products   Product[]
   reviews    Review[]
+  activities ActivityLog[] @relation("BusinessActivities")
 }
 
 //=================================================
@@ -167,10 +170,10 @@ model OrderItem {
   id                 String  @id @default(uuid())
   quantity           Int
   priceAtTimeOfOrder Decimal // Good practice to store the price, as product price might change later
-
+  customizationImage String? // URL for the uploaded image if the product is customizable. (Already exists!)
+  customizationDetails Json?
   // --- NEW FEATURES ADDED HERE ---
   note               String? // Optional note for this specific item in the order.
-  customizationImage String? // URL for the uploaded image if the product is customizable.
 
   // Relation to the specific Order
   orderId String
@@ -224,7 +227,21 @@ model CartItem {
 
   // This is a crucial constraint: it ensures that a user can only have
   // ONE cart entry for any given product and variant. Prevents duplicate rows.
-  @@unique([customerUserId, productId, variantId])
+   customizationImage String?  // NEW: URL for the customer's uploaded image (if applicable)
+  customizationDetails Json?  
+}
+
+model PromotionalBanner {
+  id              Int      @id @default(autoincrement())
+  title           String   // e.g., "HANDBAGS", "SNEAKERS"
+  discountText    String?  // e.g., "50-70% Off"
+  bannerImageUrl  String   // The main background image URL
+  brandLogoUrl    String?  // The optional brand logo URL
+  targetUrl       String   // The URL to navigate to on click, e.g., "/category/sneakers"
+  isActive        Boolean  @default(true) // Allows admin to enable/disable banners
+  position        Int      @default(0)    // For controlling the order in the carousel
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model Product {
@@ -234,6 +251,7 @@ model Product {
   isCustomizable Boolean  @default(false)
   images         String[]
   isPublished    Boolean  @default(false)
+  publishDate    DateTime?
   isFeatured     Boolean  @default(false)
   slug           String   @unique
   createdAt      DateTime @default(now())
@@ -248,6 +266,9 @@ model Product {
 
   variants Variant[]
   reviews  Review[]
+  model3dUrl           String?  // URL to the 3D model asset
+  customizationConfig  Json?  
+  slicenseDocumentUrl   String? 
   // Note: cartItems and orderItems are removed as they belong on the Variant
 }
 
@@ -269,7 +290,7 @@ model Variant {
   purchasePrice     Decimal?   @db.Decimal(10, 2)
   purchasePriceType String?    @db.VarChar(64)
   sellingPriceType  PriceType?
-
+  description      String?    @db.Text
   tax                    String?   @db.VarChar(128)
   unit Unit?
   isMinStockAlertEnabled Boolean?
@@ -397,7 +418,28 @@ model Review {
   business Business @relation(fields: [businessId], references: [id])
   product  Product  @relation(fields: [productId], references: [id])
 }
+model ActivityLog {
+  id                String    @id @default(uuid())
+  actionType        String    // e.g., 'USER_REGISTERED', 'BUSINESS_CREATED', 'PRODUCT_UPDATED'
+  entityType        String    // e.g., 'User', 'Business', 'Product', 'Category'
+  entityId          String?   // ID of the entity involved (user.id, business.id, product.id)
+  description       String    @db.Text    // A human-readable message, e.g., "User 'john.doe@example.com' registered."
+  details           Json?     // Optional: structured data for more context (e.g., changes for updates)
+  createdAt         DateTime  @default(now())
 
+  // Who performed the action (if applicable)
+  performedByUserId   String?
+  performedByUser     User?     @relation("PerformedUserActivities", fields: [performedByUserId], references: [id])
+
+  // Which business this activity is related to (if applicable)
+  businessId        String?
+  business          Business? @relation("BusinessActivities", fields: [businessId], references: [id])
+
+  @@index([businessId])
+  @@index([performedByUserId])
+  @@index([createdAt])
+  @@map("activity_log") // Optional: to have a specific table name
+}
 model CustomField {
   id        String   @id @default(uuid())
   key       String
