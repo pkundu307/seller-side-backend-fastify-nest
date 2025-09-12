@@ -59,8 +59,8 @@ app.useGlobalPipes(
   // 5. Passport (Your commented-out lines are correct for JWT)
   // With a JWT strategy, you do not need to register passport as middleware here.
   // The AuthModule and PassportStrategy handle it.
-
+ const port = process.env.PORT || 3001;
   // 6. Start the application
-  await app.listen(3001, '0.0.0.0');
+  await app.listen(port, '0.0.0.0'); 
 }
 bootstrap();
