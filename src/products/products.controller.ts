@@ -225,7 +225,7 @@ private async parseMultipartUpdateData(req: FastifyRequest): Promise<{
   newVariantImagesMap: Map<string, any[]>;
   newModel3dFile?: any;
   newSlicenseDocumentFile?: any;
-}> {
+  }> {
   const fields: any = {};
   const newProductImages: any[] = [];
   const newVariantImagesMap = new Map<string, any[]>();

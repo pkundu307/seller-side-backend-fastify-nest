@@ -53,7 +53,7 @@ import { BannerModule } from './banner/banner.module';
    
     BannerModule    
   ],
-  providers: [KeepAliveService, PrismaService],
+  providers: [PrismaService],
 
 })
 export class AppModule {}

@@ -44,7 +44,7 @@ export class UserController {
   @ApiResponse({ status: 200, description: 'Login successful' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async login(@Body() loginUserDto: LoginUserDto) {
-    console.log(loginUserDto);
+    console.log(loginUserDto,',.,.,.');
     
     return this.userService.loginUser(
       loginUserDto.email,

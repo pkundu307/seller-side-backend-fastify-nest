@@ -341,172 +341,162 @@ async createProduct(businessId: string, formData: any) {
       .trim();
   }
 
-  async updateProduct(
-    productId: string,
-    userId: string,
-    dto: UpdateProductDto,
-    newProductImages: any[],
-    newVariantImagesMap: Map<string, any[]>,
-    newModel3dFile?: any, // <-- NEW PARAM
-    newSlicenseDocumentFile?: any, // <-- NEW PARAM
-  ) {
-    // --- STEP 1: PREPARATION (Outside the transaction) ---
+async updateProduct(
+  productId: string,
+  userId: string,
+  dto: UpdateProductDto,
+  newProductImages: any[],
+  newVariantImagesMap: Map<string, any[]>,
+  newModel3dFile?: any,
+  newSlicenseDocumentFile?: any,
+) {
+  // --- STEP 1: PREPARATION (Outside the transaction) ---
+  // This part of your code is excellent and remains unchanged.
+  const product = await this.prisma.product.findUnique({
+    where: { id: productId },
+    include: { business: true, variants: true },
+  });
 
-    const product = await this.prisma.product.findUnique({
-      where: { id: productId },
-      include: { business: true, variants: true }, // Simplified include
-    });
-
-    if (!product) {
-      throw new NotFoundException(`Product with ID "${productId}" not found.`);
-    }
-    if (product.business.ownerId !== userId) {
-      throw new ForbiddenException(
-        'You do not have permission to modify this product.',
-      );
-    }
-
-    // --- MODIFIED: Handle all image/file deletions and uploads first ---
-    const filesToDeleteFromS3: string[] = [];
-    if (dto.imagesToDelete && dto.imagesToDelete.length > 0) {
-      filesToDeleteFromS3.push(...dto.imagesToDelete);
-    }
-    // Delete model3d if requested and one exists
-    if (dto.deleteModel3d && product.model3dUrl) {
-      filesToDeleteFromS3.push(product.model3dUrl);
-    }
-    // Delete slicenseDocument if requested and one exists
-    if (dto.deleteSlicenseDocument && product.slicenseDocumentUrl) {
-      filesToDeleteFromS3.push(product.slicenseDocumentUrl);
-    }
-    
-    if (filesToDeleteFromS3.length > 0) {
-      console.log('Deleting files from S3:', filesToDeleteFromS3);
-      await this.s3Service.deleteImages(filesToDeleteFromS3);
-    }
-
-    const newUploadedUrls: string[] = [];
-    const uploadAndTrack = async (file: any): Promise<string> => {
-      const url = await this.s3Service.uploadImage(
-        file.buffer,
-        file.filename,
-        file.mimetype,
-      );
-      newUploadedUrls.push(url);
-      return url;
-    };
-
-    try {
-      // Upload new files
-      const newProductImageUrls = await Promise.all(
-        newProductImages.map(uploadAndTrack),
-      );
-      const newModel3dUrl = newModel3dFile
-        ? await uploadAndTrack(newModel3dFile)
-        : undefined;
-      const newSlicenseDocumentUrl = newSlicenseDocumentFile
-        ? await uploadAndTrack(newSlicenseDocumentFile)
-        : undefined;
-
-      // Determine the final state for each field
-      const finalProductImages = [
-        ...product.images.filter((url) => !dto.imagesToDelete?.includes(url)),
-        ...newProductImageUrls,
-      ];
-      const finalModel3dUrl = newModel3dUrl ?? (dto.deleteModel3d ? null : product.model3dUrl);
-      const finalSlicenseDocumentUrl = newSlicenseDocumentUrl ?? (dto.deleteSlicenseDocument ? null : product.slicenseDocumentUrl);
-      
-      const preparedVariantsData = await Promise.all(
-        // ... This part remains unchanged
-        dto.variants.map(async (variantDto, index) => {
-          const newVariantImages = newVariantImagesMap.get(index.toString()) || [];
-          const newVariantImageUrls = await Promise.all(newVariantImages.map(uploadAndTrack));
-
-          const finalVariantImages = [
-            ...(variantDto.images || []).filter(url => !dto.imagesToDelete?.includes(url)),
-            ...newVariantImageUrls,
-          ];
-
-          return {
-            dto: variantDto,
-            finalImages: finalVariantImages,
-          };
-        }),
-      );
-
-      // --- STEP 2: EXECUTION (Inside the transaction) ---
-      return await this.prisma.$transaction(
-        async (tx) => {
-          // 2a. Update the Product itself
-          await tx.product.update({
-            where: { id: productId },
-            data: {
-              title: dto.title,
-              description: dto.description,
-              isFeatured: dto.isFeatured,
-              isCustomizable: dto.isCustomizable,
-              slug:
-                dto.title && dto.title !== product.title
-                  ? this.generateSlug(dto.title)
-                  : undefined,
-              images: finalProductImages,
-              // --- NEW FIELDS ---
-              model3dUrl: finalModel3dUrl,
-              slicenseDocumentUrl: finalSlicenseDocumentUrl,
-              customizationConfig: dto.customizationConfig
-                ? JSON.parse(dto.customizationConfig) // Parse string to JSON for Prisma
-                : undefined,
-            },
-          });
-
-          // 2b. Process Variants (This logic remains the same)
-          const existingVariantIds = product.variants.map((v) => v.id);
-          const incomingVariantIds = dto.variants
-            .map((v) => v.id)
-            .filter(Boolean);
-
-          const variantsToDelete = existingVariantIds.filter(
-            (id) => !incomingVariantIds.includes(id),
-          );
-          if (variantsToDelete.length > 0) {
-            await tx.variant.deleteMany({
-              where: { id: { in: variantsToDelete } },
-            });
-          }
-
-          for (const preparedVariant of preparedVariantsData) {
-              // ... variant update/create logic is unchanged ...
-          }
-
-          // 2c. Return the fully updated product
-          return tx.product.findUnique({
-            where: { id: productId },
-            include: {
-              variants: {
-                include: {
-                  attributeValues: {
-                    include: { attribute: true, attributeOption: true },
-                  },
-                },
-              },
-              category: true,
-            },
-          });
-        },
-        { maxWait: 15000, timeout: 30000 },
-      );
-    } catch (error) {
-      if (newUploadedUrls.length > 0) {
-        console.error(
-          'An error occurred. Rolling back S3 uploads:',
-          newUploadedUrls,
-        );
-        // await this.s3Service.deleteImages(newUploadedUrls);
-      }
-      throw error;
-    }
+  if (!product) {
+    throw new NotFoundException(`Product with ID "${productId}" not found.`);
+  }
+  if (product.business.ownerId !== userId) {
+    throw new ForbiddenException(
+      'You do not have permission to modify this product.',
+    );
   }
 
+  const filesToDeleteFromS3: string[] = dto.imagesToDelete || [];
+  if (dto.deleteModel3d && product.model3dUrl) {
+    filesToDeleteFromS3.push(product.model3dUrl);
+  }
+  if (dto.deleteSlicenseDocument && product.slicenseDocumentUrl) {
+    filesToDeleteFromS3.push(product.slicenseDocumentUrl);
+  }
+  
+  if (filesToDeleteFromS3.length > 0) {
+    await this.s3Service.deleteImages(filesToDeleteFromS3);
+  }
+
+  const newUploadedUrls: string[] = [];
+  const uploadAndTrack = async (file: any): Promise<string> => {
+    const url = await this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype);
+    newUploadedUrls.push(url);
+    return url;
+  };
+
+  try {
+    const newProductImageUrls = await Promise.all(newProductImages.map(uploadAndTrack));
+    const newModel3dUrl = newModel3dFile ? await uploadAndTrack(newModel3dFile) : undefined;
+    const newSlicenseDocumentUrl = newSlicenseDocumentFile ? await uploadAndTrack(newSlicenseDocumentFile) : undefined;
+
+    const finalProductImages = [
+      ...product.images.filter((url) => !dto.imagesToDelete?.includes(url)),
+      ...newProductImageUrls,
+    ];
+    const finalModel3dUrl = newModel3dUrl ?? (dto.deleteModel3d ? null : product.model3dUrl);
+    const finalSlicenseDocumentUrl = newSlicenseDocumentUrl ?? (dto.deleteSlicenseDocument ? null : product.slicenseDocumentUrl);
+    
+    const preparedVariantsData = await Promise.all(
+      dto.variants.map(async (variantDto, index) => {
+        const newVariantImages = newVariantImagesMap.get(index.toString()) || [];
+        const newVariantImageUrls = await Promise.all(newVariantImages.map(uploadAndTrack));
+        const finalVariantImages = [
+          ...(variantDto.images || []).filter(url => !dto.imagesToDelete?.includes(url)),
+          ...newVariantImageUrls,
+        ];
+        return { dto: variantDto, finalImages: finalVariantImages };
+      }),
+    );
+
+    // --- STEP 2: EXECUTION (Inside the transaction) ---
+    return await this.prisma.$transaction(
+      async (tx) => {
+        // 2a. Update the Product itself
+        await tx.product.update({
+          where: { id: productId },
+          data: {
+            title: dto.title,
+            description: dto.description,
+            isFeatured: dto.isFeatured,
+            isCustomizable: dto.isCustomizable,
+            slug: dto.title && dto.title !== product.title ? this.generateSlug(dto.title) : undefined,
+            images: finalProductImages,
+            model3dUrl: finalModel3dUrl,
+            slicenseDocumentUrl: finalSlicenseDocumentUrl,
+            customizationConfig: dto.customizationConfig ? JSON.parse(dto.customizationConfig) : undefined,
+          },
+        });
+
+        // 2b. Process Variants - Deletions
+        const existingVariantIds = product.variants.map((v) => v.id);
+        const incomingVariantIds = dto.variants.map((v) => v.id).filter(Boolean);
+        const variantsToDelete = existingVariantIds.filter((id) => !incomingVariantIds.includes(id));
+        if (variantsToDelete.length > 0) {
+          await tx.variant.deleteMany({ where: { id: { in: variantsToDelete } } });
+        }
+
+        // 2c. Process Variants - Updates and Creates (THE FIX IS HERE)
+        for (const preparedVariant of preparedVariantsData) {
+          const variantDto = preparedVariant.dto;
+          const finalImages = preparedVariant.finalImages;
+
+          const attributeValuesToCreate = variantDto.attributeValues.map((attr) => ({
+            attribute: { connect: { id: attr.attributeId } },
+            attributeOption: { connect: { id: attr.attributeOptionId } },
+          }));
+
+          if (variantDto.id) {
+            // UPDATE EXISTING VARIANT
+            await tx.variantAttributeValue.deleteMany({ where: { variantId: variantDto.id } });
+            await tx.variant.update({
+              where: { id: variantDto.id },
+              data: {
+                sku: variantDto.sku,
+                price: variantDto.price,
+                mrp: variantDto.mrp,
+                stock: variantDto.stock,
+                status: variantDto.status,
+                images: finalImages,
+                attributeValues: { create: attributeValuesToCreate },
+              },
+            });
+          } else {
+            // CREATE NEW VARIANT
+            await tx.variant.create({
+              data: {
+                sku: variantDto.sku,
+                price: variantDto.price,
+                mrp: variantDto.mrp,
+                stock: variantDto.stock,
+                status: variantDto.status,
+                images: finalImages,
+                product: { connect: { id: productId } },
+                attributeValues: { create: attributeValuesToCreate },
+              },
+            });
+          }
+        }
+
+        // 2d. Return the fully updated product
+        return tx.product.findUnique({
+          where: { id: productId },
+          include: {
+            variants: { include: { attributeValues: { include: { attribute: true, attributeOption: true } } } },
+            category: true,
+          },
+        });
+      },
+      { maxWait: 15000, timeout: 30000 },
+    );
+  } catch (error) {
+    if (newUploadedUrls.length > 0) {
+      console.error('An error occurred. Rolling back S3 uploads:', newUploadedUrls);
+      // await this.s3Service.deleteImages(newUploadedUrls);
+    }
+    throw error;
+  }
+}
    async getInventoryStats(businessId: string, userId: string) {
     // 1. Authorize the user against the business
     const business = await this.prisma.business.findUnique({
