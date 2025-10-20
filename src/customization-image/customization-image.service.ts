@@ -40,7 +40,7 @@ export class CustomizationImageService {
 
       }
 
-      const newImage = await this.prisma.predefinedImageforCustomization.create({
+      const newImage = await this.prisma.predefinedImageForCustomization.create({
         data: {
           category: dto.category,
           subCategory: dto.subCategory,
@@ -63,12 +63,12 @@ export class CustomizationImageService {
    * Updates the active status of a predefined image.
    */
   async updateActiveState(id: string, active: boolean) {
-    const image = await this.prisma.predefinedImageforCustomization.findUnique({ where: { id } });
+    const image = await this.prisma.predefinedImageForCustomization.findUnique({ where: { id } });
     if (!image) {
       throw new NotFoundException(`Image with ID "${id}" not found.`);
     }
 
-    return this.prisma.predefinedImageforCustomization.update({
+    return this.prisma.predefinedImageForCustomization.update({
       where: { id },
       data: { active },
     });
@@ -78,13 +78,13 @@ export class CustomizationImageService {
    * Deletes a predefined image and its corresponding S3 object if it exists.
    */
   async delete(id: string) {
-    const image = await this.prisma.predefinedImageforCustomization.findUnique({ where: { id } });
+    const image = await this.prisma.predefinedImageForCustomization.findUnique({ where: { id } });
     if (!image) {
       throw new NotFoundException(`Image with ID "${id}" not found.`);
     }
 
     // Delete from database first
-    await this.prisma.predefinedImageforCustomization.delete({ where: { id } });
+    await this.prisma.predefinedImageForCustomization.delete({ where: { id } });
 
     // Check if the URL points to our S3 bucket before trying to delete
     // You should store your S3 base URL/bucket name in env variables
@@ -107,7 +107,7 @@ export class CustomizationImageService {
    * Gets a unique list of all categories.
    */
   async getCategories() {
-    const results = await this.prisma.predefinedImageforCustomization.findMany({
+    const results = await this.prisma.predefinedImageForCustomization.findMany({
       select: { category: true },
       distinct: ['category'],
       orderBy: { category: 'asc' },
@@ -119,7 +119,7 @@ export class CustomizationImageService {
    * Gets a unique list of sub-categories for a given category.
    */
   async getSubCategories(category: string) {
-    const results = await this.prisma.predefinedImageforCustomization.findMany({
+    const results = await this.prisma.predefinedImageForCustomization.findMany({
       where: { category },
       select: { subCategory: true },
       distinct: ['subCategory'],
@@ -132,7 +132,7 @@ export class CustomizationImageService {
    * Gets all active images for a given sub-category.
    */
   async getImagesBySubCategory(category: string, subCategory: string) {
-    return this.prisma.predefinedImageforCustomization.findMany({
+    return this.prisma.predefinedImageForCustomization.findMany({
       where: {
         category,
         subCategory,
