@@ -16,6 +16,8 @@ import { CustomerModule } from './customer/customer.module';
 import { AttributesModule } from './attributes/attributes.module';
 import { AdminModule } from './admin/admin.module';
 import { BannerModule } from './banner/banner.module';
+import { CartModule } from './cart/cart.module';
+import { CustomizationImageModule } from './customization-image/customization-image.module';
 
 @Module({
   imports: [
@@ -51,7 +53,11 @@ import { BannerModule } from './banner/banner.module';
    
     AdminModule,
    
-    BannerModule    
+    BannerModule,
+   
+    CartModule,
+   
+    CustomizationImageModule    
   ],
   providers: [PrismaService],
 

@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MultipartFile } from 'fastify-multipart';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { S3Service } from '../products/utils/s3Service';
+import { UpdateBusinessVerificationDto } from './dto/update-business-verification.dto';
 interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
   brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
@@ -258,5 +259,54 @@ export class AdminService {
       success: true,
       message: `Banner with ID ${bannerId} has been deleted successfully.`,
     };
+  }
+
+  async getAllBusinesses() {
+    const businesses = await this.prisma.business.findMany({
+      select: {
+        id: true, // Always good to include the ID
+        name: true,
+        city: true,
+        state: true,
+        phone: true,
+        category: true,
+        isVerified: true, // Useful for an admin view
+        createdAt: true,
+        owner: {
+          select: {
+            email: true,
+            name: true, // Owner's name is also good to have
+          },
+        },
+      },
+      orderBy: {
+        // Sort by most recently created
+        createdAt: 'desc',
+      },
+    });
+
+    return businesses;
+  }
+
+    async updateBusinessVerification(
+    businessId: string,
+    dto: UpdateBusinessVerificationDto,
+  ) {
+    // First, ensure the business actually exists
+    const businessExists = await this.prisma.business.findUnique({
+      where: { id: businessId },
+    });
+
+    if (!businessExists) {
+      throw new NotFoundException(`Business with ID "${businessId}" not found.`);
+    }
+
+    // If it exists, perform the update
+    return this.prisma.business.update({
+      where: { id: businessId },
+      data: {
+        isVerified: dto.isVerified,
+      },
+    });
   }
 }

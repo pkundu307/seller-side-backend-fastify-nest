@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Req, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Req, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -8,6 +8,7 @@ import { CreateBannerDto } from './dto/create-banner.dto';
 import { MultipartFile } from 'fastify-multipart';
 
 import { FastifyRequest } from 'fastify'
+import { UpdateBusinessVerificationDto } from './dto/update-business-verification.dto';
 interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
   brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
@@ -190,5 +191,59 @@ private async parseBannerMultipartData(
     @Param('id', ParseIntPipe) id: number, // Extracts 'id' from URL and ensures it's a number
   ) {
     return this.adminService.deleteBanner(id);
+  }
+
+
+   @Get('businesses')
+  @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get a list of all businesses registered on the platform' })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns an array of all businesses with owner details.',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          name: { type: 'string' },
+          city: { type: 'string' },
+          state: { type: 'string' },
+          phone: { type: 'string' },
+          category: { type: 'string' },
+          isVerified: { type: 'boolean' },
+          createdAt: { type: 'string', format: 'date-time' },
+          owner: {
+            type: 'object',
+            properties: {
+              email: { type: 'string' },
+              name: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 403, description: 'Forbidden. User is not an admin.' })
+  getAllBusinesses() {
+    return this.adminService.getAllBusinesses();
+  }
+
+   @Patch('businesses/:businessId/verify')
+  @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update the verification status of a business' })
+  @ApiResponse({ status: 200, description: 'Business status updated successfully.' })
+  @ApiResponse({ status: 400, description: 'Bad Request. isVerified must be a boolean.' })
+  @ApiResponse({ status: 403, description: 'Forbidden. User is not an admin.' })
+  @ApiResponse({ status: 404, description: 'Business not found.' })
+  updateBusinessVerification(
+    @Param('businessId') businessId: string,
+    @Body() updateDto: UpdateBusinessVerificationDto,
+  ) {
+    return this.adminService.updateBusinessVerification(businessId, updateDto);
   }
 }
