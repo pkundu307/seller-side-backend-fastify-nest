@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { CustomizationImageService } from './customization-image.service';
+import { CustomizationImageService } from './predefined-assets.service';
 
 describe('CustomizationImageService', () => {
   let service: CustomizationImageService;

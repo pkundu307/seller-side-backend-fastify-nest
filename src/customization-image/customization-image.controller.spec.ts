@@ -1,17 +1,17 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { CustomizationImageController } from './customization-image.controller';
-import { CustomizationImageService } from './customization-image.service';
+import { PredefinedAssetsController } from './customization-image.controller';
+import { PredefinedAssetsService } from './predefined-assets.service';
 
-describe('CustomizationImageController', () => {
-  let controller: CustomizationImageController;
+describe('PredefinedAssetsController', () => {
+  let controller: PredefinedAssetsController;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      controllers: [CustomizationImageController],
-      providers: [CustomizationImageService],
+      controllers: [PredefinedAssetsController],
+      providers: [PredefinedAssetsService],
     }).compile();
 
-    controller = module.get<CustomizationImageController>(CustomizationImageController);
+    controller = module.get<PredefinedAssetsController>(PredefinedAssetsController);
   });
 
   it('should be defined', () => {
