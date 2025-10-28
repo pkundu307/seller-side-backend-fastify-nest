@@ -5,10 +5,11 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { S3Service } from '../products/utils/s3Service'; // Adjust path if needed
 import { GenericImageService } from './generic-image.service';
 import { GenericImageController } from './generic-image.controller';
+import { UserPredefinedAssetsController } from './customization-image-for-user.controller';
 
 @Module({
   imports: [PrismaModule], // Import PrismaModule to use PrismaService
-  controllers: [PredefinedAssetsController,GenericImageController],
+  controllers: [PredefinedAssetsController,GenericImageController,UserPredefinedAssetsController],
   providers: [
     PredefinedAssetsService, 
     GenericImageService,

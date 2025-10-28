@@ -47,22 +47,29 @@ export class PredefinedAssetsService {
     const images = await this.prisma.categoryOrSubcategoryImage.findMany({
       where: {
         categoryOrSubcategoryId: { in: categoryIds },
-        type: 'category', // CRITICAL: Only fetch images of type 'category'
+        type: 'category',
       },
-      // Use distinct to ensure we only get one image per category ID if duplicates exist
+      // Use distinct to ensure we only get one image per category ID
       distinct: ['categoryOrSubcategoryId'],
     });
 
-    // 4. Create a Map for efficient lookup (ID -> URL)
-    const imageUrlMap = new Map<string, string>(
-      images.map(image => [image.categoryOrSubcategoryId, image.url])
+    // 4. Create a Map for efficient lookup (ID -> { imageId, imageUrl })
+    const imageInfoMap = new Map<string, { id: string; url: string }>(
+      images.map(image => [
+        image.categoryOrSubcategoryId,
+        { id: image.id, url: image.url }, // Store both id and url
+      ]),
     );
 
-    // 5. Combine the category data with its corresponding image URL
-    const categoriesWithImages = categories.map(category => ({
-      ...category,
-      imageUrl: imageUrlMap.get(category.id) || null, // Attach the URL or null if no image is found
-    }));
+    // 5. Combine the category data with its corresponding image info
+    const categoriesWithImages = categories.map(category => {
+      const imageInfo = imageInfoMap.get(category.id);
+      return {
+        ...category,
+        imageUrl: imageInfo?.url || null, // Attach the URL or null
+        imageId: imageInfo?.id || null,   // Attach the image's ID or null
+      };
+    });
 
     return categoriesWithImages;
   }
@@ -108,21 +115,28 @@ export class PredefinedAssetsService {
     const images = await this.prisma.categoryOrSubcategoryImage.findMany({
       where: {
         categoryOrSubcategoryId: { in: subCategoryIds },
-        type: 'subcategory', // CRITICAL: Only fetch images of type 'subcategory'
+        type: 'subcategory',
       },
       distinct: ['categoryOrSubcategoryId'],
     });
 
-    // 4. Create a Map for efficient lookup
-    const imageUrlMap = new Map<string, string>(
-      images.map(image => [image.categoryOrSubcategoryId, image.url])
+    // 4. Create a Map for efficient lookup (ID -> { imageId, imageUrl })
+    const imageInfoMap = new Map<string, { id: string; url: string }>(
+      images.map(image => [
+        image.categoryOrSubcategoryId,
+        { id: image.id, url: image.url }, // Store both id and url
+      ]),
     );
 
-    // 5. Combine the subcategory data with its corresponding image URL
-    const subcategoriesWithImages = subcategories.map(subcategory => ({
-      ...subcategory,
-      imageUrl: imageUrlMap.get(subcategory.id) || null,
-    }));
+    // 5. Combine the subcategory data with its corresponding image info
+    const subcategoriesWithImages = subcategories.map(subcategory => {
+      const imageInfo = imageInfoMap.get(subcategory.id);
+      return {
+        ...subcategory,
+        imageUrl: imageInfo?.url || null, // Attach the URL or null
+        imageId: imageInfo?.id || null,   // Attach the image's ID or null
+      };
+    });
 
     return subcategoriesWithImages;
   }
