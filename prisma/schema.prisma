@@ -275,7 +275,18 @@ model PromotionalBanner {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
-
+model HomepageHighlight {
+  id           Int      @id @default(autoincrement())
+  title        String   // e.g., "WEEK SPECIAL", "HOT DEMAND", "CUSTOMER CHOICE"
+  description  String?  // Optional supporting text or tagline
+  imageUrl     String   // Main image to display (e.g., product or theme)
+  targetUrl    String   // Where the user navigates on click
+  type         String 
+  isActive     Boolean  @default(true)
+  position     Int      @default(0) // For ordering on homepage
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
 model Product {
   id             String   @id @default(uuid())
   title          String

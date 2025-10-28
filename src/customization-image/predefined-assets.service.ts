@@ -28,14 +28,44 @@ export class PredefinedAssetsService {
   }
 
   async getAllCategories() {
-    return this.prisma.predefinedCategory.findMany({
+    // 1. Fetch all the primary category data
+    const categories = await this.prisma.predefinedCategory.findMany({
       orderBy: { categoryName: 'asc' },
       include: {
-        _count: { select: { subcategories: true } }, // Include a count of subcategories
+        _count: { select: { subcategories: true } },
       },
     });
-  }
 
+    if (categories.length === 0) {
+      return [];
+    }
+
+    // 2. Collect all category IDs to fetch their images in a single query
+    const categoryIds = categories.map(c => c.id);
+
+    // 3. Fetch all relevant images from the generic image table at once
+    const images = await this.prisma.categoryOrSubcategoryImage.findMany({
+      where: {
+        categoryOrSubcategoryId: { in: categoryIds },
+        type: 'category', // CRITICAL: Only fetch images of type 'category'
+      },
+      // Use distinct to ensure we only get one image per category ID if duplicates exist
+      distinct: ['categoryOrSubcategoryId'],
+    });
+
+    // 4. Create a Map for efficient lookup (ID -> URL)
+    const imageUrlMap = new Map<string, string>(
+      images.map(image => [image.categoryOrSubcategoryId, image.url])
+    );
+
+    // 5. Combine the category data with its corresponding image URL
+    const categoriesWithImages = categories.map(category => ({
+      ...category,
+      imageUrl: imageUrlMap.get(category.id) || null, // Attach the URL or null if no image is found
+    }));
+
+    return categoriesWithImages;
+  }
   // == SubCategory Management ==
   async createSubCategories(dto: CreateSubCategoriesDto) {
     // 1. Verify parent category exists
@@ -58,13 +88,43 @@ export class PredefinedAssetsService {
   }
 
   async getSubCategoriesByCategoryId(categoryId: string) {
-    return this.prisma.predefinedSubCategory.findMany({
+    // 1. Fetch all the primary subcategory data
+    const subcategories = await this.prisma.predefinedSubCategory.findMany({
       where: { categoryId },
       orderBy: { subCategoryName: 'asc' },
       include: {
-        _count: { select: { images: true } }, // Include a count of images
+        _count: { select: { images: true } },
       },
     });
+
+    if (subcategories.length === 0) {
+      return [];
+    }
+
+    // 2. Collect all subcategory IDs for the second query
+    const subCategoryIds = subcategories.map(s => s.id);
+
+    // 3. Fetch all relevant images from the generic image table at once
+    const images = await this.prisma.categoryOrSubcategoryImage.findMany({
+      where: {
+        categoryOrSubcategoryId: { in: subCategoryIds },
+        type: 'subcategory', // CRITICAL: Only fetch images of type 'subcategory'
+      },
+      distinct: ['categoryOrSubcategoryId'],
+    });
+
+    // 4. Create a Map for efficient lookup
+    const imageUrlMap = new Map<string, string>(
+      images.map(image => [image.categoryOrSubcategoryId, image.url])
+    );
+
+    // 5. Combine the subcategory data with its corresponding image URL
+    const subcategoriesWithImages = subcategories.map(subcategory => ({
+      ...subcategory,
+      imageUrl: imageUrlMap.get(subcategory.id) || null,
+    }));
+
+    return subcategoriesWithImages;
   }
 
   // == SubCategory Image Management ==

@@ -15,7 +15,7 @@ import { CustomerUserModule } from 'src/customer-user/customer-user.module';
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => ({
         secret: configService.get('JWT_SECRET'),
-        signOptions: { expiresIn: '60m' }, // Token expires in 60 minutes
+        signOptions: { expiresIn: '90h' }, // Token expires in 60 minutes
       }),
     }),],
       controllers: [AuthController],
