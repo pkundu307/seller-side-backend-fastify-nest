@@ -207,7 +207,7 @@ model OrderItem {
   id                 String  @id @default(uuid())
   quantity           Int
   priceAtTimeOfOrder Decimal // Good practice to store the price, as product price might change later
-  customizationImage String? // URL for the uploaded image if the product is customizable. (Already exists!)
+  customizationImages  String[] // URL for the uploaded image if the product is customizable. (Already exists!)
   customizationDetails Json?
   // --- NEW FEATURES ADDED HERE ---
   note               String? // Optional note for this specific item in the order.
@@ -247,13 +247,12 @@ enum OrderStatus {
 }
 
 model CartItem {
-  id       String @id @default(uuid())
-  quantity Int
-
-  productId String
-  variantId String?
-  customerUserId String
-  customizationImage String?
+  id                   String   @id @default(uuid())
+  quantity             Int
+  productId            String
+  variantId            String?
+  customerUserId       String
+  customizationImages  String[] // 👈 Array of image URLs
   customizationDetails Json?
 
   variant       Variant?      @relation(fields: [variantId], references: [id])
@@ -261,7 +260,6 @@ model CartItem {
 
   @@unique([customerUserId, productId, variantId])
 }
-
 
 model PromotionalBanner {
   id              Int      @id @default(autoincrement())
@@ -292,6 +290,7 @@ model Product {
   title          String
   description    String?  @db.Text
   isCustomizable Boolean  @default(false)
+  isArable     Boolean  @default(false)
   images         String[]
   isPublished    Boolean  @default(false)
   publishDate    DateTime?

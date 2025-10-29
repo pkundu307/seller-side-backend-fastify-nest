@@ -1,21 +1,33 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, Min, IsOptional, IsString, IsJSON } from 'class-validator';
+import {
+  IsArray,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Min,
+} from 'class-validator';
 
 export class UpdateCartItemDto {
-  @ApiPropertyOptional({ description: 'The new quantity of the item.' })
+  @ApiPropertyOptional({ description: 'The new quantity for the cart item.' })
   @IsOptional()
   @IsInt()
   @Min(1)
   quantity?: number;
 
-  @ApiPropertyOptional({ description: 'New URL of the customization image.' })
+  // --- CHANGED ---
+  @ApiPropertyOptional({ 
+    description: 'A new array of URLs for customized images.',
+    type: [String], 
+    example: ['https://example.com/new_image.png'] 
+  })
   @IsOptional()
-  @IsString()
-  customizationImage?: string;
+  @IsArray()
+  @IsUrl({}, { each: true })
+  customizationImages?: string[];
 
-  @ApiPropertyOptional({ description: 'New JSON string containing customization details.' })
+  @ApiPropertyOptional({ description: 'New JSON string of customization details.' })
   @IsOptional()
   @IsString()
-  @IsJSON()
   customizationDetails?: string;
 }

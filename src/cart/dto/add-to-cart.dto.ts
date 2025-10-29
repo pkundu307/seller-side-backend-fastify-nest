@@ -1,37 +1,44 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsUUID,
+  IsArray,
   IsInt,
-  Min,
+  IsNotEmpty,
   IsOptional,
   IsString,
-  IsJSON, // Re-import IsJSON
-  IsNotEmpty,
+  IsUrl,
+  IsUUID,
+  Min,
 } from 'class-validator';
 
 export class AddToCartDto {
-  @ApiProperty({ description: 'The UUID of the Product being added.' })
+  @ApiProperty({ description: 'The ID of the product.' })
   @IsUUID()
+  @IsNotEmpty()
   productId: string;
 
-  @ApiPropertyOptional({ description: 'The UUID of the specific Variant being added (required for configurable products).' })
-  @IsOptional()
+  @ApiPropertyOptional({ description: 'The ID of the product variant, if applicable.' })
   @IsUUID()
+  @IsOptional()
   variantId?: string;
 
-  @ApiProperty({ description: 'The quantity of the item to add.' })
+  @ApiProperty({ description: 'The quantity of the item to add.', default: 1 })
   @IsInt()
   @Min(1)
   quantity: number;
 
-  @ApiProperty({ description: 'URL of the customization image (required for customizable items).' })
-  @IsString()
-  @IsNotEmpty() // Ensures the string is not just empty quotes
-  customizationImage: string; // <-- REQUIRED STRING
-
-  @ApiPropertyOptional({ description: 'JSON string containing customization details (e.g., text, colors).' })
+  // --- CHANGED ---
+  @ApiPropertyOptional({ 
+    description: 'An array of URLs for customized images.',
+    type: [String], // Important for Swagger
+    example: ['https://example.com/image1.png', 'https://example.com/image2.png'] 
+  })
   @IsOptional()
-  @IsString() // Ensure it's a string if present
-  @IsJSON()   // Ensure the string content is valid JSON if present
-  customizationDetails?: string; // <-- OPTIONAL JSON STRING
+  @IsArray()
+  @IsUrl({}, { each: true }) // Validates that each item in the array is a URL
+  customizationImages?: string[];
+
+  @ApiPropertyOptional({ description: 'JSON string of customization details.' })
+  @IsOptional()
+  @IsString()
+  customizationDetails?: string;
 }
