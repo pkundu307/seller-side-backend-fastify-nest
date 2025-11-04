@@ -38,6 +38,8 @@ export class ProductsController {
     @Param('businessId') businessId: string,
   ) {
     const user = req.user as any;
+    console.log(req);
+    
 
     const business = await this.productsService.findBusinessById(businessId);
     if (!business) {

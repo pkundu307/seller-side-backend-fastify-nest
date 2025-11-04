@@ -1,43 +1,46 @@
+// src/cart/dto/add-to-cart.dto.ts
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsArray,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
-  IsUrl,
   IsUUID,
   Min,
 } from 'class-validator';
 
 export class AddToCartDto {
-  @ApiProperty({ description: 'The ID of the product.' })
+  @ApiProperty({
+    description: 'The ID of the product to add to the cart.',
+    example: '44787cc1-a1be-48b6-99cc-d7cae0e37c1b',
+  })
   @IsUUID()
   @IsNotEmpty()
   productId: string;
 
-  @ApiPropertyOptional({ description: 'The ID of the product variant, if applicable.' })
+  @ApiPropertyOptional({
+    description: 'The ID of the product variant (if applicable).',
+    example: '9dca70c5-77df-4d28-8ed7-d7886df29df8',
+  })
   @IsUUID()
   @IsOptional()
   variantId?: string;
 
-  @ApiProperty({ description: 'The quantity of the item to add.', default: 1 })
+  @ApiProperty({
+    description: 'The quantity of the item to add.',
+    minimum: 1,
+    default: 1,
+  })
   @IsInt()
   @Min(1)
   quantity: number;
 
-  // --- CHANGED ---
-  @ApiPropertyOptional({ 
-    description: 'An array of URLs for customized images.',
-    type: [String], // Important for Swagger
-    example: ['https://example.com/image1.png', 'https://example.com/image2.png'] 
+  @ApiPropertyOptional({
+    description:
+      'JSON string with customization instructions and other metadata. ' +
+      'Example: {"instructions": "Print Happy Birthday", "font": "Arial"}',
+    type: String,
   })
-  @IsOptional()
-  @IsArray()
-  @IsUrl({}, { each: true }) // Validates that each item in the array is a URL
-  customizationImages?: string[];
-
-  @ApiPropertyOptional({ description: 'JSON string of customization details.' })
   @IsOptional()
   @IsString()
   customizationDetails?: string;
