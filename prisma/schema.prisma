@@ -256,7 +256,7 @@ model CartItem {
   customizationDetails Json?
   variant       Variant?      @relation(fields: [variantId], references: [id])
   customerUser  CustomerUser  @relation(fields: [customerUserId], references: [id])
-  @@unique([customerUserId, productId, variantId])
+  // @@unique([customerUserId, productId, variantId])
 }
 
 

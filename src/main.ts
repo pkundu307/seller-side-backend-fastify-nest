@@ -26,9 +26,10 @@ async function bootstrap() {
   // 2. Fastify Multipart Plugin (Your setup is excellent)
   app.register(multipart, {
     limits: {
-      fileSize: 5 * 1024 * 1024, // 5 MB
+      fileSize: 10 * 1024 * 1024, // 5 MB
       files: 5,
     },
+    // attachFieldsToBody: true 
   });
 
   // 3. CORRECTED: Apply global pipes with full configuration

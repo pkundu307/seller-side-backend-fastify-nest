@@ -1,109 +1,96 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { S3Service } from 'src/products/utils/s3Service';
 import { AddToCartDto } from './dto/add-to-cart.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
-import { S3Service } from 'src/products/utils/s3Service';
+import { Prisma, Product } from '@prisma/client';
 
-// src/cart/cart.service.ts
-// import { S3Service } from '../s3/s3.service'; // Adjust path as needed
-import { Prisma } from '@prisma/client'; // Import Prisma for error handling
-
-// ... other imports
-
+@Injectable()
 export class CartService {
-  // Inject S3Service
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3Service: S3Service,
   ) {}
 
-   async addItem(
-    customerUserId: string,
-    dto: AddToCartDto,
-    customizationFiles: any[], // <-- We now accept raw file data
-  ) {
-    const { productId, variantId, quantity, customizationDetails } = dto;
-    const uploadedImageUrls: string[] = [];
+  /** -------------------------------
+   * 🛒 Add an item to the cart
+   * ------------------------------- */
+  // async addItem(
+  //   customerUserId: string,
+  //   dto: AddToCartDto,
+  //   customizationFiles: Array<{ buffer: Buffer; filename: string; mimetype: string }>,
+  // ) {
+  //   const { productId, variantId, quantity, customizationDetails } = dto;
+  //   const uploadedImageUrls: string[] = [];
 
-    try {
-      // 1. Validate the product and variant exist
-      await this.validateProduct(productId, variantId);
-      if (quantity < 1) {
-        throw new BadRequestException('Quantity must be at least 1.');
-      }
+  //   if (quantity < 1) throw new BadRequestException('Quantity must be at least 1.');
 
-      // 2. Upload customization images if any are provided
-      if (customizationFiles && customizationFiles.length > 0) {
-        for (const file of customizationFiles) {
-          const imageUrl = await this.s3Service.uploadImage(
-            file.buffer,
-            file.filename,
-            file.mimetype,
-          );
-          uploadedImageUrls.push(imageUrl);
-        }
-      }
+  //   // ✅ Validate product & variant existence
+  //   await this.validateProduct(productId, variantId);
 
-      // 3. Find the unique identifier for the cart item
-      // Using `variantId: variantId || null` is safer for Prisma's unique constraint
-      const uniqueIdentifier = {
-        customerUserId,
-        productId,
-        variantId: variantId || null,
-      };
+  //   // ✅ Upload images (if any)
+  //   if (customizationFiles?.length) {
+  //     for (const file of customizationFiles) {
+  //       const imageUrl = await this.s3Service.uploadImage(
+  //         file.buffer,
+  //         file.filename,
+  //         file.mimetype,
+  //       );
+  //       uploadedImageUrls.push(imageUrl);
+  //     }
+  //   }
 
-      const existingCartItem = await this.prisma.cartItem.findFirst({
-        where: uniqueIdentifier,
-      });
+  //   // ✅ Unique constraint check
+  //   const uniqueKey = {
+  //     customerUserId,
+  //     productId,
+  //     variantId: variantId || null,
+  //   };
 
-      // 4. If it exists, update. If not, create.
-      if (existingCartItem) {
-        const newQuantity = existingCartItem.quantity + quantity;
-        return this.prisma.cartItem.update({
-          where: { id: existingCartItem.id },
-          data: {
-            quantity: newQuantity,
-            // Overwrite images and details with the new upload
-            customizationImages: uploadedImageUrls,
-            customizationDetails: customizationDetails
-              ? JSON.parse(customizationDetails)
-              : Prisma.JsonNull,
-          },
-        });
-      } else {
-        return this.prisma.cartItem.create({
-          data: {
-            customerUserId,
-            productId,
-            variantId,
-            quantity,
-            // Use the URLs from the new upload
-            customizationImages: uploadedImageUrls,
-            customizationDetails: customizationDetails
-              ? JSON.parse(customizationDetails)
-              : undefined,
-          },
-        });
-      }
-    } catch (error) {
-      // Rollback: If something fails after upload, delete the orphaned S3 files
-      if (uploadedImageUrls.length > 0) {
-        console.error(
-          'An error occurred during cart item creation. Rolling back S3 uploads...',
-        );
-        // Assuming you have a method to delete files from S3
-        // await this.s3Service.deleteImages(uploadedImageUrls);
-      }
-      // Re-throw the original error
-      throw error;
-    }
-  }
-  
+  //   const existingCartItem = await this.prisma.cartItem.findFirst({
+  //     where: uniqueKey,
+  //   });
+
+  //   const parsedDetails = customizationDetails
+  //     ? JSON.parse(customizationDetails)
+  //     : Prisma.JsonNull;
+
+  //   if (existingCartItem) {
+  //     // Update existing
+  //     return this.prisma.cartItem.update({
+  //       where: { id: existingCartItem.id },
+  //       data: {
+  //         quantity: existingCartItem.quantity + quantity,
+  //         customizationImages: uploadedImageUrls,
+  //         customizationDetails: parsedDetails,
+  //       },
+  //     });
+  //   }
+
+  //   // Create new
+  //   return this.prisma.cartItem.create({
+  //     data: {
+  //       customerUserId,
+  //       productId,
+  //       variantId,
+  //       quantity,
+  //       customizationImages: uploadedImageUrls,
+  //       customizationDetails: parsedDetails,
+  //     },
+  //   });
+  // }
+
+  /** -------------------------------
+   * 📦 Get all cart items for user
+   * ------------------------------- */
   async getCartItems(customerUserId: string) {
     return this.prisma.cartItem.findMany({
       where: { customerUserId },
       include: {
-        // This include structure is good and will work correctly
         variant: {
           select: {
             id: true,
@@ -120,52 +107,54 @@ export class CartService {
                 id: true,
                 title: true,
                 slug: true,
-                images: true
-              }
-            }
-          }
+                images: true,
+              },
+            },
+          },
         },
       },
     });
   }
 
-  // --- UPDATED METHOD 2: Update Cart Item by ID ---
-  async updateCartItem(customerUserId: string, cartItemId: string, dto: UpdateCartItemDto) {
-    // 1. Find the cart item and verify ownership
+  /** -------------------------------
+   * ✏️ Update cart item by ID
+   * ------------------------------- */
+  async updateCartItem(
+    customerUserId: string,
+    cartItemId: string,
+    dto: UpdateCartItemDto,
+  ) {
     const cartItem = await this.prisma.cartItem.findUnique({
       where: { id: cartItemId },
     });
 
     if (!cartItem || cartItem.customerUserId !== customerUserId) {
-      throw new NotFoundException(`Cart item not found or you do not have permission.`);
+      throw new NotFoundException('Cart item not found or unauthorized.');
     }
 
-    // 2. Prepare update data from DTO
-    const { quantity, customizationImages, customizationDetails } = dto;
-    const updateData: {
-      quantity?: number;
-      customizationImages?: string[];
-      customizationDetails?: any;
-    } = {};
+    const updateData: Prisma.CartItemUpdateInput = {};
 
-    if (quantity !== undefined) {
-      if (quantity < 1) throw new BadRequestException('Quantity cannot be less than 1.');
-      updateData.quantity = quantity;
-    }
-    
-    // CHANGED: Handle the customizationImages array
-    if (customizationImages !== undefined) {
-      updateData.customizationImages = customizationImages;
-    }
-    
-    if (customizationDetails !== undefined) {
-      updateData.customizationDetails = customizationDetails ? JSON.parse(customizationDetails) : null;
+    if (dto.quantity !== undefined) {
+      if (dto.quantity < 1)
+        throw new BadRequestException('Quantity cannot be less than 1.');
+      updateData.quantity = dto.quantity;
     }
 
-    // 3. Execute update if there's data to update
-    if (Object.keys(updateData).length === 0) {
-        throw new BadRequestException('No update data provided.');
+    if (dto.customizationImages !== undefined)
+      updateData.customizationImages = dto.customizationImages;
+
+    if (dto.customizationDetails !== undefined) {
+      try {
+        updateData.customizationDetails = dto.customizationDetails
+          ? JSON.parse(dto.customizationDetails)
+          : Prisma.JsonNull;
+      } catch {
+        throw new BadRequestException('Invalid JSON in customizationDetails.');
+      }
     }
+
+    if (Object.keys(updateData).length === 0)
+      throw new BadRequestException('No valid update fields provided.');
 
     return this.prisma.cartItem.update({
       where: { id: cartItemId },
@@ -173,26 +162,120 @@ export class CartService {
     });
   }
 
-  // Helper to ensure product/variant IDs are valid (unchanged)
-  private async validateProduct(productId: string, variantId?: string) {
-      const product = await this.prisma.product.findUnique({
-        where: { 
+  /** -------------------------------
+   * 🧩 Validate product and variant
+   * ------------------------------- */
+ private async validateProduct(productId: string, variantId?: string): Promise<Product> {
+    const product = await this.prisma.product.findUnique({
+      where: { 
         id: productId,
-        isPublished: true // It's good practice to ensure the product is actually available
+        isPublished: true // Good practice to only allow adding published products
       },
       include: {
-        // Only include variants if a variantId was passed
         variants: variantId ? { where: { id: variantId } } : false,
       },
     });
-      if (!product) {
-        throw new BadRequestException('Product not found.');
-      }
-      
-       if (variantId && (!product.variants || product.variants.length === 0)) {
+
+    // Check 1: Product exists and is published
+    if (!product) {
+      throw new NotFoundException(`Product with ID "${productId}" was not found or is not available.`);
+    }
+
+    // Check 2: If a variantId was provided, ensure it's a valid variant of this product
+    if (variantId && (!product.variants || product.variants.length === 0)) {
       throw new NotFoundException(`Variant with ID "${variantId}" does not exist for this product.`);
     }
-      
-      return product;
-  }
+    
+    return product; // Return the full product object on success
+}
+
+
+/**
+ * REWRITTEN: This method now handles customizable and non-customizable products differently.
+ */
+async addItem(
+    customerUserId: string,
+    dto: AddToCartDto,
+    customizationFiles: Array<{ buffer: Buffer; filename: string; mimetype: string }>,
+) {
+    const { productId, variantId, quantity, customizationDetails } = dto;
+    
+    if (quantity < 1) throw new BadRequestException('Quantity must be at least 1.');
+
+    // Step 1: Validate the product and get its properties (like isCustomizable)
+    const product = await this.validateProduct(productId, variantId);
+
+    // Step 2: Upload any customization images to S3
+    const uploadedImageUrls: string[] = [];
+    if (customizationFiles?.length) {
+      for (const file of customizationFiles) {
+        const imageUrl = await this.s3Service.uploadImage(
+          file.buffer,
+          file.filename,
+          file.mimetype,
+        );
+        uploadedImageUrls.push(imageUrl);
+      }
+    }
+
+    // Step 3: Prepare the data for the cart item
+    const parsedDetails = customizationDetails
+      ? JSON.parse(customizationDetails)
+      : Prisma.JsonNull;
+
+    // --- CORE LOGIC BRANCH ---
+    if (product.isCustomizable && (uploadedImageUrls.length > 0 || customizationDetails)) {
+        // For customizable products, ALWAYS create a new cart item entry.
+        // Each customization is treated as a unique item.
+        console.log(`Product is customizable. Creating new cart entry for product ${productId}.`);
+        
+        return this.prisma.cartItem.create({
+          data: {
+            customerUserId,
+            productId,
+            variantId,
+            quantity, // Typically quantity is 1 for custom items, but we'll respect the DTO
+            customizationImages: uploadedImageUrls,
+            customizationDetails: parsedDetails,
+          },
+        });
+
+    } else {
+        // For standard, non-customizable products, use the original "find or create/update" logic.
+        console.log(`Product is not customizable. Checking for existing cart item for product ${productId}.`);
+        
+        const existingCartItem = await this.prisma.cartItem.findFirst({
+          where: {
+            customerUserId,
+            productId,
+            variantId: variantId || null,
+          },
+        });
+        console.log(`Existing cart item: ${existingCartItem ? 'Found' : 'Not found'}`);
+        
+
+        if (existingCartItem) {
+          // If it exists, just update the quantity.
+          return this.prisma.cartItem.update({
+            where: { id: existingCartItem.id },
+            data: {
+              quantity: existingCartItem.quantity + quantity,
+            },
+          });
+        } else {
+          // If it doesn't exist, create a new one.
+          return this.prisma.cartItem.create({
+            data: {
+              customerUserId,
+              productId,
+              variantId,
+              quantity,
+              // Standard products might not have these, but we include them in case
+              customizationImages: uploadedImageUrls,
+              customizationDetails: parsedDetails,
+            },
+          });
+        }
+    }
+}
 }

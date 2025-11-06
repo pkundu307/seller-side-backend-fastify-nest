@@ -1,4 +1,3 @@
-// src/cart/dto/add-to-cart.dto.ts
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsInt,
@@ -19,7 +18,7 @@ export class AddToCartDto {
   productId: string;
 
   @ApiPropertyOptional({
-    description: 'The ID of the product variant (if applicable).',
+    description: 'The ID of the product variant, if applicable.',
     example: '9dca70c5-77df-4d28-8ed7-d7886df29df8',
   })
   @IsUUID()
@@ -27,9 +26,9 @@ export class AddToCartDto {
   variantId?: string;
 
   @ApiProperty({
-    description: 'The quantity of the item to add.',
-    minimum: 1,
+    description: 'Quantity of this product to add.',
     default: 1,
+    minimum: 1,
   })
   @IsInt()
   @Min(1)
@@ -37,9 +36,8 @@ export class AddToCartDto {
 
   @ApiPropertyOptional({
     description:
-      'JSON string with customization instructions and other metadata. ' +
-      'Example: {"instructions": "Print Happy Birthday", "font": "Arial"}',
-    type: String,
+      'JSON string containing customization details like message, color, etc.',
+    example: '{"instructions":"Add Happy Birthday text","font":"Arial"}',
   })
   @IsOptional()
   @IsString()
