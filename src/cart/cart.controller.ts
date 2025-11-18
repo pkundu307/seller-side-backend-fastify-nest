@@ -8,6 +8,9 @@ import {
   BadRequestException,
   UseGuards,
   Body,
+  Delete,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { FastifyRequest } from 'fastify';
 import { CartService } from './cart.service';
@@ -130,5 +133,22 @@ async testMultipart(@Req() req: FastifyRequest) {
     }
 
     return { fields, files };
+  }
+
+    /** -------------------------------
+   * 🗑️ Delete cart item by ID
+   * ------------------------------- */
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete an item from the cart' })
+  @HttpCode(HttpStatus.OK) // Or HttpStatus.NO_CONTENT (204) if you prefer not returning the deleted item
+  async deleteCartItem(
+    @Param('id') cartItemId: string,
+    @Req() req: UserRequest,
+  ) {
+    // The service method returns the deleted item, which is good for confirmation.
+    // NestJS will automatically respond with a 200 OK status.
+    return this.cartService.deleteCartItem(req.user.id, cartItemId);
   }
 }

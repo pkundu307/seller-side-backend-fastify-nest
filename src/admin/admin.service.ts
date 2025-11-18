@@ -171,6 +171,7 @@ export class AdminService {
         bannerImageFile.buffer,
         bannerImageFile.filename,
         bannerImageFile.mimetype,
+        "banners"
       );
       uploadedImageUrls.push(bannerImageUrl);
 
@@ -181,6 +182,7 @@ export class AdminService {
           brandLogoFile.buffer,
           brandLogoFile.filename,
           brandLogoFile.mimetype,
+          "banners"
         );
         uploadedImageUrls.push(brandLogoUrl);
       }

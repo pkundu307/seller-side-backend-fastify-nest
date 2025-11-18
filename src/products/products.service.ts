@@ -137,6 +137,7 @@ async createProduct(businessId: string, formData: any) {
           image.buffer,
           image.filename,
           image.mimetype,
+          "products"
         );
         productImagesUrls.push(imageUrl);
            uploadedImageUrls.push(imageUrl); 
@@ -184,6 +185,7 @@ async createProduct(businessId: string, formData: any) {
             imageData.buffer,
             imageData.filename,
             imageData.mimetype,
+            "products"
           );
           variantImageUrls.push(imageUrl);
             uploadedImageUrls.push(imageUrl);
@@ -380,7 +382,7 @@ async updateProduct(
 
   const newUploadedUrls: string[] = [];
   const uploadAndTrack = async (file: any): Promise<string> => {
-    const url = await this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype);
+    const url = await this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype,"products");
     newUploadedUrls.push(url);
     return url;
   };

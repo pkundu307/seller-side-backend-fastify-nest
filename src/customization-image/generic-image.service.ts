@@ -39,7 +39,7 @@ export class GenericImageService {
       if (files && files.length > 0) {
         // --- PATH 1: Upload files to S3 in parallel ---
         const uploadPromises = files.map(file => 
-          this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype)
+          this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype,"assets")
         );
         finalImageUrls = await Promise.all(uploadPromises);
         uploadedUrlsForRollback.push(...finalImageUrls);

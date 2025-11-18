@@ -116,6 +116,23 @@ export class CartService {
     });
   }
 
+   async deleteCartItem(customerUserId: string, cartItemId: string) {
+    // First, find the item to ensure it exists and belongs to the user.
+    const cartItem = await this.prisma.cartItem.findUnique({
+      where: { id: cartItemId },
+    });
+
+    // If it doesn't exist or doesn't belong to the requesting user, throw an error.
+    if (!cartItem || cartItem.customerUserId !== customerUserId) {
+      throw new NotFoundException('Cart item not found or unauthorized.');
+    }
+
+    // If the check passes, delete the item.
+    return this.prisma.cartItem.delete({
+      where: { id: cartItemId },
+    });
+  }
+
   /** -------------------------------
    * ✏️ Update cart item by ID
    * ------------------------------- */
@@ -213,6 +230,7 @@ async addItem(
           file.buffer,
           file.filename,
           file.mimetype,
+          "cart"
         );
         uploadedImageUrls.push(imageUrl);
       }

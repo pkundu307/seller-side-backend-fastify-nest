@@ -167,7 +167,7 @@ export class PredefinedAssetsService {
       if (files && files.length > 0) {
         // Upload files to S3 in parallel for efficiency
         const uploadPromises = files.map(file =>
-          this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype),
+          this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype,"assets"),
         );
         finalImageUrls = await Promise.all(uploadPromises);
         uploadedUrlsForRollback.push(...finalImageUrls);

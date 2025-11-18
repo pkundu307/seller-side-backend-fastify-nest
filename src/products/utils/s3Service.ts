@@ -1,70 +1,88 @@
-// ADD DeleteObjectsCommand and ObjectIdentifier to your imports
-import { S3Client, PutObjectCommand, DeleteObjectsCommand, ObjectIdentifier } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectsCommand,
+  ObjectIdentifier,
+} from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, BadRequestException } from '@nestjs/common';
 
 @Injectable()
 export class S3Service {
   private readonly s3: S3Client;
-  private readonly bucketName: string; // Declared here
-  private readonly region: string;     // Declared here
+  private readonly bucketName: string;
+  private readonly accountId: string;
+
+  // Allowed folders (Security + validation)
+  private readonly allowedFolders = ['products', 'banners', 'avatars', 'categories', 'others','cart','assets'];
 
   constructor() {
-    // --- UPDATED CONSTRUCTOR ---
-    const secretAccessKey = process.env.secretAccessKey;
-    const accessKeyId = process.env.accessKeyId;
-    
-    // Fail-fast: Check all required env vars on startup
-    if (!secretAccessKey) throw new Error('AWS secretAccessKey is not defined in environment variables');
-    if (!accessKeyId) throw new Error('AWS accessKeyId is not defined in environment variables');
-    if (!process.env.region) throw new Error('AWS region is not defined in environment variables');
-    if (!process.env.Bucket) throw new Error('AWS Bucket name is not defined in environment variables');
+    const secretAccessKey = process.env.R2_SECRET_KEY;
+    const accessKeyId = process.env.R2_ACCESS_KEY;
+    const bucketName = process.env.R2_BUCKET;
+    const accountId = process.env.R2_ACCOUNT_ID;
+    const endpoint = process.env.R2_ENDPOINT;
 
-    // Initialize class properties
-    this.region = process.env.region;
-    this.bucketName = process.env.Bucket;
+    if (!secretAccessKey) throw new Error('R2_SECRET_KEY missing');
+    if (!accessKeyId) throw new Error('R2_ACCESS_KEY missing');
+    if (!bucketName) throw new Error('R2_BUCKET missing');
+    if (!accountId) throw new Error('R2_ACCOUNT_ID missing');
+    if (!endpoint) throw new Error('R2_ENDPOINT missing');
+
+    this.bucketName = bucketName;
+    this.accountId = accountId;
 
     this.s3 = new S3Client({
-      region: this.region,
-      credentials: {
-        accessKeyId: accessKeyId,
-        secretAccessKey: secretAccessKey,
-      },
+      region: 'auto',
+      endpoint,
+      credentials: { accessKeyId, secretAccessKey },
     });
   }
 
-  async uploadImage(fileBuffer: Buffer, fileName: string, mimeType: string): Promise<string> {
-    const uniqueName = `products/${randomUUID()}-${fileName}`;
+  // Validate folder
+  private validateFolder(folder: string) {
+    if (!folder || typeof folder !== 'string') {
+      throw new BadRequestException('Folder name is required.');
+    }
+    if (!this.allowedFolders.includes(folder)) {
+      throw new BadRequestException(
+        `Invalid folder "${folder}". Allowed folders: ${this.allowedFolders.join(', ')}`,
+      );
+    }
+  }
+
+  async uploadImage(
+    fileBuffer: Buffer,
+    fileName: string,
+    mimeType: string,
+    folder: string,
+  ): Promise<string> {
+    this.validateFolder(folder);
+
+    const uniqueKey = `${folder}/${randomUUID()}-${fileName}`;
 
     const command = new PutObjectCommand({
-      // UPDATE: Use the class property for consistency
       Bucket: this.bucketName,
-      Key: uniqueName,
+      Key: uniqueKey,
       Body: fileBuffer,
       ContentType: mimeType,
-      ACL: 'public-read',
     });
 
     await this.s3.send(command);
 
-    // UPDATE: Use the class properties here as well
-    return `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${uniqueName}`;
+    return `${process.env.R2_PUBLIC_URL}/${uniqueKey}`;
   }
 
   async deleteImages(imageUrls: string[]): Promise<void> {
-    if (!imageUrls || imageUrls.length === 0) {
-      return;
-    }
+    if (!imageUrls || imageUrls.length === 0) return;
 
-    const objectsToDelete: ObjectIdentifier[] = imageUrls.map(url => {
-      const urlPath = new URL(url).pathname;
-      const key = urlPath.startsWith('/') ? urlPath.substring(1) : urlPath;
+    const objectsToDelete: ObjectIdentifier[] = imageUrls.map((url) => {
+      const key = url.replace(`${process.env.R2_PUBLIC_URL}/`, '');
       return { Key: key };
     });
 
     try {
       const command = new DeleteObjectsCommand({
-        // This will now correctly use the initialized bucket name
         Bucket: this.bucketName,
         Delete: {
           Objects: objectsToDelete,
@@ -74,15 +92,13 @@ export class S3Service {
 
       const response = await this.s3.send(command);
 
-      if (response.Errors && response.Errors.length > 0) {
-        console.error('Failed to delete some objects from S3:', response.Errors);
-        throw new InternalServerErrorException('Could not delete all specified images from storage.');
+      if (response.Errors?.length) {
+        console.error('R2 delete errors:', response.Errors);
+        throw new InternalServerErrorException('Some images could not be deleted from R2.');
       }
-
-      console.log('Successfully deleted objects from S3:', objectsToDelete.map(o => o.Key));
     } catch (error) {
-      console.error('Error executing S3 delete command:', error);
-      throw new InternalServerErrorException('An error occurred while trying to delete images from storage.');
+      console.error('R2 delete error:', error);
+      throw new InternalServerErrorException('Failed to delete images from R2.');
     }
   }
 }
