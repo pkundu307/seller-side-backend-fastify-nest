@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python Bootcamp: Video 2</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap');
+
+        :root {
+            /* --- THEME COLORS --- */
+            --bg-color: #050505;
+            --card-bg: #0a0a0a;
+            --card-surface: #111111;
+            
+            /* Gold Palette */
+            --gold-primary: #eaddcf; 
+            --gold-dim: #c2a487;
+            --gold-highlight: #fff5ea;
+
+            /* Logic Indicators */
+            --green: #4ade80; /* Good/True */
+            --red: #f87171;   /* Bad/False */
+            --blue: #60a5fa;  /* Type/Info */
+            --purple: #c084fc; /* Modern Features */
+
+            /* Pill UI Gradients */
+            --pill-active-bg: linear-gradient(135deg, #c2a487, #eaddcf);
+            --pill-active-text: #050505;
+            --pill-inactive-bg: #1a1a1a;
+            --pill-inactive-text: #555;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background-color: var(--bg-color);
+            font-family: 'Outfit', sans-serif;
+            color: var(--gold-primary);
+            -webkit-print-color-adjust: exact;
+            overflow-x: hidden;
+        }
+
+        /* --- LAYOUT --- */
+        .slide {
+            height: 100vh;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            page-break-after: always;
+        }
+
+        /* --- 3D CARD --- */
+        .card {
+            width: 90%;
+            max-width: 1200px;
+            min-height: 650px;
+            background: var(--card-bg);
+            border-radius: 30px;
+            padding: 3rem 4rem;
+            position: relative;
+            border: 1px solid rgba(255,255,255,0.05);
+            box-shadow: 
+                0 30px 60px rgba(0,0,0,0.9),
+                inset 0 0 0 1px rgba(234, 221, 207, 0.05);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            transform: perspective(2000px) rotateX(0.5deg);
+        }
+
+        /* --- PILL TOGGLE UI --- */
+        .pill-wrapper {
+            position: absolute;
+            top: 40px;
+            right: 40px;
+            background: var(--pill-inactive-bg);
+            padding: 6px;
+            border-radius: 50px;
+            display: flex;
+            gap: 5px;
+            box-shadow: inset 2px 2px 8px rgba(0,0,0,0.6);
+            border: 1px solid rgba(255,255,255,0.03);
+        }
+
+        .pill {
+            padding: 8px 24px;
+            border-radius: 40px;
+            font-size: 0.7rem;
+            font-weight: 800;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: var(--pill-inactive-text);
+            background: transparent;
+        }
+
+        .pill.active {
+            background: var(--pill-active-bg);
+            color: var(--pill-active-text);
+            box-shadow: 0 4px 15px rgba(194, 164, 135, 0.2);
+        }
+
+        /* --- TYPOGRAPHY --- */
+        .kicker {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--gold-dim);
+            font-size: 0.9rem;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .kicker::before {
+            content: ''; display: block; width: 30px; height: 1px; background: var(--gold-dim);
+        }
+
+        h1 {
+            font-size: 3rem;
+            line-height: 1.1;
+            background: linear-gradient(to bottom right, #fff, var(--gold-dim));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 1.5rem;
+            font-weight: 700;
+        }
+
+        p, li {
+            font-size: 1.1rem;
+            line-height: 1.6;
+            color: #999;
+            margin-bottom: 0.8rem;
+        }
+
+        /* --- CODE BLOCKS --- */
+        .code-block {
+            font-family: 'JetBrains Mono', monospace;
+            background: #000;
+            padding: 1.5rem;
+            border-radius: 15px;
+            border: 1px solid #222;
+            margin-top: 1rem;
+            color: #fff;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            font-size: 1rem;
+            width: 100%;
+        }
+
+        .output-box {
+            font-family: 'JetBrains Mono', monospace;
+            background: #1a1a1a;
+            border-left: 3px solid var(--green);
+            padding: 10px 20px;
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #ccc;
+        }
+        
+        /* Syntax Highlighting */
+        .kwd { color: var(--gold-dim); font-weight: bold; } 
+        .str { color: var(--green); } 
+        .num { color: #fca5a5; } 
+        .bool { color: var(--purple); font-style: italic; }
+        .func { color: var(--blue); }
+        .comment { color: #555; }
+        .bad { text-decoration: line-through; color: var(--red); opacity: 0.7; }
+        
+        /* --- GRID SYSTEMS --- */
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; margin-top: 1rem; }
+        
+        .comparison-box {
+            padding: 1rem;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+
+        @media print {
+            body { background-color: #050505 !important; }
+            .slide { height: 100vh; page-break-after: always; }
+            .card { box-shadow: none; border: 1px solid #333; transform: none; width: 100%; height: 95vh; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- SLIDE 1: Title -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Video 02</div><div class="pill">Agenda</div></div>
+            <div class="kicker">Prasanna Kundu</div>
+            <h1>Variables, Types & I/O<br><span style="font-weight:300; font-size: 2.5rem;">2025 Engineering Standards</span></h1>
+            <p>We move beyond "Hello World" to understanding how Python stores data, validates it, and interacts with users using modern PEP standards.</p>
+            
+            <div class="grid-2">
+                <div class="comparison-box">
+                    <h3 style="color:var(--gold-dim)">Core Concepts</h3>
+                    <ul>
+                        <li>Variables as Pointers</li>
+                        <li>Fundamental Data Types</li>
+                        <li>Input / Output Streams</li>
+                    </ul>
+                </div>
+                <div class="comparison-box">
+                    <h3 style="color:var(--purple)">2025 Modern Features</h3>
+                    <ul>
+                        <li>F-Strings & Formatting</li>
+                        <li>Type Hints (PEP 695)</li>
+                        <li>Walrus Operator & Match</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 2: Naming Conventions -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Naming</div><div class="pill">PEP 8</div></div>
+            <div class="kicker">Best Practices</div>
+            <h1>Naming Conventions</h1>
+            <p>Code is read more often than it is written. Use <strong>Snake Case</strong> for Python variables.</p>
+            
+            <div class="grid-2">
+                <div>
+                    <h3 style="color:var(--green)">✅ The Python Way</h3>
+                    <div class="code-block">
+                        user_age = <span class="num">25</span><br>
+                        total_bill_amount = <span class="num">450.50</span><br>
+                        is_authenticated = <span class="bool">True</span>
+                    </div>
+                </div>
+                <div>
+                    <h3 style="color:var(--red)">❌ Avoid These</h3>
+                    <div class="code-block">
+                        <span class="bad">UserAge = 25</span> <span class="comment"># CamelCase (Java style)</span><br>
+                        <span class="bad">x = 25</span> <span class="comment"># Not Descriptive</span><br>
+                        <span class="bad">1st_user = "Ram"</span> <span class="comment"># Starts with number</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 3: Constants -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Design</div></div>
+            <div class="kicker">Architecture</div>
+            <h1>Constants</h1>
+            <p>Variables that should <strong>not change</strong>. Python doesn't enforce this, but we use <strong>ALL_CAPS</strong> to signal intent.</p>
+            
+            <div class="code-block">
+                <span class="comment"># Database Configurations</span><br>
+                DB_PORT = <span class="num">5432</span><br>
+                MAX_CONNECTIONS = <span class="num">100</span><br>
+                API_KEY = <span class="str">"sk_live_..."</span>
+                <br><br>
+                <span class="comment"># Indian Tax Example</span><br>
+                GST_RATE = <span class="num">0.18</span> 
+            </div>
+            <p style="font-size: 0.9rem; color: var(--gold-dim); margin-top: 10px;">Note: In 2025, we use `typing.Final` to strictly enforce this.</p>
+        </div>
+    </div>
+
+    <!-- SLIDE 4: Integer -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Type</div><div class="pill">Int</div></div>
+            <div class="kicker">Data Types</div>
+            <h1>Integer (int)</h1>
+            <p>Whole numbers. Python integers have arbitrary precision (they can be huge).</p>
+            
+            <div class="code-block">
+                users = <span class="num">10</span><br>
+                views = <span class="num">1_500_000</span> <span class="comment"># 2025 Tip: Use underscores for readability</span><br>
+                print(views) 
+            </div>
+            <div class="output-box">1500000</div>
+            <p>The underscore `_` is ignored by Python but helps engineers read large numbers (e.g., 1.5 Million).</p>
+        </div>
+    </div>
+
+    <!-- SLIDE 5: Float -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Type</div><div class="pill">Float</div></div>
+            <div class="kicker">Data Types</div>
+            <h1>Floating Point (float)</h1>
+            <p>Numbers with decimal points. Be careful: Computers struggle with decimal precision.</p>
+            
+            <div class="code-block">
+                price = <span class="num">99.99</span><br>
+                chai_price = <span class="num">15.50</span><br>
+                <br>
+                <span class="comment"># The Floating Point Error</span><br>
+                <span class="kwd">print</span>(<span class="num">0.1</span> + <span class="num">0.2</span>)
+            </div>
+            <div class="output-box">0.30000000000000004</div>
+            <p style="font-size: 0.9rem;">Engineering Tip: For money, use the `decimal` module, never floats.</p>
+        </div>
+    </div>
+
+    <!-- SLIDE 6: Boolean -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Type</div><div class="pill">Bool</div></div>
+            <div class="kicker">Logic</div>
+            <h1>Boolean (bool)</h1>
+            <p>The foundation of decision making. Only two values exist.</p>
+            
+            <div class="code-block">
+                is_active = <span class="bool">True</span><br>
+                is_admin = <span class="bool">False</span><br>
+                <br>
+                <span class="comment"># Anything empty is usually "False" in Python</span><br>
+                <span class="kwd">bool</span>(<span class="num">0</span>)  <span class="comment"># False</span><br>
+                <span class="kwd">bool</span>(<span class="num">1</span>)  <span class="comment"># True</span>
+            </div>
+            <p>In Python, <span class="bool">True</span> is actually equal to <span class="num">1</span> and <span class="bool">False</span> is <span class="num">0</span>.</p>
+        </div>
+    </div>
+
+    <!-- SLIDE 7: Strings -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Type</div><div class="pill">Str</div></div>
+            <div class="kicker">Text</div>
+            <h1>Strings (str)</h1>
+            <p>A sequence of characters. You can use single or double quotes.</p>
+            
+            <div class="code-block">
+                name = <span class="str">"Prasanna"</span><br>
+                quote = <span class="str">'Python is Amazing'</span><br>
+                <br>
+                <span class="comment"># Multiline String (Triple Quotes)</span><br>
+                address = <span class="str">"""<br>
+                123, Tech Street,<br>
+                Bangalore, India<br>
+                """</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 8: Type Checking -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill">Check</div><div class="pill active">Type()</div></div>
+            <div class="kicker">Validation</div>
+            <h1>type()</h1>
+            <p>Used to debug and check what data type a variable holds.</p>
+            
+            <div class="code-block">
+                score = <span class="num">183</span> <span class="comment"># Cricket Score</span><br>
+                player = <span class="str">"Virat"</span><br>
+                <br>
+                <span class="kwd">print</span>(<span class="func">type</span>(score))<br>
+                <span class="kwd">print</span>(<span class="func">type</span>(player))
+            </div>
+            <div class="output-box">
+                &lt;class 'int'&gt;<br>
+                &lt;class 'str'&gt;
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 9: isinstance -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Validate</div></div>
+            <div class="kicker">Best Practices</div>
+            <h1>isinstance() > type()</h1>
+            <p>In professional code, avoid `type() == int`. Use `isinstance()` because it supports inheritance.</p>
+            
+            <div class="code-block">
+                age = <span class="num">25</span><br>
+                <br>
+                <span class="comment"># ✅ The Professional Way</span><br>
+                <span class="kwd">if</span> <span class="func">isinstance</span>(age, <span class="func">int</span>):<br>
+                &nbsp;&nbsp;<span class="kwd">print</span>(<span class="str">"Valid Age"</span>)<br>
+                <br>
+                <span class="comment"># ❌ The Beginner Way</span><br>
+                <span class="kwd">if</span> <span class="func">type</span>(age) == <span class="func">int</span>:<br>
+                &nbsp;&nbsp;<span class="kwd">print</span>(<span class="str">"Valid Age"</span>)
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 10: Type Hinting -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Modern</div><div class="pill">Hints</div></div>
+            <div class="kicker">2025 Standard</div>
+            <h1>Type Hints</h1>
+            <p>Python is dynamic, but modern codebases use Type Hints for better IDE support and error checking.</p>
+            
+            <div class="code-block">
+                <span class="comment"># Variable: Type = Value</span><br>
+                user_name: <span class="func">str</span> = <span class="str">"Kunal"</span><br>
+                user_age: <span class="func">int</span> = <span class="num">25</span><br>
+                is_staff: <span class="func">bool</span> = <span class="bool">False</span>
+            </div>
+            <p style="font-size:0.9rem; color: var(--gold-dim)">Note: This doesn't stop the code from running if types mismatch, but VS Code will warn you.</p>
+        </div>
+    </div>
+
+    <!-- SLIDE 11: PEP 695 -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Python 3.12</div></div>
+            <div class="kicker">PEP 695 Update</div>
+            <h1>The `type` Keyword</h1>
+            <p>Introduced in Python 3.12, this simplifies creating Type Aliases for complex data.</p>
+            
+            <div class="code-block">
+                <span class="comment"># Old Way (Pre-2024)</span><br>
+                Vector = <span class="func">list</span>[<span class="func">float</span>]<br>
+                <br>
+                <span class="comment"># ✅ New 2025 Way</span><br>
+                <span class="kwd">type</span> Coordinate = <span class="func">tuple</span>[<span class="func">float</span>, <span class="func">float</span>]<br>
+                <br>
+                point: Coordinate = (<span class="num">12.5</span>, <span class="num">77.8</span>)
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 12: Output -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">I/O</div><div class="pill">Print</div></div>
+            <div class="kicker">Output</div>
+            <h1>print() Function</h1>
+            <p>Sends data to the standard output (console).</p>
+            
+            <div class="code-block">
+                <span class="kwd">print</span>(<span class="str">"Hello"</span>, <span class="str">"World"</span>)<br>
+                <span class="kwd">print</span>(<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>)
+            </div>
+            <div class="output-box">
+                Hello World<br>
+                1 2 3
+            </div>
+            <p>Note: Comma adds a space by default.</p>
+        </div>
+    </div>
+
+    <!-- SLIDE 13: Print Sep -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">I/O</div><div class="pill">Sep</div></div>
+            <div class="kicker">Formatting Output</div>
+            <h1>Argument: sep=""</h1>
+            <p>Controls what separates multiple items in a print statement.</p>
+            
+            <div class="code-block">
+                day = <span class="num">15</span><br>
+                month = <span class="str">"Aug"</span><br>
+                year = <span class="num">2025</span><br>
+                <br>
+                <span class="kwd">print</span>(day, month, year, <span class="kwd">sep</span>=<span class="str">"-"</span>)
+            </div>
+            <div class="output-box">
+                15-Aug-2025
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 14: Print End -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">I/O</div><div class="pill">End</div></div>
+            <div class="kicker">Formatting Output</div>
+            <h1>Argument: end=""</h1>
+            <p>By default, print adds a newline (`\n`). Use `end` to change this.</p>
+            
+            <div class="code-block">
+                <span class="kwd">print</span>(<span class="str">"Loading"</span>, <span class="kwd">end</span>=<span class="str">"..."</span>)<br>
+                <span class="kwd">print</span>(<span class="str">"Done"</span>)
+            </div>
+            <div class="output-box">
+                Loading...Done
+            </div>
+            <p style="font-size:0.9rem;">Useful for creating progress bars or single-line logs.</p>
+        </div>
+    </div>
+
+    <!-- SLIDE 15: Input -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">I/O</div><div class="pill">Input</div></div>
+            <div class="kicker">User Interaction</div>
+            <h1>input() Function</h1>
+            <p>Pauses program execution and waits for the user to type something.</p>
+            
+            <div class="code-block">
+                name = <span class="kwd">input</span>(<span class="str">"Enter your name: "</span>)<br>
+                <span class="kwd">print</span>(<span class="str">"Welcome"</span>, name)
+            </div>
+            <div class="output-box">
+                Enter your name: <strong>Prasanna</strong><br>
+                Welcome Prasanna
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 16: Input Trap -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill" style="background:var(--red); color:#fff;">Trap</div></div>
+            <div class="kicker">The String Trap</div>
+            <h1>Input returns Strings</h1>
+            <p><code>input()</code> ALWAYS returns a string, even if you type a number.</p>
+            
+            <div class="code-block">
+                <span class="comment"># ❌ BAD CODE</span><br>
+                chai = <span class="kwd">input</span>(<span class="str">"Price: "</span>) <span class="comment"># User types 10</span><br>
+                total = chai + <span class="num">5</span>      <span class="comment"># ERROR! "10" + 5</span><br>
+                <br>
+                <span class="comment"># ✅ GOOD CODE (Type Casting)</span><br>
+                chai = <span class="func">int</span>(<span class="kwd">input</span>(<span class="str">"Price: "</span>))<br>
+                total = chai + <span class="num">5</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 17: F-Strings -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Format</div><div class="pill">F-Str</div></div>
+            <div class="kicker">Modern Formatting</div>
+            <h1>f-strings</h1>
+            <p>Introduced in Python 3.6, perfected in 2025. The best way to format strings.</p>
+            
+            <div class="code-block">
+                name = <span class="str">"Kunal"</span><br>
+                role = <span class="str">"Dev"</span><br>
+                <br>
+                <span class="comment"># Put 'f' before the quote</span><br>
+                msg = <span class="str">f"User {name} is a {role}"</span><br>
+                <span class="kwd">print</span>(msg)
+            </div>
+            <div class="output-box">
+                User Kunal is a Dev
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 18: Expressions in F-Strings -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Logic</div></div>
+            <div class="kicker">F-String Power</div>
+            <h1>Expressions inside Strings</h1>
+            <p>You can perform logic directly inside the curly braces `{}`.</p>
+            
+            <div class="code-block">
+                a = <span class="num">10</span><br>
+                b = <span class="num">20</span><br>
+                <br>
+                <span class="kwd">print</span>(<span class="str">f"The sum is {a + b}"</span>)<br>
+                <span class="kwd">print</span>(<span class="str">f"Is a greater? {a > b}"</span>)
+            </div>
+            <div class="output-box">
+                The sum is 30<br>
+                Is a greater? False
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 19: Advanced Formatting -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Pro</div></div>
+            <div class="kicker">Data Science Ready</div>
+            <h1>Formatting Specs</h1>
+            <p>Essential for financial and scientific data presentation.</p>
+            
+            <div class="code-block">
+                pi = <span class="num">3.14159265</span><br>
+                price = <span class="num">5000</span><br>
+                <br>
+                <span class="comment"># Round to 2 decimal places</span><br>
+                <span class="kwd">print</span>(<span class="str">f"Value of Pi: {pi:.2f}"</span>)<br>
+                <br>
+                <span class="comment"># Add commas for currency</span><br>
+                <span class="kwd">print</span>(<span class="str">f"Laptop Price: ₹{price:,}"</span>)
+            </div>
+            <div class="output-box">
+                Value of Pi: 3.14<br>
+                Laptop Price: ₹5,000
+            </div>
+        </div>
+    </div>
+
+    <!-- SLIDE 20: Debugging F-Strings -->
+    <div class="slide">
+        <div class="card">
+            <div class="pill-wrapper"><div class="pill active">Debug</div></div>
+            <div class="kicker">2025 Trick</div>
+            <h1>Self-Documenting f-strings</h1>
+            <p>Use the `=` sign inside an f-string to print variable name AND value. Essential for debugging.</p>
+            
+            <div class="code-block">
+                width = <span class="num">50</span><br>
+                height = <span class="num">10</span><br>
+                <br>
+                <span class="kwd">print</span>(<span class="str">f"{width=}, {height=}"</span>)<br>
+                <span class="kwd">print</span>(<span class="str">f"{width * height = }"</span>)
+            </div>
+            <div class="output-box">
+                width=50, height=10<br>
+                width * height = 500
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>

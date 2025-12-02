@@ -72,4 +72,22 @@ export class CustomerUserService {
       throw error;
     }
   }
+    async deleteAddress(userId: string, addressId: string): Promise<Address> {
+    try {
+      // Delete where ID matches AND the owner is the current user
+      return await this.prisma.address.delete({
+        where: {
+          id: addressId,
+          customerUserId: userId, // <-- Security check!
+        },
+      });
+    } catch (error) {
+      // P2025 is the code for "Record to delete does not exist"
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new NotFoundException(
+          `Address with ID "${addressId}" not found or you don't have permission to delete it.`,
+        );
+      }
+      throw error;
+    }}
 }

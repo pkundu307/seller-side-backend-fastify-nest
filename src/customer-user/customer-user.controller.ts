@@ -8,6 +8,7 @@ import {
   UseGuards,
   ParseUUIDPipe,
   Req,
+  Delete,
 } from '@nestjs/common';
 import { CustomerUserService } from './customer-user.service';
 import { CreateAddressDto } from './dto/create-address.dto';
@@ -65,5 +66,15 @@ export class CustomerUserController {
       addressId,
       updateAddressDto,
     );
+  }
+
+    @Delete(':addressId')
+  @ApiOperation({ summary: 'Delete an address by its ID' })
+  async deleteAddress(
+    @Req() req: UserRequest,
+    @Param('addressId', ParseUUIDPipe) addressId: string,
+  ) {
+    const userId = req.user.id;
+    return this.customerUserService.deleteAddress(userId, addressId);
   }
 }

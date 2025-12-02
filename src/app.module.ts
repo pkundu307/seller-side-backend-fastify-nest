@@ -19,6 +19,7 @@ import { BannerModule } from './banner/banner.module';
 import { CartModule } from './cart/cart.module';
 import { CustomizationImageModule } from './customization-image/customization-image.module';
 import { ProductSearchModule } from './product-search/product-search.module';
+import { OrderModule } from './order/order.module';
 
 @Module({
   imports: [
@@ -60,7 +61,9 @@ import { ProductSearchModule } from './product-search/product-search.module';
    
     CustomizationImageModule,
    
-    ProductSearchModule    
+    ProductSearchModule,
+   
+    OrderModule    
   ],
   providers: [PrismaService],
 
