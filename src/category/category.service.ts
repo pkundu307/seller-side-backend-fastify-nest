@@ -7,7 +7,11 @@ import { AddAttributesBatchDto } from './dto/create-attribute.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { Category } from '@prisma/client';
 import * as NodeCache from 'node-cache';
-import { error } from 'console';
+import { error } from 'console';import { 
+  Logger 
+} from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { } from '@prisma/client';
 
 export interface CategoryTreeNode extends Category {
   children: CategoryTreeNode[];
@@ -15,6 +19,7 @@ export interface CategoryTreeNode extends Category {
 export interface SimplifiedCategoryNode {
   id: number;
   name: string;
+   slug: string;
   parentId: number | null;
   children: SimplifiedCategoryNode[];
 }
@@ -36,8 +41,10 @@ export type CategoryPathSearchResult = {
 
 @Injectable()
 export class CategoryService {
-    private cache = new NodeCache({ stdTTL: 600 });
-
+    private readonly logger = new Logger(CategoryService.name);
+    // private cache = new NodeCache({ stdTTL: 600 });
+ private cache = new NodeCache({ stdTTL: 0 }); 
+  private readonly CACHE_KEY = 'all_categories_tree_v2';
   constructor(private prisma: PrismaService) {}
 
   // --- CATEGORY CRUD ---
@@ -234,53 +241,76 @@ return results.map((p) => ({
 
 
 
-  async getAllCategoriesAsTree(): Promise<SimplifiedCategoryNode[]> {
-    const cacheKey = 'all_categories_tree_simplified'; // Use a distinct cache key
+async getAllCategoriesAsTree(): Promise<SimplifiedCategoryNode[]> {
+    // 1. CHANGE KEY to ensure you aren't getting old, flat data
+    const cacheKey = 'all_categories_tree_v2'; 
 
-    // Check cache for the simplified tree
-    const cachedTree = this.cache.get<SimplifiedCategoryNode[]>(cacheKey);
+    const cachedTree = this.cache.get<SimplifiedCategoryNode[]>(this.CACHE_KEY);
     if (cachedTree) {
-      console.log('Returning simplified categories from cache.');
       return cachedTree;
+
+
     }
 
-    // Fetch ONLY the required fields from the database for performance.
+     this.logger.warn('⚠️ Cache miss. Building category tree synchronously.');
+    return this.buildAndCacheTree();
+  }
+
+    @Cron(CronExpression.EVERY_DAY_AT_4AM)
+  async handleDailyCacheRefresh() {
+    this.logger.log('🔄 Cron Job: Starting daily category tree refresh...');
+    const start = Date.now();
+    
+    await this.buildAndCacheTree();
+    
+    this.logger.log(`✅ Cron Job: Cache refreshed in ${Date.now() - start}ms`);
+  }
+
+  private async buildAndCacheTree(): Promise<SimplifiedCategoryNode[]> {
+    // 1. Fetch data
     const allCategories = await this.prisma.category.findMany({
       select: {
         id: true,
         name: true,
         parentId: true,
+        slug: true,
       },
       orderBy: { name: 'asc' },
     });
 
-    // The tree-building logic remains the same, but the types are updated.
+    // 2. Initialize Map and Roots
     const categoryMap = new Map<number, SimplifiedCategoryNode>();
     const rootCategories: SimplifiedCategoryNode[] = [];
 
-    // First pass: create a map and initialize children array
-    allCategories.forEach(category => {
-      // Construct the node explicitly to match the new interface
-      const treeNode: SimplifiedCategoryNode = { ...category, children: [] };
-      categoryMap.set(category.id, treeNode);
+    // Pass 1: Create the map with empty children arrays
+    allCategories.forEach((category) => {
+      categoryMap.set(category.id, { 
+        ...category, 
+        children: [] 
+      });
     });
 
-    // Second pass: link children to their parents
-    allCategories.forEach(category => {
+    // Pass 2: Link children to parents
+    allCategories.forEach((category) => {
+      const currentNode = categoryMap.get(category.id)!;
+
       if (category.parentId) {
-        const parent = categoryMap.get(category.parentId);
-        if (parent) {
-          parent.children.push(categoryMap.get(category.id)!);
+        const parentNode = categoryMap.get(category.parentId);
+        if (parentNode) {
+          parentNode.children.push(currentNode);
+        } else {
+          // Orphan handling: If parent missing, treat as root
+          rootCategories.push(currentNode);
         }
       } else {
-        rootCategories.push(categoryMap.get(category.id)!);
+        // No parentId = Root
+        rootCategories.push(currentNode);
       }
     });
-    
-    // Store the newly built simplified tree in the cache
-    this.cache.set(cacheKey, rootCategories);
-    console.log('Simplified categories fetched from DB and cached.');
 
+    // 3. Save to Cache (Sync operation)
+    this.cache.set(this.CACHE_KEY, rootCategories);
+    
     return rootCategories;
   }
 

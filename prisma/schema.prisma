@@ -1,10 +1,12 @@
 generator client {
   provider = "prisma-client-js"
+    previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  extensions = [pg_trgm, pg_graphql, pg_stat_statements, pgcrypto, supabase_vault, uuid_ossp(map: "uuid-ossp")]
 }
 
 model CustomerUser {
@@ -36,17 +38,65 @@ model User {
   performedActivities ActivityLog[] @relation("PerformedUserActivities")
 }
 
-model Coupon {
-  id                String   @id @default(uuid())
-  code              String   @unique
-  active            Boolean  @default(true)
-  valueByPercentage Decimal?
-  valueByAmount     Decimal?
-  expiresAt         DateTime
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+model Discount {
+  id                   String        @id @default(uuid())
+  name                 String
+  description          String?
+  discount_type        DiscountType
+  discount_value       Decimal
+
+  start_date           DateTime?
+  end_date             DateTime?
+
+  min_order_amount     Decimal?
+  max_discount_amount  Decimal?
+
+  created_at           DateTime      @default(now())
+  updated_at           DateTime      @updatedAt
+
+  targets              DiscountTarget[]
+  coupons              Coupon[]
 }
 
+model DiscountTarget {
+  id            String        @id @default(uuid())
+  discount_id   String
+  target_type   TargetType
+  product_id    String?
+  category_id   Int?
+
+  discount      Discount      @relation(fields: [discount_id], references: [id])
+}
+
+enum TargetType {
+  PRODUCT
+  CATEGORY
+}
+
+
+model Coupon {
+  id               String      @id @default(uuid())
+  code             String      @unique
+  active           Boolean     @default(true)
+
+  discount_id      String
+  discount         Discount    @relation(fields: [discount_id], references: [id])
+
+  max_uses         Int?
+  used_count       Int         @default(0)
+
+  per_user_limit   Int?
+  starts_at        DateTime?
+  expires_at       DateTime?
+
+  created_at       DateTime    @default(now())
+  updated_at       DateTime    @updatedAt
+}
+enum DiscountType {
+  percentage
+  fixed_amount
+  free_shipping
+}
 model PredefinedCategory {
   id            String                  @id @default(uuid())
   categoryName  String
@@ -177,17 +227,51 @@ model PromotionalBanner {
   updatedAt      DateTime @updatedAt
 }
 
-model HomepageHighlight {
-  id          Int      @id @default(autoincrement())
-  title       String
-  description String?
-  imageUrl    String
-  targetUrl   String
-  type        String
-  isActive    Boolean  @default(true)
-  position    Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+model HomepageSection {
+  id            Int            @id @default(autoincrement())
+  title         String         // Display name (Diwali Special)
+  subtitle      String?        // Optional (Great Deals for the Festival)
+  sectionType   String         // Dynamic type name, admin-defined
+  isActive      Boolean        @default(true)
+  position      Int            @default(0)  // Ordering on homepage
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  items         HomepageItem[]
+}
+
+model HomepageItem {
+  id              Int                 @id @default(autoincrement())
+  sectionId       Int
+
+  title           String
+  subtitle        String?
+  description     String?
+
+  imageUrl        String?             // gradient or image
+  targetUrl       String?             // dynamic link (product page, category page, etc.)
+
+  badgeText       String?             // e.g. "52% Off", "Trending"
+  badgeColor      String?             // e.g. #FF0000 or rgba()
+
+  itemType        String              // PRODUCT, CATEGORY, CUSTOM, BANNER, FESTIVAL, etc. (admin-defined)
+  mobileImageUrl  String?
+  webImageUrl     String?
+
+  productId       String?
+  categoryId      Int?
+
+  isActive        Boolean             @default(true)
+  position        Int                 @default(0)  // Ordering inside section
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  section         HomepageSection     @relation(fields: [sectionId], references: [id])
+  startDate   DateTime?
+  endDate     DateTime?
+
 }
 
 model Product {
