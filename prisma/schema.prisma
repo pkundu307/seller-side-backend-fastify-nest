@@ -4,8 +4,7 @@ generator client {
 }
 
 datasource db {
-  provider   = "postgresql"
-  url        = env("DATABASE_URL")
+  provider = "postgresql"
   // FIXED: Explicitly list extensions to stop the Migration Loop
   // extensions = [
   //   pg_trgm, 
