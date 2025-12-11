@@ -4,17 +4,8 @@ generator client {
 }
 
 datasource db {
-  provider   = "postgresql"
-  url        = env("DATABASE_URL")
-  // FIXED: Explicitly list extensions to stop the Migration Loop
-  // extensions = [
-  //   pg_trgm, 
-  //   pg_graphql, 
-  //   pg_stat_statements, 
-  //   pgcrypto, 
-  //   supabase_vault, 
-  //   uuid_ossp(map: "uuid-ossp")
-  // ]
+  provider = "postgresql"
+  url      = "postgresql://postgres:JottosopRock@db.kyzlkjsgcdltifreggff.supabase.co:5432/postgres?sslmode=require"
 }
 
 // ==============================
