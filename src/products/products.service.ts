@@ -372,8 +372,8 @@ async updateProduct(
   if (dto.deleteModel3d && product.model3dUrl) {
     filesToDeleteFromS3.push(product.model3dUrl);
   }
-  if (dto.deleteSlicenseDocument && product.slicenseDocumentUrl) {
-    filesToDeleteFromS3.push(product.slicenseDocumentUrl);
+  if (dto.deleteSlicenseDocument && product.licenseDocumentUrl) {
+    filesToDeleteFromS3.push(product.licenseDocumentUrl);
   }
   
   if (filesToDeleteFromS3.length > 0) {
@@ -390,14 +390,14 @@ async updateProduct(
   try {
     const newProductImageUrls = await Promise.all(newProductImages.map(uploadAndTrack));
     const newModel3dUrl = newModel3dFile ? await uploadAndTrack(newModel3dFile) : undefined;
-    const newSlicenseDocumentUrl = newSlicenseDocumentFile ? await uploadAndTrack(newSlicenseDocumentFile) : undefined;
+    const newlicenseDocumentUrl = newSlicenseDocumentFile ? await uploadAndTrack(newSlicenseDocumentFile) : undefined;
 
     const finalProductImages = [
       ...product.images.filter((url) => !dto.imagesToDelete?.includes(url)),
       ...newProductImageUrls,
     ];
     const finalModel3dUrl = newModel3dUrl ?? (dto.deleteModel3d ? null : product.model3dUrl);
-    const finalSlicenseDocumentUrl = newSlicenseDocumentUrl ?? (dto.deleteSlicenseDocument ? null : product.slicenseDocumentUrl);
+    const finallicenseDocumentUrl = newlicenseDocumentUrl ?? (dto.deleteSlicenseDocument ? null : product.licenseDocumentUrl);
     
     const preparedVariantsData = await Promise.all(
       dto.variants.map(async (variantDto, index) => {
@@ -425,7 +425,7 @@ async updateProduct(
             slug: dto.title && dto.title !== product.title ? this.generateSlug(dto.title) : undefined,
             images: finalProductImages,
             model3dUrl: finalModel3dUrl,
-            slicenseDocumentUrl: finalSlicenseDocumentUrl,
+            licenseDocumentUrl: finallicenseDocumentUrl,
             customizationConfig: dto.customizationConfig ? JSON.parse(dto.customizationConfig) : undefined,
           },
         });

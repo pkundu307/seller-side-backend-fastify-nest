@@ -1,13 +1,25 @@
 generator client {
-  provider = "prisma-client-js"
-    previewFeatures = ["postgresqlExtensions"]
+  provider        = "prisma-client-js"
+  // previewFeatures = ["postgresqlExtensions", "fullTextSearch"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  extensions = [pg_trgm, pg_graphql, pg_stat_statements, pgcrypto, supabase_vault, uuid_ossp(map: "uuid-ossp")]
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  // FIXED: Explicitly list extensions to stop the Migration Loop
+  // extensions = [
+  //   pg_trgm, 
+  //   pg_graphql, 
+  //   pg_stat_statements, 
+  //   pgcrypto, 
+  //   supabase_vault, 
+  //   uuid_ossp(map: "uuid-ossp")
+  // ]
 }
+
+// ==============================
+// USER & AUTH DOMAIN
+// ==============================
 
 model CustomerUser {
   id             String          @id @default(uuid())
@@ -19,6 +31,8 @@ model CustomerUser {
   type           CustomerType    @default(user)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+  
+  // Relations
   addresses      Address[]
   cartItems      CartItem[]
   orders         Order[]
@@ -30,73 +44,651 @@ model User {
   id                  String        @id @default(uuid())
   email               String        @unique
   password            String
-  role                String        @default("user")
+  role                String        @default("user") // Consider enum: ADMIN, SELLER
   image               String?
   name                String?
   createdAt           DateTime      @default(now())
+  
+  // Relations
   businesses          Business[]
   performedActivities ActivityLog[] @relation("PerformedUserActivities")
 }
 
+model Address {
+  id                     String       @id @default(uuid())
+  street                 String
+  city                   String
+  state                  String
+  postalCode             String
+  country                String
+  alternativePhoneNumber String?
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+  
+  customerUserId         String
+  customerUser           CustomerUser @relation(fields: [customerUserId], references: [id])
+}
+
+// ==============================
+// BUSINESS DOMAIN
+// ==============================
+
+model Business {
+  id         String   @id @default(uuid())
+  name       String
+  gstNumber  String   @unique
+  address    String
+  city       String
+  state      String
+  country    String
+  postalCode String
+  phone      String
+  isVerified Boolean  @default(false)
+  category   String   @default("General")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt // Fixed: removed @default(now()) on update
+
+  ownerId    String
+  owner      User     @relation(fields: [ownerId], references: [id])
+  
+  products   Product[]
+  reviews    Review[]
+  activities ActivityLog[] @relation("BusinessActivities")
+  sales      Sale[]        // FIXED: Added relation to Accounting Sales
+  itemUnits  ItemUnit[]    // FIXED: Added relation
+}
+
+// ==============================
+// PRODUCT CATALOG DOMAIN
+// ==============================
+
+model Category {
+  id         Int         @id @default(autoincrement())
+  name       String      @db.VarChar(255)
+  slug       String      @unique
+  parentId   Int?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  
+  parent     Category?   @relation("SubCategories", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children   Category[]  @relation("SubCategories")
+  
+  attributes Attribute[]
+  products   Product[]
+
+  @@map("category")
+}
+
+model Product {
+  id                  String                   @id @default(uuid())
+  title               String
+  description         String?
+  isCustomizable      Boolean                  @default(false)
+  images              String[]
+  isPublished         Boolean                  @default(false)
+  isFeatured          Boolean                  @default(false)
+  slug                String                   @unique
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  publishDate         DateTime?
+  customizationConfig Json?
+  model3dUrl          String?
+  licenseDocumentUrl  String?                  @map("license_document_url") // Fixed typo 'slicense'
+  isArable            Boolean                  @default(false) // AR-able?
+  
+  // Full Text Search
+  searchVector        Unsupported("tsvector")? @map("search_vector")
+
+  businessId          String
+  business            Business                 @relation(fields: [businessId], references: [id])
+  
+  categoryId          Int
+  category            Category                 @relation(fields: [categoryId], references: [id])
+  
+  reviews             Review[]
+  variants            Variant[]
+
+  @@index([searchVector], map: "product_search_idx", type: Gin)
+}
+
+model Variant {
+  id                     String        @id @default(uuid())
+  sku                    String        @unique
+  price                  Decimal       @db.Decimal(10, 2)
+  stock                  Int
+  isDefault              Boolean       @default(false)
+  weightInGrams          Int?
+  images                 String[]
+  status                 VariantStatus @default(DRAFT)
+  description            String?
+  
+  // Inventory Intelligence
+  minStockCount          Decimal?      @db.Decimal(10, 2)
+  isMinStockAlertEnabled Boolean?
+  
+  // Taxation & Pricing
+  hsnCode                String?
+  sacCode                String?
+  mrp                    Decimal?      @db.Decimal(10, 2)
+  purchasePrice          Decimal?      @db.Decimal(10, 2)
+  purchasePriceType      String?       @db.VarChar(64)
+  tax                    String?       @db.VarChar(128)
+  
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+
+  productId              String
+  product                Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  // Relations
+  cartItems              CartItem[]
+  orderItems             OrderItem[]
+  attributeValues        VariantAttributeValue[]
+  
+  // Orphan Fixes
+  batches                ItemBatching[]      // FIXED: Linked Batching
+  stockActivities        StockActivity[]     // FIXED: Linked Stock Activity
+
+  @@index([productId])
+}
+
+model Attribute {
+  id            Int                     @id @default(autoincrement())
+  name          String
+  position      Int                     @default(0)
+  
+  categoryId    Int
+  category      Category                @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  
+  options       AttributeOption[]
+  variantValues VariantAttributeValue[]
+
+  @@unique([name, categoryId])
+}
+
+model AttributeOption {
+  id            Int                     @id @default(autoincrement())
+  value         String
+  position      Int                     @default(0)
+  slug          String
+  
+  attributeId   Int
+  attribute     Attribute               @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  
+  variantValues VariantAttributeValue[]
+
+  @@unique([attributeId, value])
+  @@map("attribute_option")
+}
+
+model VariantAttributeValue {
+  id                Int             @id @default(autoincrement())
+  
+  variantId         String
+  variant           Variant         @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  
+  attributeOptionId Int
+  attributeOption   AttributeOption @relation(fields: [attributeOptionId], references: [id], onDelete: Cascade)
+  
+  attributeId       Int
+  attribute         Attribute       @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+
+  @@map("variant_attribute_value")
+}
+
+model Review {
+  id             String       @id @default(uuid())
+  rating         Int
+  comment        String?
+  createdAt      DateTime     @default(now())
+  
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id])
+  
+  businessId     String
+  business       Business     @relation(fields: [businessId], references: [id])
+  
+  customerUserId String
+  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
+}
+
+// ==============================
+// E-COMMERCE ORDER & CART
+// ==============================
+
+model Order {
+  id                    String        @id @default(uuid())
+  totalAmount           Decimal
+  paymentMethod         PaymentMethod
+  paymentStatus         PaymentStatus @default(pending)
+  status                OrderStatus   @default(pending)
+  selectedAddress       Json
+  
+  // Cost Breakdown
+  discount              Decimal       @default(0)
+  taxAmount             Decimal       @default(0)
+  shippingFee           Decimal       @default(0)
+  
+  trackingNumber        String?
+  estimatedDeliveryDate DateTime?
+  cancellationReason    String?
+  
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  
+  customerUserId        String
+  customerUser          CustomerUser  @relation(fields: [customerUserId], references: [id])
+  
+  items                 OrderItem[]
+}
+
+model OrderItem {
+  id                   String   @id @default(uuid())
+  quantity             Int
+  priceAtTimeOfOrder   Decimal
+  note                 String?
+  customizationDetails Json?
+  customizationImages  String[]
+  
+  orderId              String
+  order                Order    @relation(fields: [orderId], references: [id])
+  
+  productId            String   // Keep as reference even if product deleted? Or relation?
+  // Ideally link to Product too, but keeping ID is fine for history
+  
+  variantId            String?
+  variant              Variant? @relation(fields: [variantId], references: [id])
+}
+
+model CartItem {
+  id                   String       @id @default(uuid())
+  quantity             Int
+  
+  productId            String // Needed for efficient querying without joining variant
+  
+  variantId            String?
+  variant              Variant?     @relation(fields: [variantId], references: [id])
+  
+  customerUserId       String
+  customerUser         CustomerUser @relation(fields: [customerUserId], references: [id])
+  
+  customizationDetails Json?
+  customizationImages  String[]     @default([])
+}
+
+model OrderInitiate {
+  id             String              @id @default(uuid())
+  orderId        String              @map("order_id")
+  status         OrderInitiateStatus @default(pending)
+  
+  customerUserId String
+  customerUser   CustomerUser        @relation(fields: [customerUserId], references: [id])
+  
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+}
+
+// ==============================
+// MARKETING (DISCOUNTS & CMS)
+// ==============================
+
 model Discount {
-  id                   String        @id @default(uuid())
-  name                 String
-  description          String?
-  discount_type        DiscountType
-  discount_value       Decimal
-
-  start_date           DateTime?
-  end_date             DateTime?
-
-  min_order_amount     Decimal?
-  max_discount_amount  Decimal?
-
-  created_at           DateTime      @default(now())
-  updated_at           DateTime      @updatedAt
-
-  targets              DiscountTarget[]
-  coupons              Coupon[]
+  id                String           @id @default(uuid())
+  name              String
+  description       String?
+  discountType      DiscountType     @map("discount_type")
+  discountValue     Decimal          @map("discount_value")
+  
+  startDate         DateTime?        @map("start_date")
+  endDate           DateTime?        @map("end_date")
+  
+  minOrderAmount    Decimal?         @map("min_order_amount")
+  maxDiscountAmount Decimal?         @map("max_discount_amount")
+  
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+  
+  targets           DiscountTarget[]
+  coupons           Coupon[]
 }
 
 model DiscountTarget {
-  id            String        @id @default(uuid())
-  discount_id   String
-  target_type   TargetType
-  product_id    String?
-  category_id   Int?
-
-  discount      Discount      @relation(fields: [discount_id], references: [id])
+  id           String     @id @default(uuid())
+  targetType   TargetType @map("target_type")
+  productId    String?    @map("product_id")
+  categoryId   Int?       @map("category_id")
+  
+  discountId   String     @map("discount_id")
+  discount     Discount   @relation(fields: [discountId], references: [id])
 }
-
-enum TargetType {
-  PRODUCT
-  CATEGORY
-}
-
 
 model Coupon {
-  id               String      @id @default(uuid())
-  code             String      @unique
-  active           Boolean     @default(true)
+  id            String    @id @default(uuid())
+  code          String    @unique
+  active        Boolean   @default(true)
+  
+  maxUses       Int?      @map("max_uses")
+  usedCount     Int       @default(0) @map("used_count")
+  perUserLimit  Int?      @map("per_user_limit")
+  
+  startsAt      DateTime? @map("starts_at")
+  expiresAt     DateTime? @map("expires_at")
+  
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  discount_id      String
-  discount         Discount    @relation(fields: [discount_id], references: [id])
-
-  max_uses         Int?
-  used_count       Int         @default(0)
-
-  per_user_limit   Int?
-  starts_at        DateTime?
-  expires_at       DateTime?
-
-  created_at       DateTime    @default(now())
-  updated_at       DateTime    @updatedAt
+  discountId    String    @map("discount_id")
+  discount      Discount  @relation(fields: [discountId], references: [id])
 }
-enum DiscountType {
-  percentage
-  fixed_amount
-  free_shipping
+
+model PromotionalBanner {
+  id             Int      @id @default(autoincrement())
+  title          String
+  discountText   String?
+  bannerImageUrl String
+  brandLogoUrl   String?
+  targetUrl      String
+  isActive       Boolean  @default(true)
+  position       Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
+
+model HomepageSection {
+  id          Int            @id @default(autoincrement())
+  title       String
+  subtitle    String?
+  sectionType String
+  isActive    Boolean        @default(true)
+  position    Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  items       HomepageItem[]
+}
+
+model HomepageItem {
+  id             Int             @id @default(autoincrement())
+  
+  title          String
+  subtitle       String?
+  description    String?
+  imageUrl       String?
+  targetUrl      String?
+  badgeText      String?
+  badgeColor     String?
+  itemType       String
+  mobileImageUrl String?
+  webImageUrl    String?
+  
+  productId      String?
+  categoryId     Int?
+  
+  isActive       Boolean         @default(true)
+  position       Int             @default(0)
+  startDate      DateTime?
+  endDate        DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  sectionId      Int
+  section        HomepageSection @relation(fields: [sectionId], references: [id])
+}
+
+// ==============================
+// ACCOUNTING / ERP DOMAIN
+// (Normalized to camelCase for TS, mapped to DB)
+// ==============================
+
+model Sale {
+  id                        String                 @id @default(uuid())
+  
+  businessId                String
+  business                  Business               @relation(fields: [businessId], references: [id]) // FIXED: Added relation
+  
+  partyId                   String
+  saleType                  String                 @db.VarChar(128)
+  invoicePrefix             String                 @db.VarChar(128)
+  invoiceNo                 Int
+  invoiceDate               DateTime
+  isDueDateEnabled          Boolean
+  dueDate                   DateTime
+  paymentTerm               Int
+  partyType                 String                 @db.VarChar(128)
+  partyName                 String                 @db.VarChar(256)
+  businessName              String                 @db.VarChar(256)
+  billingAddress            String
+  shippingAddress           String
+  placeOfSupply             String                 @db.VarChar(128)
+  phoneNo                   String                 @db.VarChar(36)
+  taxId                     String                 @db.VarChar(128)
+  panNo                     String                 @db.VarChar(128)
+  
+  isDiscountAfterTaxEnabled Boolean
+  discountPercent           Decimal
+  discountAmount            Decimal
+  totalTaxableAmount        Decimal
+  totalTaxAmount            Decimal
+  isAutoRoundoffEnabled     Boolean
+  roundoffType              String                 @db.VarChar(64)
+  roundoffAmount            Decimal
+  totalAmount               Decimal
+  isSettled                 Boolean
+  balanceAmount             Decimal
+  termCondition             String
+  notes                     String
+  isScanItemEnabled         Boolean
+  isConverted               Boolean
+  party                     String
+  
+  createdAt                 DateTime               @default(now())
+  updatedAt                 DateTime               @updatedAt
+
+  customField               CustomField?
+  saleAdditionalCharges     SaleAdditionalCharge[]
+  saleItems                 SaleItem[]
+  salePaymentModes          SalePaymentMode[]
+  saleTaxes                 SaleTax[]
+}
+
+model SaleItem {
+  id                     String   @id @default(uuid()) @map("saleItemId") // Renamed PK for consistency
+  itemId                 String
+  itemName               String   @db.VarChar(512)
+  itemDescription        String
+  hsnCode                String   @db.VarChar(128)
+  sacCode                String   @db.VarChar(128)
+  batchNo                String   @db.VarChar(128)
+  manufactureDate        DateTime
+  expiryDate             DateTime
+  quantity               Decimal
+  price                  Decimal
+  priceType              String   @db.VarChar(64)
+  unit                   String   @db.VarChar(128)
+  discountPercent        Decimal
+  discountAmount         Decimal
+  taxableAmount          Decimal
+  tax                    String   @db.VarChar(128)
+  taxAmount              Decimal
+  cess                   String   @db.VarChar(128)
+  cessAmount             Decimal
+  amount                 Decimal
+  isMrpEnabled           Boolean
+  isWholesaleEnabled     Boolean
+  isSerialisationEnabled Boolean
+  isBatchingEnabled      Boolean
+  sellingPrice           Decimal
+  sellingPriceType       String   @db.VarChar(64)
+  purchasePrice          Decimal
+  purchasePriceType      String   @db.VarChar(64)
+  mrp                    Decimal
+  wholesalePrice         Decimal
+  wholesalePriceType     String   @db.VarChar(64)
+  wholesaleQuantity      Decimal
+  itemCode               String   @db.VarChar(128)
+  
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  
+  saleId                 String
+  sale                   Sale     @relation(fields: [saleId], references: [id])
+}
+
+model SaleAdditionalCharge {
+  id         String   @id @default(uuid()) @map("saleAdditionalChargeId")
+  name       String   @db.VarChar(256)
+  amount     Decimal
+  tax        String   @db.VarChar(128)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  saleId     String
+  sale       Sale     @relation(fields: [saleId], references: [id])
+}
+
+model SalePaymentMode {
+  id                String   @id @default(uuid()) @map("salePaymentModeId")
+  bankCashChequeId  String
+  accountName       String   @db.VarChar(256)
+  paymentMode       String   @db.VarChar(128)
+  amount            Decimal
+  ifsc              String   @db.VarChar(20)
+  acNo              String   @db.VarChar(20)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  saleId            String
+  sale              Sale     @relation(fields: [saleId], references: [id])
+}
+
+model SaleTax {
+  id            String   @id @default(uuid()) @map("saleTaxId")
+  taxRate       Decimal
+  taxableAmount Decimal
+  cgst          Decimal
+  sgst          Decimal
+  igst          Decimal
+  cess          Decimal
+  total         Decimal
+  hsnCode       String   @db.VarChar(128)
+  sacCode       String   @db.VarChar(128)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  saleId        String
+  sale          Sale     @relation(fields: [saleId], references: [id])
+}
+
+model CustomField {
+  id        String   @id @default(uuid())
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  saleId    String?  @unique
+  sale      Sale?    @relation(fields: [saleId], references: [id])
+}
+
+// ==============================
+// INVENTORY UTILS
+// ==============================
+
+model ItemBatching {
+  id                  String   @id @default(uuid())
+  batchNo             String   @db.VarChar(128)
+  manufactureDate     DateTime
+  expiryDate          DateTime
+  sellingPrice        Decimal
+  sellingPriceType    String   @db.VarChar(64)
+  purchasePrice       Decimal
+  purchasePriceType   String   @db.VarChar(64)
+  mrp                 Decimal
+  unit                String   @db.VarChar(128)
+  isSecondUnitEnabled Boolean
+  secondUnit          String   @db.VarChar(128)
+  conversionRate      Decimal
+  openingStock        Decimal
+  openingStockDate    DateTime
+  closingStock        Decimal
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // FIXED: Link Batch to Variant
+  variantId           String?
+  variant             Variant? @relation(fields: [variantId], references: [id])
+}
+
+model ItemSerialisation {
+  id           String   @id @default(uuid())
+  serialNo     String   @db.VarChar(128)
+  serialNoDate DateTime
+  isAvailable  Boolean
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  // FIXED: Should likely link to an item? 
+  // Assuming generic use for now, but ideally needs relation.
+}
+
+model ItemUnit {
+  id         String   @id @default(uuid())
+  unitName   String   @db.VarChar(128)
+  isEnabled  Boolean
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+}
+
+model StockActivity {
+  id            String   @id @default(uuid())
+  
+  itemId        String   // Usually variantId?
+  
+  activityType  String   @db.VarChar(128)
+  invoicePrefix String   @db.VarChar(128)
+  invoiceNo     Int
+  quantity      Decimal
+  closingStock  Decimal
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  businessId    String
+  // Relation to Business is implied by businessId, usually good to make explicit:
+  // business   Business @relation(...)
+  
+  // FIXED: Added relation to Variant
+  variantId     String?
+  variant       Variant? @relation(fields: [variantId], references: [id])
+}
+
+// ==============================
+// ENUMS & UTILS
+// ==============================
+
+model ActivityLog {
+  id                String    @id @default(uuid())
+  actionType        String
+  entityType        String
+  entityId          String?
+  description       String
+  details           Json?
+  createdAt         DateTime  @default(now())
+  
+  performedByUserId String?
+  performedByUser   User?     @relation("PerformedUserActivities", fields: [performedByUserId], references: [id])
+  
+  businessId        String?
+  business          Business? @relation("BusinessActivities", fields: [businessId], references: [id])
+
+  @@index([businessId])
+  @@index([performedByUserId])
+  @@index([createdAt])
+  @@map("activity_log")
+}
+
+// Predefined categories for onboarding (Fixed: moved to bottom)
 model PredefinedCategory {
   id            String                  @id @default(uuid())
   categoryName  String
@@ -133,490 +725,15 @@ model CategoryOrSubcategoryImage {
   updatedAt               DateTime @updatedAt
 }
 
-model Address {
-  id             String       @id @default(uuid())
-  street         String
-  city           String
-  state          String
-  postalCode     String
-  country        String
-  customerUserId String
-  alternativePhoneNumber String?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
+enum TargetType {
+  PRODUCT
+  CATEGORY
 }
 
-model Business {
-  id         String        @id @default(uuid())
-  name       String
-  gstNumber  String        @unique
-  address    String
-  city       String
-  state      String
-  country    String
-  postalCode String
-  phone      String
-  ownerId    String
-  isVerified Boolean       @default(false)
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @default(now()) @updatedAt
-  category   String        @default("General")
-  owner      User          @relation(fields: [ownerId], references: [id])
-  products   Product[]
-  reviews    Review[]
-  activities ActivityLog[] @relation("BusinessActivities")
-}
-
-model Order {
-  id                    String        @id @default(uuid())
-  totalAmount           Decimal
-  customerUserId        String
-  paymentMethod         PaymentMethod
-  paymentStatus         PaymentStatus @default(pending)
-  status                OrderStatus   @default(pending)
-  selectedAddress       Json
-  discount              Decimal       @default(0)
-  taxAmount             Decimal       @default(0)
-  shippingFee           Decimal       @default(0)
-  trackingNumber        String?
-  estimatedDeliveryDate DateTime?
-  cancellationReason    String?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
-  customerUser          CustomerUser  @relation(fields: [customerUserId], references: [id])
-  items                 OrderItem[]
-}
-
-model OrderItem {
-  id                   String   @id @default(uuid())
-  quantity             Int
-  priceAtTimeOfOrder   Decimal
-  note                 String?
-  orderId              String
-  productId            String
-  variantId            String?
-  customizationDetails Json?
-  customizationImages  String[]
-  order                Order    @relation(fields: [orderId], references: [id])
-  variant              Variant? @relation(fields: [variantId], references: [id])
-}
-
-model CartItem {
-  id                   String       @id @default(uuid())
-  quantity             Int
-  productId            String
-  variantId            String?
-  customerUserId       String
-  customizationDetails Json?
-  customizationImages  String[]     @default([])
-  customerUser         CustomerUser @relation(fields: [customerUserId], references: [id])
-  variant              Variant?     @relation(fields: [variantId], references: [id])
-}
-
-model PromotionalBanner {
-  id             Int      @id @default(autoincrement())
-  title          String
-  discountText   String?
-  bannerImageUrl String
-  brandLogoUrl   String?
-  targetUrl      String
-  isActive       Boolean  @default(true)
-  position       Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-}
-
-model HomepageSection {
-  id            Int            @id @default(autoincrement())
-  title         String         // Display name (Diwali Special)
-  subtitle      String?        // Optional (Great Deals for the Festival)
-  sectionType   String         // Dynamic type name, admin-defined
-  isActive      Boolean        @default(true)
-  position      Int            @default(0)  // Ordering on homepage
-
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-
-  items         HomepageItem[]
-}
-
-model HomepageItem {
-  id              Int                 @id @default(autoincrement())
-  sectionId       Int
-
-  title           String
-  subtitle        String?
-  description     String?
-
-  imageUrl        String?             // gradient or image
-  targetUrl       String?             // dynamic link (product page, category page, etc.)
-
-  badgeText       String?             // e.g. "52% Off", "Trending"
-  badgeColor      String?             // e.g. #FF0000 or rgba()
-
-  itemType        String              // PRODUCT, CATEGORY, CUSTOM, BANNER, FESTIVAL, etc. (admin-defined)
-  mobileImageUrl  String?
-  webImageUrl     String?
-
-  productId       String?
-  categoryId      Int?
-
-  isActive        Boolean             @default(true)
-  position        Int                 @default(0)  // Ordering inside section
-
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-
-  section         HomepageSection     @relation(fields: [sectionId], references: [id])
-  startDate   DateTime?
-  endDate     DateTime?
-
-}
-
-model Product {
-  id                  String                   @id @default(uuid())
-  title               String
-  description         String?
-  isCustomizable      Boolean                  @default(false)
-  images              String[]
-  isPublished         Boolean                  @default(false)
-  isFeatured          Boolean                  @default(false)
-  slug                String                   @unique
-  createdAt           DateTime                 @default(now())
-  updatedAt           DateTime                 @updatedAt
-  businessId          String
-  categoryId          Int
-  publishDate         DateTime?
-  customizationConfig Json?
-  model3dUrl          String?
-  slicenseDocumentUrl String?
-  isArable            Boolean                  @default(false)
-  search_vector       Unsupported("tsvector")?
-  business            Business                 @relation(fields: [businessId], references: [id])
-  category            Category                 @relation(fields: [categoryId], references: [id])
-  reviews             Review[]
-  variants            Variant[]
-
-  @@index([search_vector], map: "product_search_idx", type: Gin)
-  @@index([title(ops: raw("gin_trgm_ops"))], map: "product_title_trgm_idx", type: Gin)
-}
-
-model Variant {
-  id                     String                  @id @default(uuid())
-  sku                    String                  @unique
-  price                  Decimal                 @db.Decimal(10, 2)
-  stock                  Int
-  isDefault              Boolean                 @default(false)
-  weightInGrams          Int?
-  images                 String[]
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  hsnCode                String?
-  sacCode                String?
-  mrp                    Decimal?                @db.Decimal(10, 2)
-  purchasePrice          Decimal?                @db.Decimal(10, 2)
-  purchasePriceType      String?                 @db.VarChar(64)
-  tax                    String?                 @db.VarChar(128)
-  minStockCount          Decimal?                @db.Decimal(10, 2)
-  isMinStockAlertEnabled Boolean?
-  openingStock           Decimal?                @db.Decimal(10, 2)
-  openingStockDate       DateTime?
-  productId              String
-  status                 VariantStatus           @default(DRAFT)
-  sellingPriceType       PriceType?
-  unit                   Unit?
-  description            String?
-  cartItems              CartItem[]
-  orderItems             OrderItem[]
-  product                Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
-  attributeValues        VariantAttributeValue[]
-
-  @@index([productId])
-}
-
-model Category {
-  id         Int         @id @default(autoincrement())
-  name       String      @db.VarChar(255)
-  slug       String      @unique
-  parentId   Int?
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
-  attributes Attribute[]
-  products   Product[]
-  parent     Category?   @relation("SubCategories", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  children   Category[]  @relation("SubCategories")
-
-  @@map("category")
-}
-
-model Attribute {
-  id            Int                     @id @default(autoincrement())
-  name          String
-  categoryId    Int
-  position      Int                     @default(0)
-  category      Category                @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  options       AttributeOption[]
-  variantValues VariantAttributeValue[]
-
-  @@unique([name, categoryId])
-}
-
-model AttributeOption {
-  id            Int                     @id @default(autoincrement())
-  value         String
-  attributeId   Int
-  position      Int                     @default(0)
-  slug          String
-  attribute     Attribute               @relation(fields: [attributeId], references: [id], onDelete: Cascade)
-  variantValues VariantAttributeValue[]
-
-  @@unique([attributeId, value])
-  @@map("attribute_option")
-}
-
-model VariantAttributeValue {
-  id                Int             @id @default(autoincrement())
-  variantId         String
-  attributeOptionId Int
-  attributeId       Int
-  attribute         Attribute       @relation(fields: [attributeId], references: [id], onDelete: Cascade)
-  attributeOption   AttributeOption @relation(fields: [attributeOptionId], references: [id], onDelete: Cascade)
-  variant           Variant         @relation(fields: [variantId], references: [id], onDelete: Cascade)
-
-  @@map("variant_attribute_value")
-}
-
-model OrderInitiate {
-  id             String              @id @default(uuid())
-  order_id       String
-  status         OrderInitiateStatus @default(pending)
-  customerUserId String
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  customerUser   CustomerUser        @relation(fields: [customerUserId], references: [id])
-}
-
-model Review {
-  id             String       @id @default(uuid())
-  rating         Int
-  comment        String?
-  productId      String
-  createdAt      DateTime     @default(now())
-  businessId     String
-  customerUserId String
-  business       Business     @relation(fields: [businessId], references: [id])
-  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
-  product        Product      @relation(fields: [productId], references: [id])
-}
-
-model ActivityLog {
-  id                String    @id @default(uuid())
-  actionType        String
-  entityType        String
-  entityId          String?
-  description       String
-  details           Json?
-  createdAt         DateTime  @default(now())
-  performedByUserId String?
-  businessId        String?
-  business          Business? @relation("BusinessActivities", fields: [businessId], references: [id])
-  performedByUser   User?     @relation("PerformedUserActivities", fields: [performedByUserId], references: [id])
-
-  @@index([businessId])
-  @@index([performedByUserId])
-  @@index([createdAt])
-  @@map("activity_log")
-}
-
-model CustomField {
-  id        String   @id @default(uuid())
-  key       String
-  value     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  saleId    String?  @unique
-  sale      Sale?    @relation(fields: [saleId], references: [id])
-}
-
-model Sale {
-  id                        String                 @id @default(uuid())
-  businessId                String
-  partyId                   String
-  saleType                  String                 @db.VarChar(128)
-  invoicePrefix             String                 @db.VarChar(128)
-  invoiceNo                 Int
-  invoiceDate               DateTime
-  isDueDateEnabled          Boolean
-  dueDate                   DateTime
-  paymentTerm               Int
-  partyType                 String                 @db.VarChar(128)
-  partyName                 String                 @db.VarChar(256)
-  businessName              String                 @db.VarChar(256)
-  billingAddress            String
-  shippingAddress           String
-  placeOfSupply             String                 @db.VarChar(128)
-  phoneNo                   String                 @db.VarChar(36)
-  taxId                     String                 @db.VarChar(128)
-  panNo                     String                 @db.VarChar(128)
-  isDiscountAfterTaxEnabled Boolean
-  discountPercent           Decimal
-  discountAmount            Decimal
-  totalTaxableAmount        Decimal
-  totalTaxAmount            Decimal
-  isAutoRoundoffEnabled     Boolean
-  roundoffType              String                 @db.VarChar(64)
-  roundoffAmount            Decimal
-  totalAmount               Decimal
-  isSettled                 Boolean
-  balanceAmount             Decimal
-  termCondition             String
-  notes                     String
-  createdAt                 DateTime               @default(now())
-  updatedAt                 DateTime               @updatedAt
-  isScanItemEnabled         Boolean
-  isConverted               Boolean
-  party                     String
-  customField               CustomField?
-  saleAdditionalCharges     SaleAdditionalCharge[]
-  saleItems                 SaleItem[]
-  salePaymentModes          SalePaymentMode[]
-  saleTaxes                 SaleTax[]
-}
-
-model SaleItem {
-  saleItemId             String   @id @default(uuid())
-  itemId                 String
-  itemName               String   @db.VarChar(512)
-  itemDescription        String
-  hsnCode                String   @db.VarChar(128)
-  sacCode                String   @db.VarChar(128)
-  batchNo                String   @db.VarChar(128)
-  manufactureDate        DateTime
-  expiryDate             DateTime
-  quantity               Decimal
-  price                  Decimal
-  priceType              String   @db.VarChar(64)
-  unit                   String   @db.VarChar(128)
-  discountPercent        Decimal
-  discountAmount         Decimal
-  taxableAmount          Decimal
-  tax                    String   @db.VarChar(128)
-  taxAmount              Decimal
-  cess                   String   @db.VarChar(128)
-  cessAmount             Decimal
-  amount                 Decimal
-  isMrpEnabled           Boolean
-  isWholesaleEnabled     Boolean
-  isSerialisationEnabled Boolean
-  isBatchingEnabled      Boolean
-  sellingPrice           Decimal
-  sellingPriceType       String   @db.VarChar(64)
-  purchasePrice          Decimal
-  purchasePriceType      String   @db.VarChar(64)
-  mrp                    Decimal
-  wholesalePrice         Decimal
-  wholesalePriceType     String   @db.VarChar(64)
-  wholesaleQuantity      Decimal
-  itemCode               String   @db.VarChar(128)
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
-  saleId                 String
-  sale                   Sale     @relation(fields: [saleId], references: [id])
-}
-
-model SaleAdditionalCharge {
-  saleAdditionalChargeId String   @id @default(uuid())
-  name                   String   @db.VarChar(256)
-  amount                 Decimal
-  tax                    String   @db.VarChar(128)
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
-  saleId                 String
-  sale                   Sale     @relation(fields: [saleId], references: [id])
-}
-
-model SalePaymentMode {
-  salePaymentModeId String   @id @default(uuid())
-  bankCashChequeId  String
-  accountName       String   @db.VarChar(256)
-  paymentMode       String   @db.VarChar(128)
-  amount            Decimal
-  ifsc              String   @db.VarChar(20)
-  acNo              String   @db.VarChar(20)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  saleId            String
-  sale              Sale     @relation(fields: [saleId], references: [id])
-}
-
-model SaleTax {
-  saleTaxId     String   @id @default(uuid())
-  taxRate       Decimal
-  taxableAmount Decimal
-  cgst          Decimal
-  sgst          Decimal
-  igst          Decimal
-  cess          Decimal
-  total         Decimal
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  hsnCode       String   @db.VarChar(128)
-  sacCode       String   @db.VarChar(128)
-  saleId        String
-  sale          Sale     @relation(fields: [saleId], references: [id])
-}
-
-model ItemBatching {
-  id                  String   @id @default(uuid()) @map("item_batching_id")
-  batchNo             String   @db.VarChar(128)
-  manufactureDate     DateTime
-  expiryDate          DateTime
-  sellingPrice        Decimal
-  sellingPriceType    String   @db.VarChar(64)
-  purchasePrice       Decimal
-  purchasePriceType   String   @db.VarChar(64)
-  mrp                 Decimal
-  unit                String   @db.VarChar(128)
-  isSecondUnitEnabled Boolean
-  secondUnit          String   @db.VarChar(128)
-  conversionRate      Decimal
-  openingStock        Decimal
-  openingStockDate    DateTime
-  closingStock        Decimal
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-}
-
-model ItemSerialisation {
-  id           String   @id @default(uuid()) @map("item_serialisation_id")
-  serialNo     String   @db.VarChar(128)
-  serialNoDate DateTime
-  isAvailable  Boolean
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-}
-
-model ItemUnit {
-  id         String   @id @default(uuid())
-  businessId String
-  unitName   String   @db.VarChar(128)
-  isEnabled  Boolean
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-}
-
-model StockActivity {
-  id            String   @id @default(uuid())
-  businessId    String
-  itemId        String
-  activityType  String   @db.VarChar(128)
-  invoicePrefix String   @db.VarChar(128)
-  invoiceNo     Int
-  quantity      Decimal
-  closingStock  Decimal
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+enum DiscountType {
+  percentage
+  fixed_amount
+  free_shipping
 }
 
 enum AuthSource {
