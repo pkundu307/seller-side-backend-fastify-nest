@@ -4,7 +4,10 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderStatus, PaymentStatus } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
-
+function generateOrderNumber() {
+  // Format: ORD-TIMESTAMP-RANDOM (e.g., ORD-170123456-4829)
+  return `ORD-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+}
 @Injectable()
 export class OrdersService {
   constructor(private prisma: PrismaService) {}
@@ -79,6 +82,8 @@ export class OrdersService {
           shippingFee: dto.shippingFee || 0,
           taxAmount: dto.taxAmount || 0,
           discount: dto.discount || 0,
+                orderNumber: generateOrderNumber(), 
+
         },
       });
 

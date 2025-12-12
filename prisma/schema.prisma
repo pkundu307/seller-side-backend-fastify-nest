@@ -22,13 +22,18 @@ model CustomerUser {
   type           CustomerType    @default(user)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
-  
+  gender        String?
   // Relations
+    phoneNumber       String?   @unique // Essential for OTP login
+  isEmailVerified   Boolean   @default(false)
+  isPhoneVerified   Boolean   @default(false)
   addresses      Address[]
   cartItems      CartItem[]
   orders         Order[]
   orderInitiates OrderInitiate[]
   reviews        Review[]
+   isActive          Boolean   @default(true) // To ban users if needed
+  lastLoginAt       DateTime? // For analytics
 }
 
 model User {
@@ -55,8 +60,12 @@ model Address {
   alternativePhoneNumber String?
   createdAt              DateTime     @default(now())
   updatedAt              DateTime     @updatedAt
-  
+   type           String    @default("HOME") // HOME, WORK, OTHER
+  isDefault      Boolean   @default(false)  // To auto-select in checkout
+  landmark       String? 
   customerUserId         String
+    latitude       Float?
+  longitude      Float?
   customerUser           CustomerUser @relation(fields: [customerUserId], references: [id])
 }
 
@@ -78,10 +87,19 @@ model Business {
   category   String   @default("General")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt // Fixed: removed @default(now()) on update
-
+  slug             String?   @unique // For store url: mysite.com/store/nike
+  description      String?   // "About us" text
+  logoUrl          String?
+  bannerUrl        String?
+  websiteUrl       String?
+  socialLinks      Json? 
   ownerId    String
   owner      User     @relation(fields: [ownerId], references: [id])
-  
+    isActive         Boolean   @default(true) // Admin can suspend store
+  rating           Decimal   @default(0)    // Cache average rating to avoid expensive calc
+  reviewCount      Int       @default(0)
+    bankDetails      Json?     // { acNo: "...", ifsc: "...", holder: "..." }
+
   products   Product[]
   reviews    Review[]
   activities ActivityLog[] @relation("BusinessActivities")
@@ -126,7 +144,10 @@ model Product {
   model3dUrl          String?
   licenseDocumentUrl  String?                  @map("license_document_url") // Fixed typo 'slicense'
   isArable            Boolean                  @default(false) // AR-able?
-  
+  metaTitle       String?
+  metaDescription String?
+  tags            String[]
+  brand           String?
   // Full Text Search
   searchVector        Unsupported("tsvector")? @map("search_vector")
 
@@ -152,7 +173,10 @@ model Variant {
   images                 String[]
   status                 VariantStatus @default(DRAFT)
   description            String?
-  
+    length          Decimal?
+  width           Decimal?
+  height          Decimal?
+  dimensionUnit   String?   @default("CM") // CM, INCH
   // Inventory Intelligence
   minStockCount          Decimal?      @db.Decimal(10, 2)
   isMinStockAlertEnabled Boolean?
@@ -235,7 +259,13 @@ model Review {
   
   productId      String
   product        Product      @relation(fields: [productId], references: [id])
-  
+   title             String?   // "Great product!"
+  images            String[]  // Photo reviews
+  isVerifiedPurchase Boolean  @default(false)
+   reply             String?   // Seller's response
+  repliedAt         DateTime?
+    status            String    @default("APPROVED") // PENDING, APPROVED, REJECTED
+
   businessId     String
   business       Business     @relation(fields: [businessId], references: [id])
   
@@ -254,7 +284,21 @@ model Order {
   paymentStatus         PaymentStatus @default(pending)
   status                OrderStatus   @default(pending)
   selectedAddress       Json
+   orderNumber       String    @unique // e.g. "ORD-2024-5892" (UUIDs are ugly for support)
+  currency          String    @default("INR")
+
+  // 2. Logistics Timestamps
+  confirmedAt       DateTime?
+  shippedAt         DateTime?
+  deliveredAt       DateTime?
+  cancelledAt       DateTime?
+
+  // 3. Returns/Refunds
+  isRefunded        Boolean   @default(false)
+  refundAmount      Decimal?
   
+  // 4. Tech
+  ipAddress         String?   // Fraud detection
   // Cost Breakdown
   discount              Decimal       @default(0)
   taxAmount             Decimal       @default(0)
@@ -432,7 +476,12 @@ model HomepageItem {
 
 model Sale {
   id                        String                 @id @default(uuid())
+    status            String    @default("FINALIZED") // DRAFT, FINALIZED, CANCELLED
+ eWayBillNumber    String?
+  ackNumber         String?   // IRN Acknowledgement
   
+  // 3. Documents
+  pdfUrl            String? 
   businessId                String
   business                  Business               @relation(fields: [businessId], references: [id]) // FIXED: Added relation
   
