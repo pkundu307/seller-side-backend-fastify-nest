@@ -34,6 +34,8 @@ model CustomerUser {
   reviews        Review[]
    isActive          Boolean   @default(true) // To ban users if needed
   lastLoginAt       DateTime? // For analytics
+    notifications  CustomerNotification[] 
+
 }
 
 model User {
@@ -48,6 +50,8 @@ model User {
   // Relations
   businesses          Business[]
   performedActivities ActivityLog[] @relation("PerformedUserActivities")
+    notifications       SellerNotification[] 
+
 }
 
 model Address {
@@ -105,6 +109,44 @@ model Business {
   activities ActivityLog[] @relation("BusinessActivities")
   sales      Sale[]        // FIXED: Added relation to Accounting Sales
   itemUnits  ItemUnit[]    // FIXED: Added relation
+}
+
+model SellerNotification {
+  id          String   @id @default(uuid())
+  title       String
+  message     String
+  isRead      Boolean  @default(false)
+  type        NotificationType @default(ORDER) // Define enum if needed, or use String
+  metadata    Json?    // Store orderId, productId, etc. here
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// 2. Notification for Customers (Linked to CustomerUser model)
+model CustomerNotification {
+  id             String   @id @default(uuid())
+  title          String
+  message        String
+  isRead         Boolean  @default(false)
+  type           NotificationType @default(ORDER)
+  metadata       Json?    
+  
+  customerUserId String
+  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id], onDelete: Cascade)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+enum NotificationType {
+  ORDER
+  SYSTEM
+  PROMOTION
+  ALERT
 }
 
 // ==============================
