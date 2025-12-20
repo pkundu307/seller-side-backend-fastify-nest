@@ -9,6 +9,13 @@ import { MultipartFile } from 'fastify-multipart';
 
 import { FastifyRequest } from 'fastify'
 import { UpdateBusinessVerificationDto } from './dto/update-business-verification.dto';
+import { CreateHomepageSectionDto } from './dto/create-homepage-section.dto';
+
+interface ParsedHomepageFiles {
+  itemImages: Map<number, { buffer: Buffer; filename: string; mimetype: string }>;
+}
+
+
 interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
   brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
@@ -246,4 +253,7 @@ private async parseBannerMultipartData(
   ) {
     return this.adminService.updateBusinessVerification(businessId, updateDto);
   }
+
+
+  
 }

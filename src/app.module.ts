@@ -20,6 +20,8 @@ import { CartModule } from './cart/cart.module';
 import { CustomizationImageModule } from './customization-image/customization-image.module';
 import { ProductSearchModule } from './product-search/product-search.module';
 import { OrderModule } from './order/order.module';
+import { HomepageAdminModule } from './homepage-admin/homepage-admin.module';
+import { HomepageModule } from './homepage/homepage.module';
 
 @Module({
   imports: [
@@ -63,7 +65,11 @@ import { OrderModule } from './order/order.module';
    
     ProductSearchModule,
    
-    OrderModule    
+    OrderModule,
+   
+    HomepageAdminModule,
+   
+    HomepageModule    
   ],
   providers: [PrismaService],
 

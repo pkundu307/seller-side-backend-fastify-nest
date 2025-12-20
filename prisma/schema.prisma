@@ -1,6 +1,5 @@
 generator client {
-  provider        = "prisma-client-js"
-  // previewFeatures = ["postgresqlExtensions", "fullTextSearch"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -8,50 +7,54 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ==============================
-// USER & AUTH DOMAIN
-// ==============================
-
 model CustomerUser {
-  id             String          @id @default(uuid())
-  email          String          @unique
-  picture        String?
-  name           String
-  password       String?
-  authSource     AuthSource      @default(self)
-  type           CustomerType    @default(user)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  gender        String?
-  // Relations
-    phoneNumber       String?   @unique // Essential for OTP login
-  isEmailVerified   Boolean   @default(false)
-  isPhoneVerified   Boolean   @default(false)
-  addresses      Address[]
-  cartItems      CartItem[]
-  orders         Order[]
-  orderInitiates OrderInitiate[]
-  reviews        Review[]
-   isActive          Boolean   @default(true) // To ban users if needed
-  lastLoginAt       DateTime? // For analytics
-    notifications  CustomerNotification[] 
-
+  id              String                 @id @default(uuid())
+  email           String                 @unique
+  picture         String?
+  name            String
+  password        String?
+  authSource      AuthSource             @default(self)
+  type            CustomerType           @default(user)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  gender          String?
+  isActive        Boolean                @default(true)
+  isEmailVerified Boolean                @default(false)
+  isPhoneVerified Boolean                @default(false)
+  lastLoginAt     DateTime?
+  phoneNumber     String?                @unique
+  addresses       Address[]
+  cartItems       CartItem[]
+  notifications   CustomerNotification[]
+  orders          Order[]
+  orderInitiates  OrderInitiate[]
+  wishlistItems  Wishlist[]
+  reviews         Review[]
 }
 
+model Wishlist {
+  id             String       @id @default(uuid())
+  customerUserId String
+  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
+  productId      String
+  product        Product      @relation(fields: [productId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@unique([customerUserId, productId])
+}
+
+
 model User {
-  id                  String        @id @default(uuid())
-  email               String        @unique
+  id                  String               @id @default(uuid())
+  email               String               @unique
   password            String
-  role                String        @default("user") // Consider enum: ADMIN, SELLER
+  role                String               @default("user")
   image               String?
   name                String?
-  createdAt           DateTime      @default(now())
-  
-  // Relations
+  createdAt           DateTime             @default(now())
   businesses          Business[]
-  performedActivities ActivityLog[] @relation("PerformedUserActivities")
-    notifications       SellerNotification[] 
-
+  notifications       SellerNotification[]
+  performedActivities ActivityLog[]        @relation("PerformedUserActivities")
 }
 
 model Address {
@@ -61,97 +64,77 @@ model Address {
   state                  String
   postalCode             String
   country                String
+  customerUserId         String
   alternativePhoneNumber String?
   createdAt              DateTime     @default(now())
   updatedAt              DateTime     @updatedAt
-   type           String    @default("HOME") // HOME, WORK, OTHER
-  isDefault      Boolean   @default(false)  // To auto-select in checkout
-  landmark       String? 
-  customerUserId         String
-    latitude       Float?
-  longitude      Float?
+  isDefault              Boolean      @default(false)
+  landmark               String?
+  latitude               Float?
+  longitude              Float?
+  type                   String       @default("HOME")
+  notes                  String?
   customerUser           CustomerUser @relation(fields: [customerUserId], references: [id])
 }
 
-// ==============================
-// BUSINESS DOMAIN
-// ==============================
-
 model Business {
-  id         String   @id @default(uuid())
-  name       String
-  gstNumber  String   @unique
-  address    String
-  city       String
-  state      String
-  country    String
-  postalCode String
-  phone      String
-  isVerified Boolean  @default(false)
-  category   String   @default("General")
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt // Fixed: removed @default(now()) on update
-  slug             String?   @unique // For store url: mysite.com/store/nike
-  description      String?   // "About us" text
-  logoUrl          String?
-  bannerUrl        String?
-  websiteUrl       String?
-  socialLinks      Json? 
-  ownerId    String
-  owner      User     @relation(fields: [ownerId], references: [id])
-    isActive         Boolean   @default(true) // Admin can suspend store
-  rating           Decimal   @default(0)    // Cache average rating to avoid expensive calc
-  reviewCount      Int       @default(0)
-    bankDetails      Json?     // { acNo: "...", ifsc: "...", holder: "..." }
-
-  products   Product[]
-  reviews    Review[]
-  activities ActivityLog[] @relation("BusinessActivities")
-  sales      Sale[]        // FIXED: Added relation to Accounting Sales
-  itemUnits  ItemUnit[]    // FIXED: Added relation
+  id          String        @id @default(uuid())
+  name        String
+  gstNumber   String        @unique
+  address     String
+  city        String
+  state       String
+  country     String
+  postalCode  String
+  phone       String
+  ownerId     String
+  isVerified  Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  category    String        @default("General")
+  bankDetails Json?
+  bannerUrl   String?
+  description String?
+  isActive    Boolean       @default(true)
+  logoUrl     String?
+  rating      Decimal       @default(0)
+  reviewCount Int           @default(0)
+  slug        String?       @unique
+  socialLinks Json?
+  websiteUrl  String?
+  owner       User          @relation(fields: [ownerId], references: [id])
+  itemUnits   ItemUnit[]
+  products    Product[]
+  reviews     Review[]
+  sales       Sale[]
+  activities  ActivityLog[] @relation("BusinessActivities")
 }
 
 model SellerNotification {
-  id          String   @id @default(uuid())
-  title       String
-  message     String
-  isRead      Boolean  @default(false)
-  type        NotificationType @default(ORDER) // Define enum if needed, or use String
-  metadata    Json?    // Store orderId, productId, etc. here
-  
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String           @id @default(uuid())
+  title     String
+  message   String
+  isRead    Boolean          @default(false)
+  type      NotificationType @default(ORDER)
+  metadata  Json?
+  userId    String
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-// 2. Notification for Customers (Linked to CustomerUser model)
 model CustomerNotification {
-  id             String   @id @default(uuid())
+  id             String           @id @default(uuid())
   title          String
   message        String
-  isRead         Boolean  @default(false)
+  isRead         Boolean          @default(false)
   type           NotificationType @default(ORDER)
-  metadata       Json?    
-  
+  metadata       Json?
   customerUserId String
-  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id], onDelete: Cascade)
-
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  customerUser   CustomerUser     @relation(fields: [customerUserId], references: [id], onDelete: Cascade)
 }
-
-enum NotificationType {
-  ORDER
-  SYSTEM
-  PROMOTION
-  ALERT
-}
-
-// ==============================
-// PRODUCT CATALOG DOMAIN
-// ==============================
 
 model Category {
   id         Int         @id @default(autoincrement())
@@ -160,12 +143,10 @@ model Category {
   parentId   Int?
   createdAt  DateTime    @default(now())
   updatedAt  DateTime    @updatedAt
-  
-  parent     Category?   @relation("SubCategories", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  children   Category[]  @relation("SubCategories")
-  
   attributes Attribute[]
   products   Product[]
+  parent     Category?   @relation("SubCategories", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children   Category[]  @relation("SubCategories")
 
   @@map("category")
 }
@@ -181,70 +162,60 @@ model Product {
   slug                String                   @unique
   createdAt           DateTime                 @default(now())
   updatedAt           DateTime                 @updatedAt
+  businessId          String
+  categoryId          Int
   publishDate         DateTime?
   customizationConfig Json?
   model3dUrl          String?
-  licenseDocumentUrl  String?                  @map("license_document_url") // Fixed typo 'slicense'
-  isArable            Boolean                  @default(false) // AR-able?
-  metaTitle       String?
-  metaDescription String?
-  tags            String[]
-  brand           String?
-  // Full Text Search
+  isArable            Boolean                  @default(false)
   searchVector        Unsupported("tsvector")? @map("search_vector")
-
-  businessId          String
+  licenseDocumentUrl  String?                  @map("license_document_url")
+  brand               String?
+  metaDescription     String?
+  metaTitle           String?
+  tags                String[]
   business            Business                 @relation(fields: [businessId], references: [id])
-  
-  categoryId          Int
   category            Category                 @relation(fields: [categoryId], references: [id])
-  
   reviews             Review[]
   variants            Variant[]
-
+wishlistItems       Wishlist[]
   @@index([searchVector], map: "product_search_idx", type: Gin)
+  @@index([tags], map: "product_tags_array_idx", type: Gin)
+  @@index([title])
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "product_title_trgm_idx", type: Gin)
 }
 
 model Variant {
-  id                     String        @id @default(uuid())
-  sku                    String        @unique
-  price                  Decimal       @db.Decimal(10, 2)
+  id                     String                  @id @default(uuid())
+  sku                    String                  @unique
+  price                  Decimal                 @db.Decimal(10, 2)
   stock                  Int
-  isDefault              Boolean       @default(false)
+  isDefault              Boolean                 @default(false)
   weightInGrams          Int?
   images                 String[]
-  status                 VariantStatus @default(DRAFT)
-  description            String?
-    length          Decimal?
-  width           Decimal?
-  height          Decimal?
-  dimensionUnit   String?   @default("CM") // CM, INCH
-  // Inventory Intelligence
-  minStockCount          Decimal?      @db.Decimal(10, 2)
-  isMinStockAlertEnabled Boolean?
-  
-  // Taxation & Pricing
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
   hsnCode                String?
   sacCode                String?
-  mrp                    Decimal?      @db.Decimal(10, 2)
-  purchasePrice          Decimal?      @db.Decimal(10, 2)
-  purchasePriceType      String?       @db.VarChar(64)
-  tax                    String?       @db.VarChar(128)
-  
-  createdAt              DateTime      @default(now())
-  updatedAt              DateTime      @updatedAt
-
+  mrp                    Decimal?                @db.Decimal(10, 2)
+  purchasePrice          Decimal?                @db.Decimal(10, 2)
+  purchasePriceType      String?                 @db.VarChar(64)
+  tax                    String?                 @db.VarChar(128)
+  minStockCount          Decimal?                @db.Decimal(10, 2)
+  isMinStockAlertEnabled Boolean?
   productId              String
-  product                Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
-  
-  // Relations
+  status                 VariantStatus           @default(DRAFT)
+  description            String?
+  dimensionUnit          String?                 @default("CM")
+  height                 Decimal?
+  length                 Decimal?
+  width                  Decimal?
   cartItems              CartItem[]
+  batches                ItemBatching[]
   orderItems             OrderItem[]
+  stockActivities        StockActivity[]
+  product                Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
   attributeValues        VariantAttributeValue[]
-  
-  // Orphan Fixes
-  batches                ItemBatching[]      // FIXED: Linked Batching
-  stockActivities        StockActivity[]     // FIXED: Linked Stock Activity
 
   @@index([productId])
 }
@@ -252,11 +223,9 @@ model Variant {
 model Attribute {
   id            Int                     @id @default(autoincrement())
   name          String
-  position      Int                     @default(0)
-  
   categoryId    Int
+  position      Int                     @default(0)
   category      Category                @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  
   options       AttributeOption[]
   variantValues VariantAttributeValue[]
 
@@ -266,12 +235,10 @@ model Attribute {
 model AttributeOption {
   id            Int                     @id @default(autoincrement())
   value         String
+  attributeId   Int
   position      Int                     @default(0)
   slug          String
-  
-  attributeId   Int
   attribute     Attribute               @relation(fields: [attributeId], references: [id], onDelete: Cascade)
-  
   variantValues VariantAttributeValue[]
 
   @@unique([attributeId, value])
@@ -280,82 +247,61 @@ model AttributeOption {
 
 model VariantAttributeValue {
   id                Int             @id @default(autoincrement())
-  
   variantId         String
-  variant           Variant         @relation(fields: [variantId], references: [id], onDelete: Cascade)
-  
   attributeOptionId Int
-  attributeOption   AttributeOption @relation(fields: [attributeOptionId], references: [id], onDelete: Cascade)
-  
   attributeId       Int
   attribute         Attribute       @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  attributeOption   AttributeOption @relation(fields: [attributeOptionId], references: [id], onDelete: Cascade)
+  variant           Variant         @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@map("variant_attribute_value")
 }
 
 model Review {
-  id             String       @id @default(uuid())
-  rating         Int
-  comment        String?
-  createdAt      DateTime     @default(now())
-  
-  productId      String
-  product        Product      @relation(fields: [productId], references: [id])
-   title             String?   // "Great product!"
-  images            String[]  // Photo reviews
-  isVerifiedPurchase Boolean  @default(false)
-   reply             String?   // Seller's response
-  repliedAt         DateTime?
-    status            String    @default("APPROVED") // PENDING, APPROVED, REJECTED
-
-  businessId     String
-  business       Business     @relation(fields: [businessId], references: [id])
-  
-  customerUserId String
-  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
+  id                 String       @id @default(uuid())
+  rating             Int
+  comment            String?
+  productId          String
+  createdAt          DateTime     @default(now())
+  businessId         String
+  customerUserId     String
+  images             String[]
+  isVerifiedPurchase Boolean      @default(false)
+  repliedAt          DateTime?
+  reply              String?
+  status             String       @default("APPROVED")
+  title              String?
+  business           Business     @relation(fields: [businessId], references: [id])
+  customerUser       CustomerUser @relation(fields: [customerUserId], references: [id])
+  product            Product      @relation(fields: [productId], references: [id])
 }
-
-// ==============================
-// E-COMMERCE ORDER & CART
-// ==============================
 
 model Order {
   id                    String        @id @default(uuid())
   totalAmount           Decimal
+  customerUserId        String
   paymentMethod         PaymentMethod
   paymentStatus         PaymentStatus @default(pending)
   status                OrderStatus   @default(pending)
   selectedAddress       Json
-   orderNumber       String    @unique // e.g. "ORD-2024-5892" (UUIDs are ugly for support)
-  currency          String    @default("INR")
-
-  // 2. Logistics Timestamps
-  confirmedAt       DateTime?
-  shippedAt         DateTime?
-  deliveredAt       DateTime?
-  cancelledAt       DateTime?
-
-  // 3. Returns/Refunds
-  isRefunded        Boolean   @default(false)
-  refundAmount      Decimal?
-  
-  // 4. Tech
-  ipAddress         String?   // Fraud detection
-  // Cost Breakdown
   discount              Decimal       @default(0)
   taxAmount             Decimal       @default(0)
   shippingFee           Decimal       @default(0)
-  
   trackingNumber        String?
   estimatedDeliveryDate DateTime?
   cancellationReason    String?
-  
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
-  
-  customerUserId        String
+  cancelledAt           DateTime?
+  confirmedAt           DateTime?
+  currency              String        @default("INR")
+  deliveredAt           DateTime?
+  ipAddress             String?
+  isRefunded            Boolean       @default(false)
+  orderNumber           String        @unique
+  refundAmount          Decimal?
+  shippedAt             DateTime?
   customerUser          CustomerUser  @relation(fields: [customerUserId], references: [id])
-  
   items                 OrderItem[]
 }
 
@@ -364,50 +310,36 @@ model OrderItem {
   quantity             Int
   priceAtTimeOfOrder   Decimal
   note                 String?
+  orderId              String
+  productId            String
+  variantId            String?
   customizationDetails Json?
   customizationImages  String[]
-  
-  orderId              String
   order                Order    @relation(fields: [orderId], references: [id])
-  
-  productId            String   // Keep as reference even if product deleted? Or relation?
-  // Ideally link to Product too, but keeping ID is fine for history
-  
-  variantId            String?
   variant              Variant? @relation(fields: [variantId], references: [id])
 }
 
 model CartItem {
   id                   String       @id @default(uuid())
   quantity             Int
-  
-  productId            String // Needed for efficient querying without joining variant
-  
+  productId            String
   variantId            String?
-  variant              Variant?     @relation(fields: [variantId], references: [id])
-  
   customerUserId       String
-  customerUser         CustomerUser @relation(fields: [customerUserId], references: [id])
-  
   customizationDetails Json?
   customizationImages  String[]     @default([])
+  customerUser         CustomerUser @relation(fields: [customerUserId], references: [id])
+  variant              Variant?     @relation(fields: [variantId], references: [id])
 }
 
 model OrderInitiate {
   id             String              @id @default(uuid())
   orderId        String              @map("order_id")
   status         OrderInitiateStatus @default(pending)
-  
   customerUserId String
-  customerUser   CustomerUser        @relation(fields: [customerUserId], references: [id])
-  
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
+  customerUser   CustomerUser        @relation(fields: [customerUserId], references: [id])
 }
-
-// ==============================
-// MARKETING (DISCOUNTS & CMS)
-// ==============================
 
 model Discount {
   id                String           @id @default(uuid())
@@ -415,47 +347,38 @@ model Discount {
   description       String?
   discountType      DiscountType     @map("discount_type")
   discountValue     Decimal          @map("discount_value")
-  
   startDate         DateTime?        @map("start_date")
   endDate           DateTime?        @map("end_date")
-  
   minOrderAmount    Decimal?         @map("min_order_amount")
   maxDiscountAmount Decimal?         @map("max_discount_amount")
-  
   createdAt         DateTime         @default(now()) @map("created_at")
   updatedAt         DateTime         @updatedAt @map("updated_at")
-  
-  targets           DiscountTarget[]
   coupons           Coupon[]
+  targets           DiscountTarget[]
 }
 
 model DiscountTarget {
-  id           String     @id @default(uuid())
-  targetType   TargetType @map("target_type")
-  productId    String?    @map("product_id")
-  categoryId   Int?       @map("category_id")
-  
-  discountId   String     @map("discount_id")
-  discount     Discount   @relation(fields: [discountId], references: [id])
+  id         String     @id @default(uuid())
+  discountId String     @map("discount_id")
+  targetType TargetType @map("target_type")
+  productId  String?    @map("product_id")
+  categoryId Int?       @map("category_id")
+  discount   Discount   @relation(fields: [discountId], references: [id])
 }
 
 model Coupon {
-  id            String    @id @default(uuid())
-  code          String    @unique
-  active        Boolean   @default(true)
-  
-  maxUses       Int?      @map("max_uses")
-  usedCount     Int       @default(0) @map("used_count")
-  perUserLimit  Int?      @map("per_user_limit")
-  
-  startsAt      DateTime? @map("starts_at")
-  expiresAt     DateTime? @map("expires_at")
-  
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
-
-  discountId    String    @map("discount_id")
-  discount      Discount  @relation(fields: [discountId], references: [id])
+  id           String    @id @default(uuid())
+  code         String    @unique
+  active       Boolean   @default(true)
+  discountId   String    @map("discount_id")
+  maxUses      Int?      @map("max_uses")
+  usedCount    Int       @default(0) @map("used_count")
+  perUserLimit Int?      @map("per_user_limit")
+  startsAt     DateTime? @map("starts_at")
+  expiresAt    DateTime? @map("expires_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  discount     Discount  @relation(fields: [discountId], references: [id])
 }
 
 model PromotionalBanner {
@@ -473,60 +396,35 @@ model PromotionalBanner {
 
 model HomepageSection {
   id          Int            @id @default(autoincrement())
-  title       String
+  title       String?
   subtitle    String?
-  sectionType String
   isActive    Boolean        @default(true)
   position    Int            @default(0)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  endDate     DateTime?
+  startDate   DateTime?
+  styleConfig Json?
+  type        SectionType
   items       HomepageItem[]
 }
 
 model HomepageItem {
-  id             Int             @id @default(autoincrement())
-  
-  title          String
-  subtitle       String?
-  description    String?
-  imageUrl       String?
-  targetUrl      String?
-  badgeText      String?
-  badgeColor     String?
-  itemType       String
-  mobileImageUrl String?
-  webImageUrl    String?
-  
-  productId      String?
-  categoryId     Int?
-  
-  isActive       Boolean         @default(true)
-  position       Int             @default(0)
-  startDate      DateTime?
-  endDate        DateTime?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-
-  sectionId      Int
-  section        HomepageSection @relation(fields: [sectionId], references: [id])
+  id          Int             @id @default(autoincrement())
+  sectionId   Int
+  title       String?
+  subtitle    String?
+  imageUrl    String?
+  isActive    Boolean         @default(true)
+  position    Int             @default(0)
+  linkType    LinkType        @default(NONE)
+  linkValue   String?
+  styleConfig Json?
+  videoUrl    String?
+  section     HomepageSection @relation(fields: [sectionId], references: [id])
 }
-
-// ==============================
-// ACCOUNTING / ERP DOMAIN
-// (Normalized to camelCase for TS, mapped to DB)
-// ==============================
 
 model Sale {
   id                        String                 @id @default(uuid())
-    status            String    @default("FINALIZED") // DRAFT, FINALIZED, CANCELLED
- eWayBillNumber    String?
-  ackNumber         String?   // IRN Acknowledgement
-  
-  // 3. Documents
-  pdfUrl            String? 
   businessId                String
-  business                  Business               @relation(fields: [businessId], references: [id]) // FIXED: Added relation
-  
   partyId                   String
   saleType                  String                 @db.VarChar(128)
   invoicePrefix             String                 @db.VarChar(128)
@@ -544,7 +442,6 @@ model Sale {
   phoneNo                   String                 @db.VarChar(36)
   taxId                     String                 @db.VarChar(128)
   panNo                     String                 @db.VarChar(128)
-  
   isDiscountAfterTaxEnabled Boolean
   discountPercent           Decimal
   discountAmount            Decimal
@@ -558,14 +455,17 @@ model Sale {
   balanceAmount             Decimal
   termCondition             String
   notes                     String
+  createdAt                 DateTime               @default(now())
+  updatedAt                 DateTime               @updatedAt
   isScanItemEnabled         Boolean
   isConverted               Boolean
   party                     String
-  
-  createdAt                 DateTime               @default(now())
-  updatedAt                 DateTime               @updatedAt
-
+  ackNumber                 String?
+  eWayBillNumber            String?
+  pdfUrl                    String?
+  status                    String                 @default("FINALIZED")
   customField               CustomField?
+  business                  Business               @relation(fields: [businessId], references: [id])
   saleAdditionalCharges     SaleAdditionalCharge[]
   saleItems                 SaleItem[]
   salePaymentModes          SalePaymentMode[]
@@ -573,7 +473,7 @@ model Sale {
 }
 
 model SaleItem {
-  id                     String   @id @default(uuid()) @map("saleItemId") // Renamed PK for consistency
+  id                     String   @id @default(uuid()) @map("saleItemId")
   itemId                 String
   itemName               String   @db.VarChar(512)
   itemDescription        String
@@ -607,39 +507,35 @@ model SaleItem {
   wholesalePriceType     String   @db.VarChar(64)
   wholesaleQuantity      Decimal
   itemCode               String   @db.VarChar(128)
-  
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
-  
   saleId                 String
   sale                   Sale     @relation(fields: [saleId], references: [id])
 }
 
 model SaleAdditionalCharge {
-  id         String   @id @default(uuid()) @map("saleAdditionalChargeId")
-  name       String   @db.VarChar(256)
-  amount     Decimal
-  tax        String   @db.VarChar(128)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  
-  saleId     String
-  sale       Sale     @relation(fields: [saleId], references: [id])
+  id        String   @id @default(uuid()) @map("saleAdditionalChargeId")
+  name      String   @db.VarChar(256)
+  amount    Decimal
+  tax       String   @db.VarChar(128)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  saleId    String
+  sale      Sale     @relation(fields: [saleId], references: [id])
 }
 
 model SalePaymentMode {
-  id                String   @id @default(uuid()) @map("salePaymentModeId")
-  bankCashChequeId  String
-  accountName       String   @db.VarChar(256)
-  paymentMode       String   @db.VarChar(128)
-  amount            Decimal
-  ifsc              String   @db.VarChar(20)
-  acNo              String   @db.VarChar(20)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  
-  saleId            String
-  sale              Sale     @relation(fields: [saleId], references: [id])
+  id               String   @id @default(uuid()) @map("salePaymentModeId")
+  bankCashChequeId String
+  accountName      String   @db.VarChar(256)
+  paymentMode      String   @db.VarChar(128)
+  amount           Decimal
+  ifsc             String   @db.VarChar(20)
+  acNo             String   @db.VarChar(20)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  saleId           String
+  sale             Sale     @relation(fields: [saleId], references: [id])
 }
 
 model SaleTax {
@@ -651,11 +547,10 @@ model SaleTax {
   igst          Decimal
   cess          Decimal
   total         Decimal
-  hsnCode       String   @db.VarChar(128)
-  sacCode       String   @db.VarChar(128)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-  
+  hsnCode       String   @db.VarChar(128)
+  sacCode       String   @db.VarChar(128)
   saleId        String
   sale          Sale     @relation(fields: [saleId], references: [id])
 }
@@ -666,17 +561,11 @@ model CustomField {
   value     String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
   saleId    String?  @unique
   sale      Sale?    @relation(fields: [saleId], references: [id])
 }
 
-// ==============================
-// INVENTORY UTILS
-// ==============================
-
 model ItemBatching {
-  id                  String   @id @default(uuid())
   batchNo             String   @db.VarChar(128)
   manufactureDate     DateTime
   expiryDate          DateTime
@@ -694,40 +583,34 @@ model ItemBatching {
   closingStock        Decimal
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
-
-  // FIXED: Link Batch to Variant
+  id                  String   @id @default(uuid())
   variantId           String?
   variant             Variant? @relation(fields: [variantId], references: [id])
 }
 
 model ItemSerialisation {
-  id           String   @id @default(uuid())
   serialNo     String   @db.VarChar(128)
   serialNoDate DateTime
   isAvailable  Boolean
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-  
-  // FIXED: Should likely link to an item? 
-  // Assuming generic use for now, but ideally needs relation.
+  id           String   @id @default(uuid())
 }
 
 model ItemUnit {
   id         String   @id @default(uuid())
+  businessId String
   unitName   String   @db.VarChar(128)
   isEnabled  Boolean
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
-
-  businessId String
   business   Business @relation(fields: [businessId], references: [id])
 }
 
 model StockActivity {
   id            String   @id @default(uuid())
-  
-  itemId        String   // Usually variantId?
-  
+  businessId    String
+  itemId        String
   activityType  String   @db.VarChar(128)
   invoicePrefix String   @db.VarChar(128)
   invoiceNo     Int
@@ -735,19 +618,9 @@ model StockActivity {
   closingStock  Decimal
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-
-  businessId    String
-  // Relation to Business is implied by businessId, usually good to make explicit:
-  // business   Business @relation(...)
-  
-  // FIXED: Added relation to Variant
   variantId     String?
   variant       Variant? @relation(fields: [variantId], references: [id])
 }
-
-// ==============================
-// ENUMS & UTILS
-// ==============================
 
 model ActivityLog {
   id                String    @id @default(uuid())
@@ -757,12 +630,10 @@ model ActivityLog {
   description       String
   details           Json?
   createdAt         DateTime  @default(now())
-  
   performedByUserId String?
-  performedByUser   User?     @relation("PerformedUserActivities", fields: [performedByUserId], references: [id])
-  
   businessId        String?
   business          Business? @relation("BusinessActivities", fields: [businessId], references: [id])
+  performedByUser   User?     @relation("PerformedUserActivities", fields: [performedByUserId], references: [id])
 
   @@index([businessId])
   @@index([performedByUserId])
@@ -770,7 +641,6 @@ model ActivityLog {
   @@map("activity_log")
 }
 
-// Predefined categories for onboarding (Fixed: moved to bottom)
 model PredefinedCategory {
   id            String                  @id @default(uuid())
   categoryName  String
@@ -805,6 +675,32 @@ model CategoryOrSubcategoryImage {
   url                     String
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
+}
+
+enum NotificationType {
+  ORDER
+  SYSTEM
+  PROMOTION
+  ALERT
+}
+
+enum SectionType {
+  HERO_SLIDER
+  SCROLLABLE_ROW
+  GRID_2XN
+  GRID_3XN
+  GRID_SQUARE_COMPACT
+  SINGLE_BANNER
+  PRODUCT_CAROUSEL
+}
+
+enum LinkType {
+  NONE
+  CATEGORY
+  PRODUCT
+  BRAND
+  SEARCH
+  EXTERNAL_URL
 }
 
 enum TargetType {

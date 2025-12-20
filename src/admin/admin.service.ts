@@ -4,9 +4,14 @@ import { MultipartFile } from 'fastify-multipart';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { S3Service } from '../products/utils/s3Service';
 import { UpdateBusinessVerificationDto } from './dto/update-business-verification.dto';
+import { CreateHomepageSectionDto } from './dto/create-homepage-section.dto';
 interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
   brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
+}
+interface ParsedHomepageFiles {
+  // Maps the item's index to its file data
+  itemImages: Map<number, { buffer: Buffer; filename: string; mimetype: string }>;
 }
 @Injectable()
 export class AdminService {
@@ -311,4 +316,6 @@ export class AdminService {
       },
     });
   }
+
+
 }
