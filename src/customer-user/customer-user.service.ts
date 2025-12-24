@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Address, CustomerUser, Prisma } from '@prisma/client';
 import { UpdateAddressDto } from './dto/update-address.dto';
@@ -28,24 +28,38 @@ export class CustomerUserService {
       where: { id },
     });
   }
-   async findAddressesByUserId(userId: string): Promise<Address[]> {
+  async findAddressesByUserId(userId: string): Promise<Address[]> {
     return this.prisma.address.findMany({
-      where: {
-        customerUserId: userId,
-      },
+      where: { customerUserId: userId },
+      orderBy: { isDefault: 'desc' }, // Show default address first
     });
   }
 
-  async createAddress(
-    userId: string,
-    addressData: CreateAddressDto,
-  ): Promise<Address> {
-    // This will now work because the userId comes from a valid, authenticated JWT token.
-    return this.prisma.address.create({
-      data: {
-        ...addressData,
-        customerUserId: userId,
-      },
+  async createAddress(userId: string, addressData: CreateAddressDto): Promise<Address> {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. If the new address is being set as default...
+      if (addressData.isDefault === true) {
+        // ...then set all OTHER addresses for this user to isDefault: false.
+        await tx.address.updateMany({
+          where: {
+            customerUserId: userId,
+            isDefault: true,
+          },
+          data: {
+            isDefault: false,
+          },
+        });
+      }
+
+      // 2. Now, create the new address with the correct default status.
+      const newAddress = await tx.address.create({
+        data: {
+          ...addressData,
+          customerUserId: userId,
+        },
+      });
+
+      return newAddress;
     });
   }
 
@@ -54,40 +68,66 @@ export class CustomerUserService {
     addressId: string,
     addressData: UpdateAddressDto,
   ): Promise<Address> {
-    try {
-      // This is a secure way to update. It ensures the addressId and userId both match a single record.
-      return await this.prisma.address.update({
-        where: {
-          id: addressId,
-          customerUserId: userId, // <-- Security check!
-        },
+    // First, verify the address exists and belongs to the user.
+    const address = await this.prisma.address.findUnique({
+      where: { id: addressId },
+    });
+
+    if (!address) {
+      throw new NotFoundException(`Address with ID "${addressId}" not found.`);
+    }
+    if (address.customerUserId !== userId) {
+      throw new ForbiddenException(`You do not have permission to update this address.`);
+    }
+
+    // Now perform the update within a transaction
+    return this.prisma.$transaction(async (tx) => {
+      // 1. If the user is trying to set this address as the new default...
+      if (addressData.isDefault === true) {
+        // ...then unset any other address that is currently the default for this user.
+        await tx.address.updateMany({
+          where: {
+            customerUserId: userId,
+            isDefault: true,
+            // Exclude the current address from this update in case it's already the default
+            NOT: { id: addressId }, 
+          },
+          data: {
+            isDefault: false,
+          },
+        });
+      }
+
+      // 2. Now, update the target address with the new data.
+      const updatedAddress = await tx.address.update({
+        where: { id: addressId },
         data: addressData,
       });
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-        throw new NotFoundException(
-          `Address with ID "${addressId}" not found or you don't have permission to update it.`,
-        );
-      }
-      throw error;
-    }
+
+      return updatedAddress;
+    });
   }
-    async deleteAddress(userId: string, addressId: string): Promise<Address> {
+
+  async deleteAddress(userId: string, addressId: string): Promise<{ success: boolean; message: string }> {
     try {
       // Delete where ID matches AND the owner is the current user
-      return await this.prisma.address.delete({
+      await this.prisma.address.delete({
         where: {
           id: addressId,
           customerUserId: userId, // <-- Security check!
         },
       });
+      return { success: true, message: 'Address deleted successfully.' };
     } catch (error) {
-      // P2025 is the code for "Record to delete does not exist"
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
         throw new NotFoundException(
           `Address with ID "${addressId}" not found or you don't have permission to delete it.`,
         );
       }
       throw error;
-    }}
+    }
+  }
+  
+
+  
 }

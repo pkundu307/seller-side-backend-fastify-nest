@@ -22,11 +22,18 @@ import { ProductSearchModule } from './product-search/product-search.module';
 import { OrderModule } from './order/order.module';
 import { HomepageAdminModule } from './homepage-admin/homepage-admin.module';
 import { HomepageModule } from './homepage/homepage.module';
+import { PaymentModule } from './payment/payment.module';
+import { CouponModule } from './coupon/coupon.module';
+import { SellerModule } from './seller/seller.module';
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
-    ConfigModule.forRoot(),
+    ConfigModule.forRoot(
+      {
+        isGlobal: true
+      }
+    ),
     PrismaModule,
 
      JwtModule.registerAsync({
@@ -69,7 +76,13 @@ import { HomepageModule } from './homepage/homepage.module';
    
     HomepageAdminModule,
    
-    HomepageModule    
+    HomepageModule,
+   
+    PaymentModule,
+   
+    CouponModule,
+   
+    SellerModule    
   ],
   providers: [PrismaService],
 
