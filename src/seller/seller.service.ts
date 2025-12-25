@@ -1,8 +1,20 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SellerPaginationDto } from './dto/seller-pagination.dto';
 import { OrderStatus, PaymentMethod, Prisma } from '@prisma/client';
+import { UpdateSellerOrderDto } from './dto/update-order.dtp';
+import PDFDocument = require('pdfkit');
 
+// Define a type for the address object to cast the JSON to
+interface ShippingAddress {
+  street: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+  landmark?: string;
+  alternativePhoneNumber?: string;
+}
 @Injectable()
 export class SellerService {
   constructor(private prisma: PrismaService) {}
@@ -148,5 +160,123 @@ export class SellerService {
         shippingAddress: order.selectedAddress,
       },
     };
+  }
+async updateOrderStatus(businessId: string, orderId: string, dto: UpdateSellerOrderDto) {
+    const order = await this.prisma.order.findFirst({
+      where: {
+        id: orderId,
+        items: {
+          some: {
+            variant: {
+              product: {
+                businessId: businessId,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Order with ID "${orderId}" not found or it does not belong to your business.`);
+    }
+
+    // --- THE FIX IS HERE ---
+
+    // Define the type for allowed transitions more strictly.
+    const allowedTransitions: Record<OrderStatus, OrderStatus[]> = {
+      pending: [OrderStatus.processing, OrderStatus.cancelled],
+      processing: [OrderStatus.shipped, OrderStatus.cancelled],
+      shipped: [OrderStatus.delivered],
+      // Final states have no further transitions.
+      delivered: [], 
+      cancelled: [],
+    };
+
+    const currentStatus = order.status;
+    const nextStatus = dto.status;
+
+    // If the status isn't changing, allow the update (e.g., just adding a tracking number).
+    if (currentStatus !== nextStatus) {
+      // Check if the transition is defined and valid.
+      const possibleNextStatuses = allowedTransitions[currentStatus];
+      if (!possibleNextStatuses || !possibleNextStatuses.includes(nextStatus as OrderStatus)) {
+        throw new BadRequestException(`Invalid status transition from "${currentStatus}" to "${nextStatus}".`);
+      }
+    }
+    
+    // --- END OF FIX ---
+
+    const dataToUpdate: Prisma.OrderUpdateInput = {
+      status: dto.status,
+      trackingNumber: dto.trackingNumber,
+      cancellationReason: dto.cancellationReason,
+      estimatedDeliveryDate: dto.estimatedDeliveryDate,
+    };
+
+    switch (dto.status) {
+      case OrderStatus.processing:
+        if (!order.confirmedAt) dataToUpdate.confirmedAt = new Date();
+        break;
+      case OrderStatus.shipped:
+        if (!order.shippedAt) dataToUpdate.shippedAt = new Date();
+        break;
+      case OrderStatus.delivered:
+        if (!order.deliveredAt) dataToUpdate.deliveredAt = new Date();
+        break;
+      case OrderStatus.cancelled:
+        if (!order.cancelledAt) dataToUpdate.cancelledAt = new Date();
+        break;
+    }
+
+    const updatedOrder = await this.prisma.order.update({
+      where: { id: orderId },
+      data: dataToUpdate,
+    });
+    
+    return updatedOrder;
+  }
+async generateShippingLabelPdf(businessId: string, orderId: string): Promise<Buffer> {
+    const order = await this.getBusinessOrderById(businessId, orderId);
+
+    // --- FIX 2 & 3: Type check and cast the address object ---
+    const shippingAddress = order.customer.shippingAddress as ShippingAddress | null;
+
+    if (!shippingAddress) {
+      throw new BadRequestException('Order is missing a valid shipping address.');
+    }
+    // --- END OF FIX ---
+
+    return new Promise((resolve) => {
+      // --- FIX 1: Correctly instantiate PDFDocument ---
+      const doc = new PDFDocument({ size: 'A6', margin: 20 });
+      // --- END OF FIX ---
+
+      const buffers: Buffer[] = [];
+      doc.on('data', buffers.push.bind(buffers));
+      doc.on('end', () => {
+        resolve(Buffer.concat(buffers));
+      });
+
+      // --- PDF Content (now using the type-safe shippingAddress variable) ---
+      doc.fontSize(14).font('Helvetica-Bold').text('SHIP TO:', { underline: true });
+      doc.fontSize(12).font('Helvetica').text(order.customer.name);
+      doc.text(shippingAddress.street);
+      doc.text(`${shippingAddress.city}, ${shippingAddress.state} - ${shippingAddress.postalCode}`);
+      
+      doc.moveDown(2);
+      
+      doc.fontSize(10).text(`Order #: ${order.orderNumber}`);
+      doc.fontSize(8).text(`Payment: ${order.paymentMethod === 'cash_on_delivery' ? 'COD' : 'Prepaid'}`);
+      
+      if (order.paymentMethod === 'cash_on_delivery') {
+         doc.moveDown();
+         doc.fontSize(16).font('Helvetica-Bold').text(`COD Amount: ₹${order.totalAmount}`);
+      }
+      
+      // ... add QR code or barcode for tracking number ...
+
+      doc.end();
+    });
   }
 }

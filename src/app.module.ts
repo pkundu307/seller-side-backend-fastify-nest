@@ -25,6 +25,7 @@ import { HomepageModule } from './homepage/homepage.module';
 import { PaymentModule } from './payment/payment.module';
 import { CouponModule } from './coupon/coupon.module';
 import { SellerModule } from './seller/seller.module';
+import { KeepAliveModule } from './utils/keep-alive.module';
 
 @Module({
   imports: [
@@ -45,6 +46,8 @@ import { SellerModule } from './seller/seller.module';
         }),
     
     CheckModule,
+
+    KeepAliveModule,
    
     CategoryModule,
    

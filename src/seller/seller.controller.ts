@@ -1,10 +1,12 @@
-import { Controller, Get, Param, UseGuards, Req, Query, ForbiddenException, ParseUUIDPipe, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards, Req, Query, ForbiddenException, ParseUUIDPipe, NotFoundException, Body, Patch, Res } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { SellerService } from './seller.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard'; // Your JWT guard
 import { UserRequest } from '../auth/auth.types'; // Your custom request type
 import { SellerPaginationDto } from './dto/seller-pagination.dto';
 import { PrismaService } from '../prisma/prisma.service'; // To check business ownership
+import { UpdateSellerOrderDto } from './dto/update-order.dtp';
+import { FastifyReply } from 'fastify';
 
 @ApiTags('Seller Dashboard')
 @ApiBearerAuth()
@@ -52,5 +54,39 @@ export class SellerController {
   ) {
     await this.verifyBusinessOwnership(req.user.id, businessId);
     return this.sellerService.getBusinessOrderById(businessId, orderId);
+  }
+    @Patch(':businessId/orders/:orderId')
+  @ApiOperation({ summary: "Update the status and tracking info of an order" })
+  @ApiResponse({ status: 200, description: 'Order updated successfully.'})
+  @ApiResponse({ status: 400, description: 'Bad Request (e.g., invalid status transition).'})
+  @ApiResponse({ status: 403, description: 'Forbidden.'})
+  @ApiResponse({ status: 404, description: 'Order or Business not found.'})
+  async updateOrderStatus(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @Body() updateDto: UpdateSellerOrderDto,
+  ) {
+    await this.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.updateOrderStatus(businessId, orderId, updateDto);
+  }
+
+ @Get(':businessId/orders/:orderId/shipping-label')
+  @ApiOperation({ summary: 'Generate and download a PDF shipping label for an order' })
+  async getShippingLabel(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    // --- USE FASTIFYREPLY TYPE ---
+    @Res() reply: FastifyReply,
+  ) {
+    await this.verifyBusinessOwnership(req.user.id, businessId);
+    
+    const pdfBuffer = await this.sellerService.generateShippingLabelPdf(businessId, orderId);
+
+    // --- USE FASTIFY METHODS: .header() and .send() ---
+    reply.header('Content-Type', 'application/pdf');
+    reply.header('Content-Disposition', `attachment; filename=shipping-label-${orderId}.pdf`);
+    reply.send(pdfBuffer);
   }
 }

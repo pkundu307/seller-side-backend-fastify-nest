@@ -8,7 +8,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 export class KeepAliveService {
   constructor(private prisma: PrismaService) {}
 
-  @Cron('*/4 * * * *') // every 4 minutes
+  @Cron('*/12 * * * *') // every 4 minutes
   async keepDbAlive() {
     try {
       await this.prisma.user.findMany(); // simple DB call
