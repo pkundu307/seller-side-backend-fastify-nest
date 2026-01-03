@@ -1,4 +1,4 @@
-import { Controller, Get, Param, UseGuards, Req, Query, ForbiddenException, ParseUUIDPipe, NotFoundException, Body, Patch, Res } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards, Req, Query, ForbiddenException, ParseUUIDPipe, NotFoundException, Body, Patch, Res, Post } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { SellerService } from './seller.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard'; // Your JWT guard
@@ -7,6 +7,7 @@ import { SellerPaginationDto } from './dto/seller-pagination.dto';
 import { PrismaService } from '../prisma/prisma.service'; // To check business ownership
 import { UpdateSellerOrderDto } from './dto/update-order.dtp';
 import { FastifyReply } from 'fastify';
+import { CreatePosSaleDto } from './dto/create-pos-sale.dto';
 
 @ApiTags('Seller Dashboard')
 @ApiBearerAuth()
@@ -89,4 +90,14 @@ export class SellerController {
     reply.header('Content-Disposition', `attachment; filename=shipping-label-${orderId}.pdf`);
     reply.send(pdfBuffer);
   }
+@Post(':businessId/sales')
+@ApiOperation({ summary: 'Create a new Point-of-Sale (POS) sale for a business' })
+async createPosSale(
+  @Req() req: UserRequest,
+  @Param('businessId', ParseUUIDPipe) businessId: string,
+  @Body() dto: CreatePosSaleDto,
+) {
+  await this.verifyBusinessOwnership(req.user.id, businessId);
+  return this.sellerService.createPosSale(businessId, dto);
+}
 }

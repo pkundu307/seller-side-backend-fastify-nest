@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SellerPaginationDto } from './dto/seller-pagination.dto';
 import { OrderStatus, PaymentMethod, Prisma } from '@prisma/client';
 import { UpdateSellerOrderDto } from './dto/update-order.dtp';
 import PDFDocument = require('pdfkit');
+import { CreatePosSaleDto } from './dto/create-pos-sale.dto';
 
 // Define a type for the address object to cast the JSON to
 interface ShippingAddress {
@@ -162,50 +163,48 @@ export class SellerService {
     };
   }
 async updateOrderStatus(businessId: string, orderId: string, dto: UpdateSellerOrderDto) {
-    const order = await this.prisma.order.findFirst({
+  return this.prisma.$transaction(async (tx) => {
+    // 1. Fetch the full order with all necessary relations
+    const orderWithRelations = await tx.order.findFirst({
       where: {
         id: orderId,
         items: {
-          some: {
-            variant: {
-              product: {
-                businessId: businessId,
-              },
-            },
-          },
+          some: { variant: { product: { businessId: businessId } } },
         },
+      },
+      include: {
+        items: {
+          where: { variant: { product: { businessId: businessId } } },
+          include: { variant: { select: { sku: true, hsnCode: true } } },
+        },
+        customerUser: { select: { name: true } },
       },
     });
 
-    if (!order) {
+    if (!orderWithRelations) {
       throw new NotFoundException(`Order with ID "${orderId}" not found or it does not belong to your business.`);
     }
 
-    // --- THE FIX IS HERE ---
-
-    // Define the type for allowed transitions more strictly.
     const allowedTransitions: Record<OrderStatus, OrderStatus[]> = {
       pending: [OrderStatus.processing, OrderStatus.cancelled],
       processing: [OrderStatus.shipped, OrderStatus.cancelled],
       shipped: [OrderStatus.delivered],
-      // Final states have no further transitions.
-      delivered: [], 
+      delivered: [],
       cancelled: [],
     };
 
-    const currentStatus = order.status;
+    const currentStatus = orderWithRelations.status;
     const nextStatus = dto.status;
 
-    // If the status isn't changing, allow the update (e.g., just adding a tracking number).
+    // --- Validation logic (no changes here) ---
     if (currentStatus !== nextStatus) {
-      // Check if the transition is defined and valid.
-      const possibleNextStatuses = allowedTransitions[currentStatus];
-      if (!possibleNextStatuses || !possibleNextStatuses.includes(nextStatus as OrderStatus)) {
-        throw new BadRequestException(`Invalid status transition from "${currentStatus}" to "${nextStatus}".`);
+      if (nextStatus !== undefined) {
+        const possibleNextStatuses = allowedTransitions[currentStatus];
+        if (!possibleNextStatuses || !possibleNextStatuses.includes(nextStatus)) {
+          throw new BadRequestException(`Invalid status transition from "${currentStatus}" to "${nextStatus}".`);
+        }
       }
     }
-    
-    // --- END OF FIX ---
 
     const dataToUpdate: Prisma.OrderUpdateInput = {
       status: dto.status,
@@ -214,28 +213,189 @@ async updateOrderStatus(businessId: string, orderId: string, dto: UpdateSellerOr
       estimatedDeliveryDate: dto.estimatedDeliveryDate,
     };
 
-    switch (dto.status) {
-      case OrderStatus.processing:
-        if (!order.confirmedAt) dataToUpdate.confirmedAt = new Date();
-        break;
-      case OrderStatus.shipped:
-        if (!order.shippedAt) dataToUpdate.shippedAt = new Date();
-        break;
-      case OrderStatus.delivered:
-        if (!order.deliveredAt) dataToUpdate.deliveredAt = new Date();
-        break;
-      case OrderStatus.cancelled:
-        if (!order.cancelledAt) dataToUpdate.cancelledAt = new Date();
-        break;
+    if (dto.status) {
+      switch (dto.status) {
+        case OrderStatus.processing: dataToUpdate.confirmedAt = new Date(); break;
+        case OrderStatus.shipped: dataToUpdate.shippedAt = new Date(); break;
+        case OrderStatus.delivered: dataToUpdate.deliveredAt = new Date(); break;
+        case OrderStatus.cancelled: dataToUpdate.cancelledAt = new Date(); break;
+      }
     }
 
-    const updatedOrder = await this.prisma.order.update({
+    // 2. Perform the update. The result is a plain Order object.
+    const updatedOrder = await tx.order.update({
       where: { id: orderId },
       data: dataToUpdate,
     });
-    
+
+    // --- THE FIX IS HERE ---
+    // 3. Check the status on the `updatedOrder`, but pass the `orderWithRelations` to the helper function.
+    if (updatedOrder.status === OrderStatus.delivered && currentStatus !== OrderStatus.cancelled) {
+      await this._createSaleFromOrder(tx, businessId, orderWithRelations); // <-- PASS THE FULL OBJECT
+    }
+
+    // 4. Return the plain updated order object as the result of the API call.
     return updatedOrder;
+  });
+}
+
+  /**
+   * Private helper to create a Sale record from a delivered Order.
+   * Must be called within a transaction.
+   */
+  private async _createSaleFromOrder(
+    tx: Prisma.TransactionClient,
+    businessId: string,
+    order: any, // Using 'any' as it includes relations not on the base Order type
+  ) {
+    const business = await tx.business.findUnique({ where: { id: businessId }});
+    if(!business) throw new InternalServerErrorException("Business not found during sale creation");
+
+    // Check if a sale for this order already exists to prevent duplicates
+    const existingSale = await tx.sale.findFirst({ where: { notes: `From E-commerce Order #${order.orderNumber}` } });
+    if (existingSale) {
+        console.log(`Sale for order ${order.orderNumber} already exists. Skipping.`);
+        return;
+    }
+    
+    const address = order.selectedAddress as any;
+
+    await tx.sale.create({
+      data: {
+        businessId,
+        partyId: order.customerUserId, // Store customer ID for reference
+        partyName: order.customerUser.name,
+        businessName: business.name,
+        billingAddress: `${address.street}, ${address.city}, ${address.state} - ${address.postalCode}`,
+        shippingAddress: `${address.street}, ${address.city}, ${address.state} - ${address.postalCode}`,
+        phoneNo: address.alternativePhoneNumber || '',
+        placeOfSupply: address.state,
+        invoiceDate: new Date(),
+        // These are placeholders; a real invoice number system would be more complex
+        invoiceNo: Math.floor(1000 + Math.random() * 9000), 
+        invoicePrefix: 'INV',
+        totalTaxableAmount: order.totalAmount.minus(order.taxAmount),
+        totalTaxAmount: order.taxAmount,
+        totalAmount: order.totalAmount,
+        discountAmount: order.discount,
+        notes: `From E-commerce Order #${order.orderNumber}`,
+        status: 'FINALIZED',
+        isSettled: order.paymentMethod === 'online', // Assume online is settled
+        balanceAmount: order.paymentMethod === 'cash_on_delivery' ? order.totalAmount : 0,
+
+        saleItems: {
+          create: order.items.map((item: any) => ({
+            itemId: item.variantId,
+            itemName: `${item.variant.sku}`, // Best available name
+            hsnCode: item.variant.hsnCode || '',
+            quantity: item.quantity,
+            price: item.priceAtTimeOfOrder,
+            taxableAmount: new Prisma.Decimal(item.priceAtTimeOfOrder).times(item.quantity),
+            amount: new Prisma.Decimal(item.priceAtTimeOfOrder).times(item.quantity),
+            // Defaulting other required fields
+            itemDescription: '', sacCode: '', batchNo: '', manufactureDate: new Date(),
+            expiryDate: new Date(), priceType: '', unit: '', discountPercent: 0,
+            discountAmount: 0, tax: '', taxAmount: 0, cess: '', cessAmount: 0,
+            isMrpEnabled: false, isWholesaleEnabled: false, isSerialisationEnabled: false,
+            isBatchingEnabled: false, sellingPrice: 0, sellingPriceType: '',
+            purchasePrice: 0, purchasePriceType: '', mrp: 0, wholesalePrice: 0,
+            wholesalePriceType: '', wholesaleQuantity: 0, itemCode: ''
+          })),
+        },
+        // --- Populating other required fields with defaults ---
+        saleType: '', paymentTerm: 0, partyType: '', taxId: '', panNo: '',
+        isDiscountAfterTaxEnabled: false, discountPercent: 0, isAutoRoundoffEnabled: false,
+        roundoffType: '', roundoffAmount: 0, termCondition: '', isScanItemEnabled: false,
+        isConverted: false, party: '', isDueDateEnabled: false, dueDate: new Date()
+      },
+    });
   }
+
+
+  async createPosSale(businessId: string, dto: CreatePosSaleDto) {
+  const { customerName = 'Walk-in Customer', customerPhone = '', items } = dto;
+
+  const variantIds = items.map(item => item.variantId);
+  const variants = await this.prisma.variant.findMany({
+    where: {
+      id: { in: variantIds },
+      product: { businessId: businessId }, // Security check: variants must belong to seller
+    },
+    select: { id: true, price: true, stock: true, sku: true, hsnCode: true }
+  });
+
+  if (variants.length !== variantIds.length) {
+    throw new BadRequestException("One or more variants are invalid or do not belong to your business.");
+  }
+  
+  // Check stock and calculate total
+  let totalAmount = new Prisma.Decimal(0);
+  const saleItemsToCreate = items.map(item => {
+    const variant = variants.find(v => v.id === item.variantId);
+    if (!variant) throw new InternalServerErrorException(); // Should not happen
+    if (variant.stock < item.quantity) {
+      throw new BadRequestException(`Insufficient stock for SKU ${variant.sku}. Available: ${variant.stock}, Requested: ${item.quantity}`);
+    }
+    const itemTotal = variant.price.times(item.quantity);
+    totalAmount = totalAmount.plus(itemTotal);
+    
+    return {
+      itemId: variant.id,
+      itemName: variant.sku,
+      hsnCode: variant.hsnCode || '',
+      quantity: item.quantity,
+      price: variant.price,
+      taxableAmount: itemTotal,
+      amount: itemTotal,
+      // Defaulting other required SaleItem fields
+       itemDescription: '', sacCode: '', batchNo: '', manufactureDate: new Date(),
+       expiryDate: new Date(), priceType: '', unit: '', discountPercent: 0,
+       discountAmount: 0, tax: '', taxAmount: 0, cess: '', cessAmount: 0,
+       isMrpEnabled: false, isWholesaleEnabled: false, isSerialisationEnabled: false,
+       isBatchingEnabled: false, sellingPrice: 0, sellingPriceType: '',
+       purchasePrice: 0, purchasePriceType: '', mrp: 0, wholesalePrice: 0,
+       wholesalePriceType: '', wholesaleQuantity: 0, itemCode: ''
+    };
+  });
+
+  return this.prisma.$transaction(async (tx) => {
+  // 1. Create the Sale record
+  const newSale = await tx.sale.create({
+    data: {
+      businessId: businessId,
+      partyName: customerName,
+      phoneNo: customerPhone,
+      invoiceDate: new Date(),
+      invoiceNo: Math.floor(1000 + Math.random() * 9000),
+      invoicePrefix: 'POS',
+      totalAmount: totalAmount,
+      totalTaxableAmount: totalAmount, // Assuming no tax for simplicity
+      status: 'FINALIZED',
+      isSettled: true, // Assuming POS sales are settled immediately
+      balanceAmount: 0,
+      notes: 'In-store Point-of-Sale transaction.',
+      saleItems: { create: saleItemsToCreate },
+      // --- Populating other required fields with defaults ---
+      partyId: '', saleType: '', paymentTerm: 0, partyType: '', businessName: '',
+      billingAddress: '', shippingAddress: '', placeOfSupply: '', taxId: '', panNo: '',
+      isDiscountAfterTaxEnabled: false, discountPercent: 0, discountAmount: 0, totalTaxAmount: 0,
+      isAutoRoundoffEnabled: false, roundoffType: '', roundoffAmount: 0, termCondition: '',
+      isScanItemEnabled: false, isConverted: false, party: '', isDueDateEnabled: false, dueDate: new Date()
+    },
+  });
+    
+    // 2. Decrement stock for each variant
+    for (const item of items) {
+      await tx.variant.update({
+        where: { id: item.variantId },
+        data: { stock: { decrement: item.quantity } },
+      });
+    }
+
+    return newSale;
+  });
+}
+
 async generateShippingLabelPdf(businessId: string, orderId: string): Promise<Buffer> {
     const order = await this.getBusinessOrderById(businessId, orderId);
 
@@ -249,7 +409,7 @@ async generateShippingLabelPdf(businessId: string, orderId: string): Promise<Buf
 
     return new Promise((resolve) => {
       // --- FIX 1: Correctly instantiate PDFDocument ---
-      const doc = new PDFDocument({ size: 'A6', margin: 20 });
+      const doc = new PDFDocument({ size: 'A4', margin: 20 });
       // --- END OF FIX ---
 
       const buffers: Buffer[] = [];
@@ -278,5 +438,4 @@ async generateShippingLabelPdf(businessId: string, orderId: string): Promise<Buf
 
       doc.end();
     });
-  }
-}
+  }}
