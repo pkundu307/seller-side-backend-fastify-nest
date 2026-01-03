@@ -8,53 +8,84 @@ datasource db {
 }
 
 model CustomerUser {
-  id              String                 @id @default(uuid())
-  email           String                 @unique
-  picture         String?
-  name            String
-  password        String?
-  authSource      AuthSource             @default(self)
-  type            CustomerType           @default(user)
-  createdAt       DateTime               @default(now())
-  updatedAt       DateTime               @updatedAt
-  gender          String?
-  isActive        Boolean                @default(true)
-  isEmailVerified Boolean                @default(false)
-  isPhoneVerified Boolean                @default(false)
-  lastLoginAt     DateTime?
-  phoneNumber     String?                @unique
-  addresses       Address[]
-  cartItems       CartItem[]
-  notifications   CustomerNotification[]
-  orders          Order[]
-  orderInitiates  OrderInitiate[]
-  wishlistItems  Wishlist[]
-  reviews         Review[]
+  id                String                 @id @default(uuid())
+  email             String                 @unique
+  picture           String?
+  name              String
+  password          String?
+  authSource        AuthSource             @default(self)
+  type              CustomerType           @default(user)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  gender            String?
+  isActive          Boolean                @default(true)
+  isEmailVerified   Boolean                @default(false)
+  isPhoneVerified   Boolean                @default(false)
+  lastLoginAt       DateTime?
+  phoneNumber       String?                @unique
+  addresses         Address[]
+  cartItems         CartItem[]
+  notifications     CustomerNotification[]
+  orders            Order[]
+  orderInitiates    OrderInitiate[]
+  reviews           Review[]
+  wishlistItems     Wishlist[]
+  wallet            CustomerWallet?
+  userInteractions  UserInteraction[]
+  preferredLanguage String?                @default("en-US")
 }
 
 model Wishlist {
   id             String       @id @default(uuid())
   customerUserId String
-  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
   productId      String
-  product        Product      @relation(fields: [productId], references: [id])
   createdAt      DateTime     @default(now())
+  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
+  product        Product      @relation(fields: [productId], references: [id])
 
   @@unique([customerUserId, productId])
 }
 
-
 model User {
-  id                  String               @id @default(uuid())
-  email               String               @unique
+  id                  String                 @id @default(uuid())
+  email               String                 @unique
   password            String
-  role                String               @default("user")
+  role                String                 @default("user")
   image               String?
   name                String?
-  createdAt           DateTime             @default(now())
+  createdAt           DateTime               @default(now())
   businesses          Business[]
   notifications       SellerNotification[]
-  performedActivities ActivityLog[]        @relation("PerformedUserActivities")
+  performedActivities ActivityLog[]          @relation("PerformedUserActivities")
+  sentSupportMessages SupportTicketMessage[]
+  preferredLanguage   String?                @default("en-US")
+  staffProfile        StaffMember?
+}
+
+model Permission {
+  id          Int     @id @default(autoincrement())
+  action      String // e.g., "read", "create", "update", "delete"
+  subject     String // e.g., "Order", "Product", "Customer"
+  description String?
+
+  roles Role[] @relation("RolePermissions") // Many-to-many with Role
+
+  @@unique([action, subject])
+}
+
+// --- Defines a role, which is a collection of permissions ---
+model Role {
+  id          Int      @id @default(autoincrement())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id])
+  name        String // e.g., "Order Manager", "Product Uploader"
+  description String?
+  isDefault   Boolean  @default(false) // For default roles like "Owner"
+
+  permissions Permission[]  @relation("RolePermissions") // Many-to-many with Permission
+  staff       StaffMember[]
+
+  @@unique([businessId, name])
 }
 
 model Address {
@@ -78,36 +109,44 @@ model Address {
 }
 
 model Business {
-  id          String        @id @default(uuid())
-  name        String
-  gstNumber   String        @unique
-  address     String
-  city        String
-  state       String
-  country     String
-  postalCode  String
-  phone       String
-  ownerId     String
-  isVerified  Boolean       @default(false)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  category    String        @default("General")
-  bankDetails Json?
-  bannerUrl   String?
-  description String?
-  isActive    Boolean       @default(true)
-  logoUrl     String?
-  rating      Decimal       @default(0)
-  reviewCount Int           @default(0)
-  slug        String?       @unique
-  socialLinks Json?
-  websiteUrl  String?
-  owner       User          @relation(fields: [ownerId], references: [id])
-  itemUnits   ItemUnit[]
-  products    Product[]
-  reviews     Review[]
-  sales       Sale[]
-  activities  ActivityLog[] @relation("BusinessActivities")
+  id                     String                  @id @default(uuid())
+  name                   String
+  gstNumber              String                  @unique
+  address                String
+  city                   String
+  state                  String
+  country                String
+  postalCode             String
+  phone                  String
+  ownerId                String
+  isVerified             Boolean                 @default(false)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  category               String                  @default("General")
+  bankDetails            Json?
+  bannerUrl              String?
+  description            String?
+  isActive               Boolean                 @default(true)
+  logoUrl                String?
+  rating                 Decimal                 @default(0)
+  reviewCount            Int                     @default(0)
+  slug                   String?                 @unique
+  socialLinks            Json?
+  websiteUrl             String?
+  owner                  User                    @relation(fields: [ownerId], references: [id])
+  itemUnits              ItemUnit[]
+  products               Product[]
+  reviews                Review[]
+  sales                  Sale[]
+  activities             ActivityLog[]           @relation("BusinessActivities")
+  plan                   SubscriptionPlan        @default(FREE)
+  subscriptionExpiresAt  DateTime?
+  stripeCustomerId       String?                 @unique
+  subscriptionPayments   SubscriptionPayment[]
+  advertisementCampaigns AdvertisementCampaign[]
+  supportTickets         SupportTicket[]
+  staffMembers           StaffMember[]
+  roles                  Role[]
 }
 
 model SellerNotification {
@@ -178,10 +217,12 @@ model Product {
   category            Category                 @relation(fields: [categoryId], references: [id])
   reviews             Review[]
   variants            Variant[]
-wishlistItems       Wishlist[]
+  wishlistItems       Wishlist[]
+  sponsorships        SponsoredProduct[]
+
+  @@index([title])
   @@index([searchVector], map: "product_search_idx", type: Gin)
   @@index([tags], map: "product_tags_array_idx", type: Gin)
-  @@index([title])
   @@index([title(ops: raw("gin_trgm_ops"))], map: "product_title_trgm_idx", type: Gin)
 }
 
@@ -677,11 +718,261 @@ model CategoryOrSubcategoryImage {
   updatedAt               DateTime @updatedAt
 }
 
+model StaffMember {
+  id         String   @id @default(uuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+
+  name   String
+  phone  String? @unique
+  email  String? @unique
+  roleId Int?
+  role   Role?   @relation(fields: [roleId], references: [id])
+
+  address        String?
+  roleTitle      String // e.g., "Warehouse Manager", "Packer", "Sales Associate"
+  employmentType EmploymentType @default(FULL_TIME)
+  joiningDate    DateTime
+  isActive       Boolean        @default(true) // To mark former employees
+
+  // Wage & Salary Information
+  wageType   String // e.g., "MONTHLY_SALARY", "HOURLY_WAGE"
+  wageAmount Decimal
+
+  // Link to a User account for platform access (optional)
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id])
+
+  attendance    Attendance[]
+  salaryPayouts SalaryPayout[]
+
+  @@index([businessId])
+}
+
+// --- Attendance Tracking ---
+model Attendance {
+  id            String      @id @default(uuid())
+  staffMemberId String
+  staffMember   StaffMember @relation(fields: [staffMemberId], references: [id])
+
+  date         DateTime         @db.Date // Store only the date part
+  status       AttendanceStatus
+  checkInTime  DateTime?
+  checkOutTime DateTime?
+  notes        String? // e.g., "Late due to traffic", "Approved leave"
+
+  @@unique([staffMemberId, date]) // A staff member can only have one attendance record per day
+}
+
+// --- Salary & Payout History ---
+model SalaryPayout {
+  id            String      @id @default(uuid())
+  staffMemberId String
+  staffMember   StaffMember @relation(fields: [staffMemberId], references: [id])
+
+  payoutDate     DateTime
+  amountPaid     Decimal
+  paymentPeriod  String // e.g., "December 2026"
+  paymentMethod  String // e.g., "Bank Transfer", "Cash"
+  transactionRef String? // Bank transaction reference
+  notes          String?
+
+  @@index([staffMemberId])
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+}
+
+// Defines the status of an attendance record
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  ON_LEAVE
+  HALF_DAY
+}
+
 enum NotificationType {
   ORDER
   SYSTEM
   PROMOTION
   ALERT
+}
+
+enum SubscriptionPlan {
+  FREE
+  BASIC
+  PRO
+}
+
+// For Advertisement Campaigns
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+// For the Customer Wallet System
+enum WalletTransactionType {
+  REFUND
+  CASHBACK
+  PROMOTIONAL_CREDIT
+  PURCHASE_DEBIT
+  GIFT_CARD_REDEMPTION
+  MANUAL_ADJUSTMENT
+}
+
+// For the User Behavior Tracking System
+enum UserInteractionType {
+  PRODUCT_VIEW
+  CATEGORY_VIEW
+  SEARCH
+  ADD_TO_CART
+  ADD_TO_WISHLIST
+  ORDER_PLACED
+}
+
+model SubscriptionPayment {
+  id              String           @id @default(uuid())
+  businessId      String
+  business        Business         @relation(fields: [businessId], references: [id])
+  plan            SubscriptionPlan
+  amount          Decimal
+  paymentGateway  String // e.g., "Stripe", "Razorpay"
+  transactionId   String           @unique
+  paidAt          DateTime         @default(now())
+  periodStartDate DateTime
+  periodEndDate   DateTime
+
+  @@index([businessId])
+}
+
+// --- 2. ADVERTISING & SPONSORED PRODUCTS ---
+
+model AdvertisementCampaign {
+  id          String         @id @default(uuid())
+  businessId  String
+  business    Business       @relation(fields: [businessId], references: [id])
+  name        String
+  budget      Decimal
+  spentAmount Decimal        @default(0)
+  startDate   DateTime
+  endDate     DateTime?
+  status      CampaignStatus @default(DRAFT)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  sponsoredProducts SponsoredProduct[]
+
+  @@index([businessId])
+}
+
+model SponsoredProduct {
+  id               String                @id @default(uuid())
+  campaignId       String
+  campaign         AdvertisementCampaign @relation(fields: [campaignId], references: [id])
+  productId        String
+  product          Product               @relation(fields: [productId], references: [id])
+  cpc              Decimal? // Cost-Per-Click
+  cpm              Decimal? // Cost-Per-Mille (1000 impressions)
+  totalClicks      Int                   @default(0)
+  totalImpressions Int                   @default(0)
+  isActive         Boolean               @default(true)
+  createdAt        DateTime              @default(now())
+
+  @@unique([campaignId, productId])
+  @@index([productId])
+}
+
+// --- 3. CUSTOMER WALLET SYSTEM ---
+
+model CustomerWallet {
+  id             String       @id @default(uuid())
+  customerUserId String       @unique
+  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id])
+  balance        Decimal      @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+  id        String                @id @default(uuid())
+  walletId  String
+  wallet    CustomerWallet        @relation(fields: [walletId], references: [id])
+  amount    Decimal // Can be positive (credit) or negative (debit)
+  type      WalletTransactionType
+  metadata  Json? // e.g., { "orderId": "...", "reason": "Returned item" }
+  createdAt DateTime              @default(now())
+
+  @@index([walletId])
+}
+
+// --- 4. USER BEHAVIOR TRACKING ---
+
+model UserInteraction {
+  id             BigInt              @id @default(autoincrement())
+  customerUserId String?
+  customerUser   CustomerUser?       @relation(fields: [customerUserId], references: [id])
+  sessionId      String // To group anonymous actions
+  eventType      UserInteractionType
+  entityId       String? // The ID of the product, category, etc.
+  metadata       Json? // e.g., { "searchQuery": "red shoes" }
+  timestamp      DateTime            @default(now())
+
+  @@index([customerUserId])
+  @@index([eventType])
+  @@index([timestamp])
+}
+
+// --- 5. SELLER SUPPORT TICKETING SYSTEM ---
+
+model SupportTicket {
+  id          String         @id @default(uuid())
+  businessId  String
+  business    Business       @relation(fields: [businessId], references: [id])
+  title       String
+  description String
+  status      TicketStatus   @default(OPEN)
+  priority    TicketPriority @default(MEDIUM)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  messages SupportTicketMessage[]
+
+  @@index([businessId])
+}
+
+model SupportTicketMessage {
+  id        String        @id @default(uuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id])
+  senderId  String // The ID of the User (seller or admin) who sent it
+  sender    User          @relation(fields: [senderId], references: [id])
+  message   String
+  createdAt DateTime      @default(now())
+
+  @@index([ticketId])
+}
+
+// For the Seller Support Ticketing System
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
 }
 
 enum SectionType {

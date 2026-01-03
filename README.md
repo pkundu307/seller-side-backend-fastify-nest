@@ -1,98 +1,131 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+<div align="center">
+  <img src=".github/jottosop-logo.png" alt="Jottosop Logo" width="150"/>
+  <h1>Jottosop - Multi-Vendor E-Commerce & CRM Platform</h1>
+  <p>
+    A robust, scalable, and feature-rich backend for a multi-vendor e-commerce marketplace, built with NestJS, Fastify, Prisma, and PostgreSQL.
+  </p>
+  
+  <p>
+    <!-- Badges -->
+    <a href="#"><img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript"/></a>
+    <a href="#"><img src="https://img.shields.io/badge/Node.js-339933?logo=nodedotjs&logoColor=white" alt="Node.js"/></a>
+    <a href="#"><img src="https://img.shields.io/badge/NestJS-E0234E?logo=nestjs&logoColor=white" alt="NestJS"/></a>
+    <a href="#"><img src="https://img.shields.io/badge/Fastify-000000?logo=fastify&logoColor=white" alt="Fastify"/></a>
+    <a href="#"><img src="https://img.shields.io/badge/Prisma-2D3748?logo=prisma&logoColor=white" alt="Prisma"/></a>
+    <a href="#"><img src="https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL"/></a>
+    <a href="#"><img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white" alt="Docker"/></a>
+  </p>
+</div>
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+---
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## ✨ Project Overview
 
-## Description
+**Jottosop** is more than just an e-commerce backend; it's a complete ecosystem designed to empower sellers and delight customers. It provides a full suite of tools for a multi-vendor marketplace, including inventory management, order processing, dynamic marketing, and a seller-facing CRM. The architecture is built for scalability, security, and developer efficiency.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## 🚀 Core Features
 
-## Project setup
+-   **Multi-Vendor Architecture:** Onboard multiple sellers (`Business`), each with their own storefront, products, and staff.
+-   **Advanced Product Catalog:** Hierarchical categories, product variants with custom attributes, and rich product details.
+-   **Full E-Commerce Flow:** Shopping cart, robust order management, and secure payment gateway integration (Razorpay).
+-   **Dynamic Marketing & CMS:**
+    -   Powerful coupon and discount engine with flexible targeting.
+    -   Fully dynamic homepage builder for creating custom layouts (sliders, grids, carousels) via an admin panel.
+-   **Seller CRM & Management:**
+    -   Subscription plans (`FREE`, `BASIC`, `PRO`) for sellers.
+    -   Staff management with role-based access control (RBAC).
+    -   Seller dashboard APIs for order management and sales analytics.
+    -   Support ticketing system for seller-admin communication.
+-   **Customer Engagement:**
+    -   Wishlists, product reviews, and notifications.
+    -   Customer wallet for handling refunds and credits.
+-   **Technology:**
+    -   **Framework:** [NestJS](https://nestjs.com/) for a modular and scalable architecture.
+    -   **HTTP Server:** [Fastify](https://www.fastify.io/) for high-performance request handling.
+    -   **ORM:** [Prisma](https://www.prisma.io/) for type-safe database access and migrations.
+    -   **Database:** [PostgreSQL](https://www.postgresql.org/) for robust, relational data storage.
+    -   **Authentication:** JWT-based authentication for both customers and sellers/admins.
 
-```bash
-$ npm install
-```
+## 🛠️ Getting Started
 
-## Compile and run the project
+### Prerequisites
 
-```bash
-# development
-$ npm run start
+-   [Node.js](https://nodejs.org/en/) (v18 or later)
+-   [NPM](https://www.npmjs.com/) or [Yarn](https://yarnpkg.com/)
+-   [Docker](https://www.docker.com/products/docker-desktop/) and Docker Compose
+-   A PostgreSQL database instance (or use the provided Docker setup).
 
-# watch mode
-$ npm run start:dev
+### 1. Local Setup (with Docker)
 
-# production mode
-$ npm run start:prod
-```
+This is the recommended way to run the project locally. It spins up both the application and a dedicated PostgreSQL database.
 
-## Run tests
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/your-username/jottosop.git
+    cd jottosop
+    ```
 
-```bash
-# unit tests
-$ npm run test
+2.  **Create an environment file:**
+    Copy the example environment file and fill in your secrets.
+    ```bash
+    cp .env.example .env
+    ```
+    *Inside `.env`, update `JWT_SECRET` and other keys. The `DATABASE_URL` is already configured for the Docker setup.*
 
-# e2e tests
-$ npm run test:e2e
+3.  **Build and run the containers:**
+    ```bash
+    docker-compose up --build
+    ```
+    *This will start the NestJS app on `http://localhost:3000` and the PostgreSQL database on `http://localhost:5432`.*
 
-# test coverage
-$ npm run test:cov
-```
+4.  **Run database migrations and seed:**
+    Open a **new terminal window** and run these commands to set up the database schema and create the initial admin user.
+    ```bash
+    # Apply all migrations
+    docker-compose exec app npx prisma migrate deploy
 
-## Deployment
+    # Seed the database with initial data (admin user, permissions, etc.)
+    docker-compose exec app npx prisma db seed
+    ```
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+### 2. Manual Setup (without Docker)
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+1.  **Install dependencies:**
+    ```bash
+    npm install
+    ```
 
-```bash
-$ npm install -g mau
-$ mau deploy
-```
+2.  **Set up your `.env` file:**
+    Create a `.env` file and set your `DATABASE_URL` to point to your Supabase or local PostgreSQL instance. Fill in all other required secrets.
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+3.  **Run migrations:**
+    ```bash
+    npx prisma migrate deploy
+    ```
 
-## Resources
+4.  **Run the seed script:**
+    ```bash
+    npx prisma db seed
+    ```
 
-Check out a few resources that may come in handy when working with NestJS:
+5.  **Start the development server:**
+    ```bash
+    npm run start:dev
+    ```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## 🌐 API Documentation
 
-## Support
+Once the application is running, the full API documentation is available via Swagger UI at:
+**[http://localhost:3000/api](http://localhost:3000/api)**
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## 🔧 Key Scripts
 
-## Stay in touch
+-   `npm run start:dev`: Starts the app in watch mode.
+-   `npm run build`: Compiles the TypeScript to JavaScript.
+-   `npx prisma migrate dev --name <migration-name>`: Creates a new database migration.
+-   `npx prisma studio`: Opens a web-based GUI to view and edit your database.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+---
+<div align="center">
+  Made with ❤️ for Jottosop
+</div>

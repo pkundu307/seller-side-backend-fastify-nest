@@ -1,5 +1,29 @@
 -- CreateEnum
+CREATE TYPE "EmploymentType" AS ENUM ('FULL_TIME', 'PART_TIME', 'CONTRACT');
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- CreateEnum
+CREATE TYPE "AttendanceStatus" AS ENUM ('PRESENT', 'ABSENT', 'ON_LEAVE', 'HALF_DAY');
+
+-- CreateEnum
 CREATE TYPE "NotificationType" AS ENUM ('ORDER', 'SYSTEM', 'PROMOTION', 'ALERT');
+
+-- CreateEnum
+CREATE TYPE "SubscriptionPlan" AS ENUM ('FREE', 'BASIC', 'PRO');
+
+-- CreateEnum
+CREATE TYPE "CampaignStatus" AS ENUM ('DRAFT', 'ACTIVE', 'PAUSED', 'COMPLETED', 'ARCHIVED');
+
+-- CreateEnum
+CREATE TYPE "WalletTransactionType" AS ENUM ('REFUND', 'CASHBACK', 'PROMOTIONAL_CREDIT', 'PURCHASE_DEBIT', 'GIFT_CARD_REDEMPTION', 'MANUAL_ADJUSTMENT');
+
+-- CreateEnum
+CREATE TYPE "UserInteractionType" AS ENUM ('PRODUCT_VIEW', 'CATEGORY_VIEW', 'SEARCH', 'ADD_TO_CART', 'ADD_TO_WISHLIST', 'ORDER_PLACED');
+
+-- CreateEnum
+CREATE TYPE "TicketStatus" AS ENUM ('OPEN', 'IN_PROGRESS', 'RESOLVED', 'CLOSED');
+
+-- CreateEnum
+CREATE TYPE "TicketPriority" AS ENUM ('LOW', 'MEDIUM', 'HIGH', 'URGENT');
 
 -- CreateEnum
 CREATE TYPE "SectionType" AS ENUM ('HERO_SLIDER', 'SCROLLABLE_ROW', 'GRID_2XN', 'GRID_3XN', 'GRID_SQUARE_COMPACT', 'SINGLE_BANNER', 'PRODUCT_CAROUSEL');
@@ -57,6 +81,7 @@ CREATE TABLE "CustomerUser" (
     "isPhoneVerified" BOOLEAN NOT NULL DEFAULT false,
     "lastLoginAt" TIMESTAMP(3),
     "phoneNumber" TEXT,
+    "preferredLanguage" TEXT DEFAULT 'en-US',
 
     CONSTRAINT "CustomerUser_pkey" PRIMARY KEY ("id")
 );
@@ -80,8 +105,30 @@ CREATE TABLE "User" (
     "image" TEXT,
     "name" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "preferredLanguage" TEXT DEFAULT 'en-US',
 
     CONSTRAINT "User_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Permission" (
+    "id" SERIAL NOT NULL,
+    "action" TEXT NOT NULL,
+    "subject" TEXT NOT NULL,
+    "description" TEXT,
+
+    CONSTRAINT "Permission_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Role" (
+    "id" SERIAL NOT NULL,
+    "businessId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "isDefault" BOOLEAN NOT NULL DEFAULT false,
+
+    CONSTRAINT "Role_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -132,6 +179,9 @@ CREATE TABLE "Business" (
     "slug" TEXT,
     "socialLinks" JSONB,
     "websiteUrl" TEXT,
+    "plan" "SubscriptionPlan" NOT NULL DEFAULT 'FREE',
+    "subscriptionExpiresAt" TIMESTAMP(3),
+    "stripeCustomerId" TEXT,
 
     CONSTRAINT "Business_pkey" PRIMARY KEY ("id")
 );
@@ -724,6 +774,168 @@ CREATE TABLE "CategoryOrSubcategoryImage" (
     CONSTRAINT "CategoryOrSubcategoryImage_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "StaffMember" (
+    "id" TEXT NOT NULL,
+    "businessId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "phone" TEXT,
+    "email" TEXT,
+    "roleId" INTEGER,
+    "address" TEXT,
+    "roleTitle" TEXT NOT NULL,
+    "employmentType" "EmploymentType" NOT NULL DEFAULT 'FULL_TIME',
+    "joiningDate" TIMESTAMP(3) NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "wageType" TEXT NOT NULL,
+    "wageAmount" DECIMAL(65,30) NOT NULL,
+    "userId" TEXT,
+
+    CONSTRAINT "StaffMember_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Attendance" (
+    "id" TEXT NOT NULL,
+    "staffMemberId" TEXT NOT NULL,
+    "date" DATE NOT NULL,
+    "status" "AttendanceStatus" NOT NULL,
+    "checkInTime" TIMESTAMP(3),
+    "checkOutTime" TIMESTAMP(3),
+    "notes" TEXT,
+
+    CONSTRAINT "Attendance_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "SalaryPayout" (
+    "id" TEXT NOT NULL,
+    "staffMemberId" TEXT NOT NULL,
+    "payoutDate" TIMESTAMP(3) NOT NULL,
+    "amountPaid" DECIMAL(65,30) NOT NULL,
+    "paymentPeriod" TEXT NOT NULL,
+    "paymentMethod" TEXT NOT NULL,
+    "transactionRef" TEXT,
+    "notes" TEXT,
+
+    CONSTRAINT "SalaryPayout_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "SubscriptionPayment" (
+    "id" TEXT NOT NULL,
+    "businessId" TEXT NOT NULL,
+    "plan" "SubscriptionPlan" NOT NULL,
+    "amount" DECIMAL(65,30) NOT NULL,
+    "paymentGateway" TEXT NOT NULL,
+    "transactionId" TEXT NOT NULL,
+    "paidAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "periodStartDate" TIMESTAMP(3) NOT NULL,
+    "periodEndDate" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "SubscriptionPayment_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "AdvertisementCampaign" (
+    "id" TEXT NOT NULL,
+    "businessId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "budget" DECIMAL(65,30) NOT NULL,
+    "spentAmount" DECIMAL(65,30) NOT NULL DEFAULT 0,
+    "startDate" TIMESTAMP(3) NOT NULL,
+    "endDate" TIMESTAMP(3),
+    "status" "CampaignStatus" NOT NULL DEFAULT 'DRAFT',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "AdvertisementCampaign_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "SponsoredProduct" (
+    "id" TEXT NOT NULL,
+    "campaignId" TEXT NOT NULL,
+    "productId" TEXT NOT NULL,
+    "cpc" DECIMAL(65,30),
+    "cpm" DECIMAL(65,30),
+    "totalClicks" INTEGER NOT NULL DEFAULT 0,
+    "totalImpressions" INTEGER NOT NULL DEFAULT 0,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "SponsoredProduct_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "CustomerWallet" (
+    "id" TEXT NOT NULL,
+    "customerUserId" TEXT NOT NULL,
+    "balance" DECIMAL(65,30) NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "CustomerWallet_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "WalletTransaction" (
+    "id" TEXT NOT NULL,
+    "walletId" TEXT NOT NULL,
+    "amount" DECIMAL(65,30) NOT NULL,
+    "type" "WalletTransactionType" NOT NULL,
+    "metadata" JSONB,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "WalletTransaction_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "UserInteraction" (
+    "id" BIGSERIAL NOT NULL,
+    "customerUserId" TEXT,
+    "sessionId" TEXT NOT NULL,
+    "eventType" "UserInteractionType" NOT NULL,
+    "entityId" TEXT,
+    "metadata" JSONB,
+    "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "UserInteraction_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "SupportTicket" (
+    "id" TEXT NOT NULL,
+    "businessId" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "description" TEXT NOT NULL,
+    "status" "TicketStatus" NOT NULL DEFAULT 'OPEN',
+    "priority" "TicketPriority" NOT NULL DEFAULT 'MEDIUM',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "SupportTicket_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "SupportTicketMessage" (
+    "id" TEXT NOT NULL,
+    "ticketId" TEXT NOT NULL,
+    "senderId" TEXT NOT NULL,
+    "message" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "SupportTicketMessage_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "_RolePermissions" (
+    "A" INTEGER NOT NULL,
+    "B" INTEGER NOT NULL,
+
+    CONSTRAINT "_RolePermissions_AB_pkey" PRIMARY KEY ("A","B")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "CustomerUser_email_key" ON "CustomerUser"("email");
 
@@ -737,10 +949,19 @@ CREATE UNIQUE INDEX "Wishlist_customerUserId_productId_key" ON "Wishlist"("custo
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "Permission_action_subject_key" ON "Permission"("action", "subject");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Role_businessId_name_key" ON "Role"("businessId", "name");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "Business_gstNumber_key" ON "Business"("gstNumber");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Business_slug_key" ON "Business"("slug");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Business_stripeCustomerId_key" ON "Business"("stripeCustomerId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "category_slug_key" ON "category"("slug");
@@ -749,13 +970,13 @@ CREATE UNIQUE INDEX "category_slug_key" ON "category"("slug");
 CREATE UNIQUE INDEX "Product_slug_key" ON "Product"("slug");
 
 -- CreateIndex
+CREATE INDEX "Product_title_idx" ON "Product"("title");
+
+-- CreateIndex
 CREATE INDEX "product_search_idx" ON "Product" USING GIN ("search_vector");
 
 -- CreateIndex
 CREATE INDEX "product_tags_array_idx" ON "Product" USING GIN ("tags");
-
--- CreateIndex
-CREATE INDEX "Product_title_idx" ON "Product"("title");
 
 -- CreateIndex
 CREATE INDEX "product_title_trgm_idx" ON "Product" USING GIN ("title" gin_trgm_ops);
@@ -790,11 +1011,71 @@ CREATE INDEX "activity_log_performedByUserId_idx" ON "activity_log"("performedBy
 -- CreateIndex
 CREATE INDEX "activity_log_createdAt_idx" ON "activity_log"("createdAt");
 
+-- CreateIndex
+CREATE UNIQUE INDEX "StaffMember_phone_key" ON "StaffMember"("phone");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "StaffMember_email_key" ON "StaffMember"("email");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "StaffMember_userId_key" ON "StaffMember"("userId");
+
+-- CreateIndex
+CREATE INDEX "StaffMember_businessId_idx" ON "StaffMember"("businessId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Attendance_staffMemberId_date_key" ON "Attendance"("staffMemberId", "date");
+
+-- CreateIndex
+CREATE INDEX "SalaryPayout_staffMemberId_idx" ON "SalaryPayout"("staffMemberId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "SubscriptionPayment_transactionId_key" ON "SubscriptionPayment"("transactionId");
+
+-- CreateIndex
+CREATE INDEX "SubscriptionPayment_businessId_idx" ON "SubscriptionPayment"("businessId");
+
+-- CreateIndex
+CREATE INDEX "AdvertisementCampaign_businessId_idx" ON "AdvertisementCampaign"("businessId");
+
+-- CreateIndex
+CREATE INDEX "SponsoredProduct_productId_idx" ON "SponsoredProduct"("productId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "SponsoredProduct_campaignId_productId_key" ON "SponsoredProduct"("campaignId", "productId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "CustomerWallet_customerUserId_key" ON "CustomerWallet"("customerUserId");
+
+-- CreateIndex
+CREATE INDEX "WalletTransaction_walletId_idx" ON "WalletTransaction"("walletId");
+
+-- CreateIndex
+CREATE INDEX "UserInteraction_customerUserId_idx" ON "UserInteraction"("customerUserId");
+
+-- CreateIndex
+CREATE INDEX "UserInteraction_eventType_idx" ON "UserInteraction"("eventType");
+
+-- CreateIndex
+CREATE INDEX "UserInteraction_timestamp_idx" ON "UserInteraction"("timestamp");
+
+-- CreateIndex
+CREATE INDEX "SupportTicket_businessId_idx" ON "SupportTicket"("businessId");
+
+-- CreateIndex
+CREATE INDEX "SupportTicketMessage_ticketId_idx" ON "SupportTicketMessage"("ticketId");
+
+-- CreateIndex
+CREATE INDEX "_RolePermissions_B_index" ON "_RolePermissions"("B");
+
 -- AddForeignKey
 ALTER TABLE "Wishlist" ADD CONSTRAINT "Wishlist_customerUserId_fkey" FOREIGN KEY ("customerUserId") REFERENCES "CustomerUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Wishlist" ADD CONSTRAINT "Wishlist_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Role" ADD CONSTRAINT "Role_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Address" ADD CONSTRAINT "Address_customerUserId_fkey" FOREIGN KEY ("customerUserId") REFERENCES "CustomerUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -909,3 +1190,54 @@ ALTER TABLE "PredefinedSubCategory" ADD CONSTRAINT "PredefinedSubCategory_catego
 
 -- AddForeignKey
 ALTER TABLE "SubCategoryImage" ADD CONSTRAINT "SubCategoryImage_subCategoryId_fkey" FOREIGN KEY ("subCategoryId") REFERENCES "PredefinedSubCategory"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "StaffMember" ADD CONSTRAINT "StaffMember_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "StaffMember" ADD CONSTRAINT "StaffMember_roleId_fkey" FOREIGN KEY ("roleId") REFERENCES "Role"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "StaffMember" ADD CONSTRAINT "StaffMember_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Attendance" ADD CONSTRAINT "Attendance_staffMemberId_fkey" FOREIGN KEY ("staffMemberId") REFERENCES "StaffMember"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SalaryPayout" ADD CONSTRAINT "SalaryPayout_staffMemberId_fkey" FOREIGN KEY ("staffMemberId") REFERENCES "StaffMember"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SubscriptionPayment" ADD CONSTRAINT "SubscriptionPayment_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AdvertisementCampaign" ADD CONSTRAINT "AdvertisementCampaign_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SponsoredProduct" ADD CONSTRAINT "SponsoredProduct_campaignId_fkey" FOREIGN KEY ("campaignId") REFERENCES "AdvertisementCampaign"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SponsoredProduct" ADD CONSTRAINT "SponsoredProduct_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CustomerWallet" ADD CONSTRAINT "CustomerWallet_customerUserId_fkey" FOREIGN KEY ("customerUserId") REFERENCES "CustomerUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "WalletTransaction" ADD CONSTRAINT "WalletTransaction_walletId_fkey" FOREIGN KEY ("walletId") REFERENCES "CustomerWallet"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "UserInteraction" ADD CONSTRAINT "UserInteraction_customerUserId_fkey" FOREIGN KEY ("customerUserId") REFERENCES "CustomerUser"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SupportTicket" ADD CONSTRAINT "SupportTicket_businessId_fkey" FOREIGN KEY ("businessId") REFERENCES "Business"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SupportTicketMessage" ADD CONSTRAINT "SupportTicketMessage_ticketId_fkey" FOREIGN KEY ("ticketId") REFERENCES "SupportTicket"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SupportTicketMessage" ADD CONSTRAINT "SupportTicketMessage_senderId_fkey" FOREIGN KEY ("senderId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "_RolePermissions" ADD CONSTRAINT "_RolePermissions_A_fkey" FOREIGN KEY ("A") REFERENCES "Permission"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "_RolePermissions" ADD CONSTRAINT "_RolePermissions_B_fkey" FOREIGN KEY ("B") REFERENCES "Role"("id") ON DELETE CASCADE ON UPDATE CASCADE;
