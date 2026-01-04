@@ -12,7 +12,8 @@ import { LoginDto } from './dto/login-user.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { OAuth2Client } from 'google-auth-library';
 import { ConfigService } from '@nestjs/config';
-import { AuthSource, CustomerType, CustomerUser } from '@prisma/client';
+import { AuthSource, CustomerType, CustomerUser, NotificationType } from '@prisma/client';
+import { NotificationService } from 'src/notifications/notifications.service';
 
 @Injectable()
 export class AuthService {
@@ -21,6 +22,7 @@ export class AuthService {
   constructor(
     private customerUserService: CustomerUserService,
     private jwtService: JwtService,
+     private readonly notificationService: NotificationService, 
     private configService: ConfigService,
   ) {
     this.googleClient = new OAuth2Client(
@@ -58,7 +60,12 @@ export class AuthService {
       authSource: AuthSource.self,
       type: CustomerType.user, // Default type
     });
-
+        await this.notificationService.createForCustomer(
+      user.id,
+      'Welcome to Jottosop!',
+      'We are excited to have you. Explore our amazing collection and enjoy your shopping experience.',
+      NotificationType.SYSTEM, // Using 'SYSTEM' type for this
+    );
     return this.createToken(user);
   }
 
@@ -103,7 +110,12 @@ export class AuthService {
           type: CustomerType.user,
         });
       }
-
+    await this.notificationService.createForCustomer(
+      user.id,
+      'Welcome to Jottosop!',
+      'We are excited to have you. Explore our amazing collection and enjoy your shopping experience.',
+      NotificationType.SYSTEM, // Using 'SYSTEM' type for this
+    );
       return this.createToken(user);
     } catch (error) {
       console.error('Google Login Error:', error);

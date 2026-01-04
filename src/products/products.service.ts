@@ -28,99 +28,144 @@ export class ProductsService {
     const { page = 1, limit = 10 } = paginationQuery;
     const skip = (page - 1) * limit;
 
-    // First, verify if the category actually exists.
-    const categoryExists = await this.prisma.category.findUnique({
+    // 1. Find the category and determine if it's a parent
+    const category = await this.prisma.category.findUnique({
       where: { id: categoryId },
-      select: { id: true },
+      include: { children: { select: { id: true, name: true, slug: true } } },
     });
 
-    if (!categoryExists) {
+    if (!category) {
       throw new NotFoundException(`Category with ID ${categoryId} not found.`);
     }
 
-    const products = await this.prisma.product.findMany({
-      where: {
-        categoryId: categoryId,
-        isFeatured: true, // Only featured products
-        isPublished: true, // Typically, featured products should also be published
-      },
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        slug: true,
-        images: true, // Main product images
-        business: {
-          select: {
-            name: true, // Business owner's company name
-          },
-        },
-        isCustomizable: true,
-        _count: {
-          select: {
-            reviews: true,
-            variants: true,
-          },
-        },
-        variants: {
-          take: 1, // Only retrieve one variant for price/mrp/images
-          orderBy: [ // <--- FIX: Wrap orderBy criteria in an array
-            { isDefault: 'desc' }, // Prioritize default variant
-            { createdAt: 'asc' },  // Fallback to the oldest variant if no default
-          ],
-          select: {
-            price: true,
-            mrp: true,
-            images: true, // Variant images
-          },
-        },
-      },
-      skip,
-      take: limit,
-      orderBy: {
-        createdAt: 'desc', // Order by creation date, newest first
-      },
-    });
+    const isParentCategory = category.children.length > 0;
 
-    // Post-process the results to match the desired simplified structure
-    const processedProducts = products.map(product => {
-      const mainImages = product.images || [];
-      const variantImages =
-        product.variants.length > 0 ? product.variants[0].images || [] : [];
+    // --- CASE 1: IT'S A PARENT CATEGORY ---
+    if (isParentCategory) {
+      // For each child category, fetch up to 5 featured products.
+      const childrenWithProducts = await Promise.all(
+        category.children.map(async (child) => {
+          const products = await this.prisma.product.findMany({
+            where: {
+              categoryId: child.id,
+              isFeatured: true,
+              isPublished: true,
+            },
+            take: 5, // Fetch 5 products per child category
+            orderBy: { createdAt: 'desc' },
+            select: this.getFeaturedProductSelect(), // Use a reusable select object
+          });
 
-      // Combine main and variant images and take the first 2
-      const combinedImages = [...mainImages, ...variantImages].slice(0, 2);
-
-      const selectedVariant = product.variants.length > 0 ? product.variants[0] : null;
+          return {
+            ...child,
+            products: products.map(this.processProduct), // Process each product
+          };
+        })
+      );
 
       return {
-        id: product.id,
-        title: product.title,
-        description: product.description,
-        businessName: product.business?.name,
-        numberOfReviews: product._count.reviews,
-        numberOfVariants: product._count.variants,
-        price: selectedVariant?.price,
-        mrp: selectedVariant?.mrp,
-        images: combinedImages,
-        isCustomizable: product.isCustomizable,
+        type: 'parent_category',
+        category: { id: category.id, name: category.name, slug: category.slug },
+        children: childrenWithProducts,
       };
-    });
+    }
 
-    const totalProducts = await this.prisma.product.count({
-      where: {
-        categoryId: categoryId,
-        isFeatured: true,
-        isPublished: true,
+    // --- CASE 2: IT'S A CHILD CATEGORY (or a category with no children) ---
+    else {
+      const allCategoryIds = await this.getCategoryAndAllChildrenIds(categoryId);
+
+      const products = await this.prisma.product.findMany({
+        where: {
+          categoryId: { in: allCategoryIds },
+          isFeatured: true,
+          isPublished: true,
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        select: this.getFeaturedProductSelect(),
+      });
+
+      const totalProducts = await this.prisma.product.count({
+        where: {
+          categoryId: { in: allCategoryIds },
+          isFeatured: true,
+          isPublished: true,
+        },
+      });
+
+      return {
+        type: 'child_category',
+        category: { id: category.id, name: category.name, slug: category.slug },
+        products: products.map(this.processProduct),
+        pagination: {
+          total: totalProducts,
+          page,
+          limit,
+          lastPage: Math.ceil(totalProducts / limit),
+        },
+      };
+    }
+  }
+
+  /**
+   * Private helper to get all descendant category IDs for a given parent.
+   * Uses a raw SQL query with a recursive CTE for high performance.
+   */
+  private async getCategoryAndAllChildrenIds(categoryId: number): Promise<number[]> {
+    const result: Array<{ id: number }> = await this.prisma.$queryRaw`
+      WITH RECURSIVE subcategories AS (
+        SELECT id FROM "category" WHERE id = ${categoryId}
+        UNION ALL
+        SELECT c.id FROM "category" c
+        INNER JOIN subcategories s ON s.id = c."parentId"
+      )
+      SELECT id FROM subcategories;
+    `;
+    return result.map(c => c.id);
+  }
+
+  /**
+   * Reusable select object to keep queries consistent.
+   */
+  private getFeaturedProductSelect() {
+    return {
+      id: true,
+      title: true,
+      description: true,
+      slug: true,
+      images: true,
+      business: { select: { name: true } },
+      isCustomizable: true,
+      _count: { select: { reviews: true, variants: true } },
+      variants: {
+        take: 1,
+        orderBy: [{ isDefault: Prisma.SortOrder.desc }, { createdAt: Prisma.SortOrder.asc }],
+        select: { price: true, mrp: true, images: true },
       },
-    });
+    };
+  }
+
+  /**
+   * Reusable processor to format the product data.
+   */
+  private processProduct(product: any) {
+    const mainImages = product.images || [];
+    const variantImages = product.variants.length > 0 ? product.variants[0].images || [] : [];
+    const combinedImages = [...mainImages, ...variantImages].slice(0, 2);
+    const selectedVariant = product.variants.length > 0 ? product.variants[0] : null;
 
     return {
-      products: processedProducts,
-      total: totalProducts,
-      page,
-      limit,
-      lastPage: Math.ceil(totalProducts / limit),
+      id: product.id,
+      title: product.title,
+      description: product.description,
+      slug: product.slug, // Include slug for linking
+      businessName: product.business?.name,
+      numberOfReviews: product._count.reviews,
+      price: selectedVariant?.price,
+      mrp: selectedVariant?.mrp,
+      images: combinedImages,
+      isCustomizable: product.isCustomizable,
     };
   }
 

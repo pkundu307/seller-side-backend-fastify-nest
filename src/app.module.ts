@@ -26,6 +26,8 @@ import { PaymentModule } from './payment/payment.module';
 import { CouponModule } from './coupon/coupon.module';
 import { SellerModule } from './seller/seller.module';
 import { KeepAliveModule } from './utils/keep-alive.module';
+import { WishlistModule } from './wishlist/wishlist.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -85,7 +87,11 @@ import { KeepAliveModule } from './utils/keep-alive.module';
    
     CouponModule,
    
-    SellerModule    
+    SellerModule,
+   
+    WishlistModule,
+   
+    NotificationsModule    
   ],
   providers: [PrismaService],
 
