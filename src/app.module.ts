@@ -28,6 +28,7 @@ import { SellerModule } from './seller/seller.module';
 import { KeepAliveModule } from './utils/keep-alive.module';
 import { WishlistModule } from './wishlist/wishlist.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { SeoModule } from './seo/seo.module';
 
 @Module({
   imports: [
@@ -91,7 +92,9 @@ import { NotificationsModule } from './notifications/notifications.module';
    
     WishlistModule,
    
-    NotificationsModule    
+    NotificationsModule,
+   
+    SeoModule    
   ],
   providers: [PrismaService],
 

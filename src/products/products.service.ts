@@ -5,6 +5,7 @@ import { S3Service } from './utils/s3Service';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
 import { Prisma } from '@prisma/client'; // <-- IMPORT PRISMA FOR TYPES
 import { UpdateProductDto } from './dto/update-product.dto';
+import { ProductPaginationDto } from './dto/product-pagination.dto';
 
 @Injectable()
 export class ProductsService {
@@ -112,18 +113,18 @@ export class ProductsService {
    * Private helper to get all descendant category IDs for a given parent.
    * Uses a raw SQL query with a recursive CTE for high performance.
    */
-  private async getCategoryAndAllChildrenIds(categoryId: number): Promise<number[]> {
-    const result: Array<{ id: number }> = await this.prisma.$queryRaw`
-      WITH RECURSIVE subcategories AS (
-        SELECT id FROM "category" WHERE id = ${categoryId}
-        UNION ALL
-        SELECT c.id FROM "category" c
-        INNER JOIN subcategories s ON s.id = c."parentId"
-      )
-      SELECT id FROM subcategories;
-    `;
-    return result.map(c => c.id);
-  }
+  // private async getCategoryAndAllChildrenIds(categoryId: number): Promise<number[]> {
+  //   const result: Array<{ id: number }> = await this.prisma.$queryRaw`
+  //     WITH RECURSIVE subcategories AS (
+  //       SELECT id FROM "category" WHERE id = ${categoryId}
+  //       UNION ALL
+  //       SELECT c.id FROM "category" c
+  //       INNER JOIN subcategories s ON s.id = c."parentId"
+  //     )
+  //     SELECT id FROM subcategories;
+  //   `;
+  //   return result.map(c => c.id);
+  // }
 
   /**
    * Reusable select object to keep queries consistent.
@@ -680,4 +681,151 @@ async updateProduct(
 
     return product;
   }
+
+
+  /**
+   * Private helper to get all descendant category IDs for a given parent.
+   * Uses a raw SQL query with a recursive CTE for high performance.
+   */
+  private async getCategoryAndAllChildrenIds(categoryId: number): Promise<number[]> {
+    const result: Array<{ id: number }> = await this.prisma.$queryRaw`
+      WITH RECURSIVE subcategories AS (
+        SELECT id FROM "category" WHERE id = ${categoryId}
+        UNION ALL
+        SELECT c.id FROM "category" c
+        INNER JOIN subcategories s ON s.id = c."parentId"
+      )
+      SELECT id FROM subcategories;
+    `;
+    return result.map(c => c.id);
+  }
+
+
+ async getCategoryPageDataBySlug(
+    categorySlug: string,
+    paginationQuery: PaginationQueryDto, // DTO with optional page/limit
+  ) {
+    // 1. Find the category by its slug, including its direct children
+    const category = await this.prisma.category.findUnique({
+      where: { slug: categorySlug },
+      include: { children: { select: { id: true, name: true, slug: true } } },
+    });
+
+    if (!category) {
+      throw new NotFoundException(`Category with slug "${categorySlug}" not found.`);
+    }
+
+    const isParentCategory = category.children.length > 0;
+
+    // --- CASE 1: IT'S A PARENT CATEGORY ---
+    if (isParentCategory) {
+      // For each child category, fetch up to 5 of its featured products
+      const childrenWithProducts = await Promise.all(
+        category.children.map(async (child) => {
+          const products = await this.prisma.product.findMany({
+            where: {
+              categoryId: child.id,
+              isFeatured: true,
+              isPublished: true,
+            },
+            take: 5,
+            orderBy: { createdAt: 'desc' },
+            select: this.getFeaturedProductSelect(), // Reusable select object
+          });
+
+          return {
+            ...child,
+            products: products.map(this.processProduct), // Process each product
+          };
+        })
+      );
+
+      return {
+        type: 'parent_category',
+        category: { id: category.id, name: category.name, slug: category.slug },
+        children: childrenWithProducts,
+      };
+    }
+
+    // --- CASE 2: IT'S A CHILD CATEGORY (or a category with no children) ---
+    else {
+      const { page = 1, limit = 10 } = paginationQuery;
+      const skip = (page - 1) * limit;
+      
+      const products = await this.prisma.product.findMany({
+        where: {
+          categoryId: category.id, // Only look in this specific category
+          isFeatured: true,
+          isPublished: true,
+        },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        select: this.getFeaturedProductSelect(),
+      });
+
+      const totalProducts = await this.prisma.product.count({
+        where: { categoryId: category.id, isFeatured: true, isPublished: true },
+      });
+
+      return {
+        type: 'child_category',
+        category: { id: category.id, name: category.name, slug: category.slug },
+        products: products.map(this.processProduct),
+        pagination: {
+          total: totalProducts,
+          page,
+          limit,
+          lastPage: Math.ceil(totalProducts / limit),
+        },
+      };
+    }
+  }
+
+  /**
+   * Reusable select object to get all the necessary product fields.
+   */
+  // private getFeaturedProductSelect() {
+  //   return {
+  //     id: true,
+  //     title: true,
+  //     description: true,
+  //     slug: true,
+  //     images: true,
+  //     isCustomizable: true,
+  //     business: { select: { name: true } },
+  //     _count: { select: { reviews: true } },
+  //     variants: {
+  //       take: 1,
+  //       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+  //       select: { price: true, mrp: true, images: true },
+  //     },
+  //   };
+  // }
+
+  /**
+   * Reusable processor to format the product data exactly as in your example.
+   */
+  // private processProduct(product: any): any { // Using 'any' as Prisma's select result is complex
+  //   const selectedVariant = product.variants.length > 0 ? product.variants[0] : null;
+
+  //   // Combine main product images and the default variant's images
+  //   const combinedImages = [
+  //       ...(product.images || []),
+  //       ...(selectedVariant?.images || [])
+  //   ];
+
+  //   return {
+  //     id: product.id,
+  //     title: product.title,
+  //     description: product.description,
+  //     slug: product.slug,
+  //     businessName: product.business?.name,
+  //     numberOfReviews: product._count.reviews,
+  //     price: selectedVariant?.price?.toString(), // Ensure price is a string
+  //     mrp: selectedVariant?.mrp?.toString(),     // Ensure mrp is a string
+  //     images: combinedImages,
+  //     isCustomizable: product.isCustomizable,
+  //   };
+  // }
 }

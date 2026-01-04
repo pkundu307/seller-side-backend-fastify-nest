@@ -20,10 +20,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ProductsService } from './products.service';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
 import { CreateProductDto } from './dto/create-product.dto';
-import { ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
+import { ProductPaginationDto } from './dto/product-pagination.dto';
 
 @Controller('products')
 export class ProductsController {
@@ -340,4 +341,14 @@ export class ProductsController {
   ) {
     return this.productsService.getProductDetailsForCustomer(productId);
   }
+
+@Get('category-page/:slug')
+@ApiOperation({ summary: 'Get data for a category page (handles parent/child logic)' })
+@ApiParam({ name: 'slug', description: 'The unique slug of the category' })
+async getCategoryPageData(
+  @Param('slug') slug: string,
+  @Query() paginationQuery: PaginationQueryDto,
+) {
+  return this.productsService.getCategoryPageDataBySlug(slug, paginationQuery);
+}
 }
