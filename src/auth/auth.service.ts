@@ -109,13 +109,14 @@ export class AuthService {
           authSource: AuthSource.google,
           type: CustomerType.user,
         });
-      }
-    await this.notificationService.createForCustomer(
+          await this.notificationService.createForCustomer(
       user.id,
       'Welcome to Jottosop!',
       'We are excited to have you. Explore our amazing collection and enjoy your shopping experience.',
       NotificationType.SYSTEM, // Using 'SYSTEM' type for this
     );
+      }
+  
       return this.createToken(user);
     } catch (error) {
       console.error('Google Login Error:', error);
