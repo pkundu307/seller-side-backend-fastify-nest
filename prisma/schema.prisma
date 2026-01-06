@@ -190,7 +190,18 @@ model Category {
   products   Product[]
   parent     Category?   @relation("SubCategories", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   children   Category[]  @relation("SubCategories")
+  gstRate        Decimal   @default(0)     // The GST percentage applicable to products in this category (e.g., 18 for 18%).
+  commissionRate Decimal?                  // Optional: Platform commission rate for this category, can override a global setting.
 
+  // 2. Display & Marketing
+  imageUrl       String?                   // URL for the category's banner or thumbnail image.
+  description    String?                   // A short description for the category page (good for SEO).
+  position       Int       @default(0)     // For manually sorting categories in menus (e.g., 0=Top, 1=Next).
+  isActive       Boolean   @default(true)  // Allows admins to hide a category without deleting it.
+
+  // 3. SEO Metadata
+  metaTitle      String?                   // Custom title for the browser tab and Google search results.
+  metaDescription String? 
   @@map("category")
 }
 
