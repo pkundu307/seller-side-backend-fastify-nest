@@ -1,5 +1,5 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { LinkType } from '@prisma/client';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { LinkType } from '@prisma/client'; // Keep for the type
 import { IsEnum, IsJSON, IsOptional, IsString } from 'class-validator';
 
 export class UpdateHomepageItemDto {
@@ -15,7 +15,8 @@ export class UpdateHomepageItemDto {
 
   @ApiPropertyOptional({ enum: LinkType })
   @IsOptional()
-  @IsEnum(LinkType)
+  // --- FIX ---
+  @IsEnum(['NONE', 'CATEGORY', 'PRODUCT', 'BRAND', 'SEARCH', 'EXTERNAL_URL'])
   linkType?: LinkType;
 
   @ApiPropertyOptional({ description: 'A URL, slug, or ID depending on linkType' })
@@ -23,7 +24,7 @@ export class UpdateHomepageItemDto {
   @IsString()
   linkValue?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'JSON string for custom styling' })
   @IsOptional()
   @IsJSON()
   styleConfig?: string;

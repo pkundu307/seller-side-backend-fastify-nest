@@ -1,0 +1,63 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: jottosop-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: jottosop_user
+      POSTGRES_PASSWORD: jottosop_password
+      POSTGRES_DB: jottosop_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jottosop_user -d jottosop_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: jottosop-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: jottosop
+      RABBITMQ_DEFAULT_PASS: jottosop_password
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jottosop-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    ports:
+      - "3001:3001"
+      - "5555:5555"     # Prisma Studio (dev/admin only)
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://jottosop_user:jottosop_password@db:5432/jottosop_db?schema=public
+      RABBITMQ_URL: amqp://jottosop:jottosop_password@rabbitmq:5672
+    command: >
+      sh -c "
+      npx prisma migrate deploy &&
+      node dist/src/main.js
+      "
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
