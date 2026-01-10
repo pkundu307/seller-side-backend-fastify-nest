@@ -1,0 +1,29 @@
+# ---- Build Stage ----
+# Use the official Go image to build the application
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /app
+
+# Copy the dependency files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy the source code
+COPY . .
+
+# Build the Go app.
+# CGO_ENABLED=0 is important for creating a static binary.
+# -o /app/main creates the output binary named 'main' inside the /app directory.
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/main .
+
+# ---- Production Stage ----
+# Use a minimal, non-root image for the final container. 'scratch' is the smallest possible.
+FROM scratch
+
+# Copy the compiled binary from the builder stage
+COPY --from=builder /app/main /main
+
+# The command to run when the container starts
+ENTRYPOINT ["/main"]

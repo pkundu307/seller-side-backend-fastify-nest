@@ -1,4 +1,4 @@
-version: "3.8"
+version: '3.8'
 
 services:
   db:
@@ -15,7 +15,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U jottosop_user -d jottosop_db"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
 
@@ -24,38 +24,58 @@ services:
     container_name: jottosop-rabbitmq
     restart: unless-stopped
     ports:
-      - "5672:5672"     # AMQP
-      - "15672:15672"   # Management UI
+      - "5672:5672"
+      - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: jottosop
       RABBITMQ_DEFAULT_PASS: jottosop_password
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
 
-  app:
+  main-api:
     build:
-      context: .
+      context: ./main-api
       dockerfile: Dockerfile
-    container_name: jottosop-app
+    container_name: jottosop-main-api
     restart: unless-stopped
+    ports:
+      - "3001:3001"
     depends_on:
       db:
         condition: service_healthy
       rabbitmq:
         condition: service_started
-    ports:
-      - "3001:3001"
-      - "5555:5555"     # Prisma Studio (dev/admin only)
     env_file:
-      - .env
+      - ./main-api/.env
     environment:
+      DATABASE_URL: "postgresql://jottosop_user:jottosop_password@db:5432/jottosop_db?schema=public"
+      RABBITMQ_URL: "amqp://jottosop:jottosop_password@rabbitmq:5672"
       NODE_ENV: production
-      DATABASE_URL: postgresql://jottosop_user:jottosop_password@db:5432/jottosop_db?schema=public
-      RABBITMQ_URL: amqp://jottosop:jottosop_password@rabbitmq:5672
     command: >
       sh -c "
+      echo '--- Applying database migrations ---' &&
       npx prisma migrate deploy &&
+      echo '--- Starting production server ---' &&
       node dist/src/main.js
+      "
+
+  prisma-studio:
+    image: node:18-alpine
+    container_name: jottosop-prisma-studio
+    working_dir: /app
+    volumes:
+      - ./main-api:/app
+    ports:
+      - "5555:5555"
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: "postgresql://jottosop_user:jottosop_password@db:5432/jottosop_db?schema=public"
+    command: >
+      sh -c "
+      npm install &&
+      npx prisma generate &&
+      npx prisma studio
       "
 
 volumes:
