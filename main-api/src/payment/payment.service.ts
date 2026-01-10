@@ -8,6 +8,7 @@ import { CreatePaymentInitiationDto } from './dto/create-payment-initiation.dto'
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { OrderStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
 import { DiscountType } from '@prisma/client'; // <-- IMPORT ENUM
+import products from 'razorpay/dist/types/products';
 
 // Define a type for the detailed price breakdown to be used internally and returned
 export interface PriceDetails {
@@ -46,13 +47,19 @@ export class PaymentService {
     const razorpayOrder = await this.razorpay.orders.create(options);
 
     // 3. Save order initiation details to our DB
-    await this.prisma.orderInitiate.create({
+   await this.prisma.orderInitiate.create({
       data: {
         orderId: razorpayOrder.id,
         status: 'pending',
         customerUserId: customerUserId,
+        details: { // Store everything needed to rebuild the order
+          items: dto.items,
+          couponCode: dto.couponCode,
+          priceDetails: priceDetails,
+        } as any, // Cast to 'any' for Prisma Json type
       },
     });
+
 
     // 4. Return order details AND price breakdown to the client
     return { razorpayOrder, priceDetails };
@@ -138,86 +145,199 @@ export class PaymentService {
     };
   }
 
-  /**
-   * Mimics `verifyOrder` and adds final order creation
-   */
-  async verifyPayment(dto: VerifyPaymentDto) {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = dto;
-     const razorpaySecret = this.configService.get<string>('RAZORPAY_KEY_SECRET');
-    if (!razorpaySecret) {
-      throw new InternalServerErrorException('Razorpay secret key is not configured.');
-    }
-    // 1. Verify the signature
-    const body = razorpay_order_id + '|' + razorpay_payment_id;
-    const expectedSignature = crypto
-      .createHmac('sha256', razorpaySecret)
-      .update(body.toString())
-      .digest('hex');
+ 
 
-    const isAuthentic = expectedSignature === razorpay_signature;
+// src/payment/payment.service.ts
 
-    if (!isAuthentic) {
-      throw new BadRequestException('Invalid Razorpay signature. Payment verification failed.');
-    }
+async verifyPayment(dto: VerifyPaymentDto) {
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = dto;
+  const razorpaySecret = this.configService.get<string>('RAZORPAY_KEY_SECRET');
+  if (!razorpaySecret) {
+    throw new InternalServerErrorException('Razorpay secret key is not configured.');
+  }
 
-    // 2. Signature is authentic, now find the initial record
-    const orderInitiate = await this.prisma.orderInitiate.findFirst({
-      where: { orderId: razorpay_order_id },
-    });
+  // 1. Verify Signature
+  const body = razorpay_order_id + '|' + razorpay_payment_id;
+  const expectedSignature = crypto.createHmac('sha256', razorpaySecret).update(body.toString()).digest('hex');
+  if (expectedSignature !== razorpay_signature) {
+    throw new BadRequestException('Invalid Razorpay signature.');
+  }
 
-    if (!orderInitiate) {
-      throw new NotFoundException(`Order initiation record not found for Razorpay order ID: ${razorpay_order_id}`);
-    }
+  // 2. Find OrderInitiate record
+  const orderInitiate = await this.prisma.orderInitiate.findFirst({
+    where: { orderId: razorpay_order_id },
+  });
+  if (!orderInitiate) {
+    throw new NotFoundException(`Order initiation record not found.`);
+  }
 
-    // --- THIS IS THE CRITICAL IMPROVEMENT ---
-    // Instead of just updating the status, we now create the REAL order in a transaction.
-    
-    // This part is a placeholder. In a real app, you would fetch the items
-    // that were part of this order from another table (e.g., cart) or from the initial request.
-    // For now, let's assume we can retrieve the necessary info.
-    
-    //
-    // START PSEUDO-CODE FOR FINAL ORDER CREATION
-    //
-    // const itemsInCart = await this.prisma.cartItem.findMany({ where: { customerUserId: orderInitiate.customerUserId } });
-    // const totalAmount = ... calculate amount again ...
-    // const address = ... get user's default address ...
+  // 3. Extract details and perform security checks
+  const details = orderInitiate.details as any;
+  if (!details || !details.items) {
+      throw new InternalServerErrorException("Order initiation data is corrupt.");
+  }
+  const itemsDto: CreatePaymentInitiationDto = { items: details.items, couponCode: details.couponCode };
+  
+  const verifiedPriceDetails = await this.calculateOrderTotal(itemsDto);
+  
+  const razorpayOrder = await this.razorpay.orders.fetch(razorpay_order_id);
+  if (Math.round(verifiedPriceDetails.totalAmount * 100) !== razorpayOrder.amount) {
+    throw new InternalServerErrorException("Price mismatch during verification.");
+  }
+  
+  const defaultAddress = await this.prisma.address.findFirst({
+      where: { customerUserId: orderInitiate.customerUserId, isDefault: true },
+  });
+  if (!defaultAddress) {
+      throw new BadRequestException("No default address found for this user.");
+  }
 
-    // Use a transaction to ensure data integrity
-    await this.prisma.$transaction(async (tx) => {
-      // Update the OrderInitiate status
+  // 4. Execute the final order creation in a database transaction
+  try {
+    const finalOrderWithDetails = await this.prisma.$transaction(async (tx) => {
+      // (Mark initiation as completed)
       await tx.orderInitiate.update({
         where: { id: orderInitiate.id },
         data: { status: 'completed' },
       });
 
-      // Create the final Order
-      // await tx.order.create({
-      //   data: {
-      //     customerUserId: orderInitiate.customerUserId,
-      //     totalAmount: totalAmount, // The final calculated amount
-      //     paymentMethod: PaymentMethod.online,
-      //     paymentStatus: PaymentStatus.completed,
-      //     status: OrderStatus.pending,
-      //     selectedAddress: address,
-      //     // ... other fields
-      //     items: {
-      //       create: itemsInCart.map(item => ({...})),
-      //     },
-      //   }
-      // });
-      //
-      // await tx.cartItem.deleteMany({ where: { customerUserId: orderInitiate.customerUserId } });
-    });
-    //
-    // END PSEUDO-CODE
-    //
+      // (Fetch variants and check stock)
+      const variantIds = itemsDto.items.map(item => item.variantId);
+      const variants = await tx.variant.findMany({
+          where: { id: { in: variantIds } },
+          select: { id: true, price: true, productId: true, stock: true }
+      });
+      for (const item of itemsDto.items) {
+          const variant = variants.find(v => v.id === item.variantId);
+          if (!variant || variant.stock < item.quantity) {
+              throw new BadRequestException(`Insufficient stock for one or more items.`);
+          }
+      }
 
+      // (Create the Order)
+      const createdOrder = await tx.order.create({
+        data: {
+          customerUserId: orderInitiate.customerUserId,
+          orderNumber: `ORD-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+          totalAmount: verifiedPriceDetails.totalAmount,
+          discount: verifiedPriceDetails.discountAmount,
+          shippingFee: verifiedPriceDetails.shippingFee,
+          paymentMethod: PaymentMethod.online,
+          paymentStatus: PaymentStatus.completed,
+          status: OrderStatus.pending,
+          selectedAddress: defaultAddress as any,
+          items: {
+            create: itemsDto.items.map(item => {
+              const variant = variants.find(v => v.id === item.variantId)!;
+              return {
+                productId: variant.productId,
+                variantId: item.variantId,
+                quantity: item.quantity,
+                priceAtTimeOfOrder: variant.price,
+              };
+            }),
+          },
+        }
+      });
+      
+      // (Decrement stock)
+      for (const item of itemsDto.items) {
+          await tx.variant.update({
+              where: { id: item.variantId },
+              data: { stock: { decrement: item.quantity } },
+          });
+      }
+      
+      // (Clear cart)
+      const cartItemVariantIds = itemsDto.items.map(i => i.variantId);
+      await tx.cartItem.deleteMany({
+        where: {
+          customerUserId: orderInitiate.customerUserId,
+          variantId: { in: cartItemVariantIds },
+        },
+      });
+
+      // Re-fetch the newly created order with details
+      return tx.order.findUnique({
+          where: { id: createdOrder.id },
+          select: {
+              id: true,
+              orderNumber: true,
+              createdAt: true,
+              totalAmount: true,
+              selectedAddress: true,
+              items: {
+                  select: {
+                      quantity: true,
+                      priceAtTimeOfOrder: true,
+                      variant: { // <-- This is the source of the `possibly 'null'` error
+                          select: {
+                              product: {
+                                  select: {
+                                      title: true,
+                                      images: true,
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+      });
+    });
+
+    // --- THIS IS THE FIX ---
+    // Add a check to ensure the final object is not null before proceeding.
+    if (!finalOrderWithDetails) {
+      // This case should theoretically never happen if the transaction succeeded.
+      // It's a failsafe for type safety and edge cases.
+      throw new InternalServerErrorException('Failed to retrieve order details after creation.');
+    }
+    // --- END OF FIX ---
+
+    // 5. Format the final response object for the frontend
     return {
       success: true,
-      message: 'Payment verified successfully.',
-      paymentStatus: 'completed',
-      orderId: razorpay_order_id,
+      message: 'Payment verified and order created successfully.',
+      order: {
+        id: finalOrderWithDetails.id,
+        orderNumber: finalOrderWithDetails.orderNumber,
+        createdAt: finalOrderWithDetails.createdAt,
+        totalAmount: finalOrderWithDetails.totalAmount,
+        selectedAddress: finalOrderWithDetails.selectedAddress,
+        items: finalOrderWithDetails.items.map(item => {
+          // --- THIS IS THE SECOND FIX ---
+          // Add a check for the `variant` and `product` relations.
+          if (!item.variant || !item.variant.product) {
+              // This is an unexpected state, but we handle it gracefully.
+              return {
+                  productName: 'Product information unavailable',
+                  imageUrl: null,
+                  quantity: item.quantity,
+                  price: item.priceAtTimeOfOrder,
+              };
+          }
+          // --- END OF FIX ---
+
+          return {
+            productName: item.variant.product.title,
+            imageUrl: item.variant.product.images.length > 0 ? item.variant.product.images[0] : null,
+            quantity: item.quantity,
+            price: item.priceAtTimeOfOrder,
+          };
+        }),
+      },
     };
+
+  } catch (error) {
+    console.error('[VERIFY_PAYMENT] Transaction failed:', error);
+    // Automatically refund the payment if our system fails to create the order
+    await this.razorpay.payments.refund(razorpay_payment_id, {
+        amount: razorpayOrder.amount,
+        notes: { reason: "Order creation failed in our system after successful payment." }
+    });
+    
+    throw new InternalServerErrorException('Failed to create order after payment. The payment has been refunded. Please try again.');
   }
+}
 }

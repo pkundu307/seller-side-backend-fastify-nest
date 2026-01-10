@@ -359,6 +359,8 @@ model Order {
   shippedAt             DateTime?
   customerUser          CustomerUser  @relation(fields: [customerUserId], references: [id])
   items                 OrderItem[]
+    returnRequests        ReturnRequest[] // <-- FIX for the first error
+
 }
 
 model OrderItem {
@@ -373,6 +375,9 @@ model OrderItem {
   customizationImages  String[]
   order                Order    @relation(fields: [orderId], references: [id])
   variant              Variant? @relation(fields: [variantId], references: [id])
+      returnedIn           ReturnItem[] // <-- FIX for the second error (replaces 'returnRequests')
+
+
 }
 
 model CartItem {
@@ -393,6 +398,7 @@ model OrderInitiate {
   status         OrderInitiateStatus @default(pending)
   customerUserId String
   createdAt      DateTime            @default(now())
+  details        Json?
   updatedAt      DateTime            @updatedAt
   customerUser   CustomerUser        @relation(fields: [customerUserId], references: [id])
 }
@@ -986,6 +992,31 @@ model SupportTicketMessage {
   createdAt DateTime      @default(now())
 
   @@index([ticketId])
+}
+
+
+model ReturnRequest {
+  id              String           @id @default(uuid())
+  orderId         String
+  order           Order            @relation(fields: [orderId], references: [id]) // Connects to the whole Order
+  customerUserId  String
+  reason          String
+  status          String           // "PENDING_APPROVAL", "APPROVED", etc.
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  items           ReturnItem[]     // This now links to the join table, not directly to OrderItem
+}
+model ReturnItem {
+  id              String        @id @default(uuid())
+  returnRequestId String
+  returnRequest   ReturnRequest @relation(fields: [returnRequestId], references: [id])
+  orderItemId     String
+  orderItem       OrderItem     @relation(fields: [orderItemId], references: [id])
+  
+  quantity        Int           // The quantity of this specific item being returned
+
+  @@unique([returnRequestId, orderItemId]) // Prevents adding the same item to a return request twice
 }
 
 // For the Seller Support Ticketing System

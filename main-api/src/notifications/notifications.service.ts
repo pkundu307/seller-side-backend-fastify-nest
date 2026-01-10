@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CustomerUser, NotificationType, Prisma, User } from '@prisma/client';
 import { ClientProxy } from '@nestjs/microservices';
-import { RABBITMQ_SERVICE } from 'src/rabbitmq/rabbitmq.module';
+// import { RABBITMQ_SERVICE } from 'src/rabbitmq/rabbitmq.module';
 
 
 interface NotificationPayload {
@@ -18,11 +18,11 @@ interface NotificationPayload {
 @Injectable()
 export class NotificationService {
   constructor(private prisma: PrismaService,
-        @Inject(RABBITMQ_SERVICE) private readonly rabbitClient: ClientProxy,
+        // @Inject(RABBITMQ_SERVICE) private readonly rabbitClient: ClientProxy,
 
   ) {}
   async onModuleDestroy() {
-    await this.rabbitClient.close();
+    // await this.rabbitClient.close();
   }
   /**
    * Creates a notification for a CustomerUser.
@@ -58,7 +58,7 @@ export class NotificationService {
     };
 
     // 3. Publish the event to RabbitMQ.
-    this.rabbitClient.emit('notification_created', payload);
+    // this.rabbitClient.emit('notification_created', payload);
     
     return notification;
   }
@@ -93,7 +93,7 @@ export class NotificationService {
     };
 
     // 3. Publish the event.
-    this.rabbitClient.emit('notification_created', payload);
+    // this.rabbitClient.emit('notification_created', payload);
 
     return notification;
   }
