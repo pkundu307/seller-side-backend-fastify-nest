@@ -1,5 +1,5 @@
 import { Controller, Get, Param, UseGuards, Req, Query, ForbiddenException, ParseUUIDPipe, NotFoundException, Body, Patch, Res, Post } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { SellerService } from './seller.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard'; // Your JWT guard
 import { UserRequest } from '../auth/auth.types'; // Your custom request type
@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service'; // To check business o
 import { UpdateSellerOrderDto } from './dto/update-order.dtp';
 import { FastifyReply } from 'fastify';
 import { CreatePosSaleDto } from './dto/create-pos-sale.dto';
+import { SalePaginationDto } from './dto/sale-pagination.dto';
 
 @ApiTags('Seller Dashboard')
 @ApiBearerAuth()
@@ -74,18 +75,38 @@ export class SellerController {
 
  @Get(':businessId/orders/:orderId/shipping-label')
   @ApiOperation({ summary: 'Generate and download a PDF shipping label for an order' })
+  @ApiResponse({ status: 200, description: 'Returns the generated PDF file.' })
+  @ApiResponse({ status: 400, description: 'Invalid design specified or missing address.' })
+  @ApiResponse({ status: 403, description: 'Forbidden.' })
+  // --- THIS DECORATOR DOCUMENTS THE NEW QUERY PARAMETER ---
+  @ApiQuery({
+    name: 'design',
+    required: false,
+    enum: ['a6', 'pos'],
+    description: "The desired label format. Defaults to 'a6' if not provided.",
+  })
   async getShippingLabel(
     @Req() req: UserRequest,
     @Param('businessId', ParseUUIDPipe) businessId: string,
     @Param('orderId', ParseUUIDPipe) orderId: string,
-    // --- USE FASTIFYREPLY TYPE ---
+    // --- THIS PARAMETER CAPTURES THE QUERY STRING ---
+    // Example: /shipping-label?design=pos
+    @Query('design') design: 'a6' | 'pos',
     @Res() reply: FastifyReply,
   ) {
+    // 1. Security check remains the same
     await this.verifyBusinessOwnership(req.user.id, businessId);
     
-    const pdfBuffer = await this.sellerService.generateShippingLabelPdf(businessId, orderId);
+    // 2. The 'design' parameter is now passed to the service.
+    // If the user doesn't provide it, 'design' will be undefined,
+    // and the service's default value ('a6') will be used.
+    const pdfBuffer = await this.sellerService.generateShippingLabelPdf(
+      businessId,
+      orderId,
+      
+    );
 
-    // --- USE FASTIFY METHODS: .header() and .send() ---
+    // 3. Response logic remains the same
     reply.header('Content-Type', 'application/pdf');
     reply.header('Content-Disposition', `attachment; filename=shipping-label-${orderId}.pdf`);
     reply.send(pdfBuffer);
@@ -100,4 +121,29 @@ async createPosSale(
   await this.verifyBusinessOwnership(req.user.id, businessId);
   return this.sellerService.createPosSale(businessId, dto);
 }
+
+ @Get(':businessId/sales')
+  @ApiOperation({ summary: "Get all sales records for one of the seller's businesses" })
+  @ApiResponse({ status: 200, description: 'Returns a paginated list of sales.' })
+  async getBusinessSales(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Query() query: SalePaginationDto,
+  ) {
+    await this.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.getBusinessSales(businessId, query);
+  }
+
+  @Get(':businessId/sales/:saleId')
+  @ApiOperation({ summary: "Get a specific sale record for one of the seller's businesses" })
+  @ApiResponse({ status: 200, description: 'Returns detailed information for a single sale.' })
+  @ApiResponse({ status: 404, description: 'Sale not found or does not belong to the seller.' })
+  async getBusinessSaleById(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Param('saleId', ParseUUIDPipe) saleId: string,
+  ) {
+    await this.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.getBusinessSaleById(businessId, saleId);
+  }
 }

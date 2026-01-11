@@ -3,9 +3,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SellerPaginationDto } from './dto/seller-pagination.dto';
 import { OrderStatus, PaymentMethod, Prisma } from '@prisma/client';
 import { UpdateSellerOrderDto } from './dto/update-order.dtp';
-import PDFDocument = require('pdfkit');
 import { CreatePosSaleDto } from './dto/create-pos-sale.dto';
 
+import { PdfService } from './pdf.service';
+import { SalePaginationDto } from './dto/sale-pagination.dto';
 // Define a type for the address object to cast the JSON to
 interface ShippingAddress {
   street: string;
@@ -16,9 +17,12 @@ interface ShippingAddress {
   landmark?: string;
   alternativePhoneNumber?: string;
 }
+
 @Injectable()
 export class SellerService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService,
+    private pdfService: PdfService
+  ) {}
 
   /**
    * API 1: Get all orders for a specific business, with pagination and stats.
@@ -396,46 +400,133 @@ async updateOrderStatus(businessId: string, orderId: string, dto: UpdateSellerOr
   });
 }
 
-async generateShippingLabelPdf(businessId: string, orderId: string): Promise<Buffer> {
-    const order = await this.getBusinessOrderById(businessId, orderId);
-
-    // --- FIX 2 & 3: Type check and cast the address object ---
-    const shippingAddress = order.customer.shippingAddress as ShippingAddress | null;
-
-    if (!shippingAddress) {
-      throw new BadRequestException('Order is missing a valid shipping address.');
-    }
-    // --- END OF FIX ---
-
-    return new Promise((resolve) => {
-      // --- FIX 1: Correctly instantiate PDFDocument ---
-      const doc = new PDFDocument({ size: 'A4', margin: 20 });
-      // --- END OF FIX ---
-
-      const buffers: Buffer[] = [];
-      doc.on('data', buffers.push.bind(buffers));
-      doc.on('end', () => {
-        resolve(Buffer.concat(buffers));
-      });
-
-      // --- PDF Content (now using the type-safe shippingAddress variable) ---
-      doc.fontSize(14).font('Helvetica-Bold').text('SHIP TO:', { underline: true });
-      doc.fontSize(12).font('Helvetica').text(order.customer.name);
-      doc.text(shippingAddress.street);
-      doc.text(`${shippingAddress.city}, ${shippingAddress.state} - ${shippingAddress.postalCode}`);
-      
-      doc.moveDown(2);
-      
-      doc.fontSize(10).text(`Order #: ${order.orderNumber}`);
-      doc.fontSize(8).text(`Payment: ${order.paymentMethod === 'cash_on_delivery' ? 'COD' : 'Prepaid'}`);
-      
-      if (order.paymentMethod === 'cash_on_delivery') {
-         doc.moveDown();
-         doc.fontSize(16).font('Helvetica-Bold').text(`COD Amount: ₹${order.totalAmount}`);
-      }
-      
-      // ... add QR code or barcode for tracking number ...
-
-      doc.end();
+  async generateShippingLabelPdf(businessId: string, orderId: string, design: 'a4' | 'pos' = 'a4'): Promise<Buffer> {
+    console.log(`[PDF] Starting generation for Order ID: ${orderId}, Design: ${design}`);
+    
+    // 1. Fetch all necessary data for the invoice/label
+    console.log('[PDF] Fetching full order details from database...');
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        customerUser: { select: { name: true } },
+        items: {
+          include: {
+            variant: {
+              select: {
+                sku: true,
+                hsnCode: true,
+                product: {
+                  include: {
+                    category: { select: { gstRate: true } },
+                    business: true, // Fetch the full business object
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     });
-  }}
+
+    if (!order) {
+      console.error(`[PDF] ERROR: Order with ID "${orderId}" not found.`);
+      throw new NotFoundException(`Order with ID "${orderId}" not found.`);
+    }
+
+    // 2. Security Check: Ensure the order belongs to the requesting seller
+    const belongsToSeller = order.items.some(item => item.variant?.product?.businessId === businessId);
+    if (!belongsToSeller) {
+      console.error(`[PDF] FORBIDDEN: User tried to access order ${orderId} not belonging to business ${businessId}.`);
+      throw new ForbiddenException(`You do not have permission to generate a label for this order.`);
+    }
+    console.log('[PDF] ✅ Ownership verified.');
+
+    // 3. Delegate to the appropriate builder function in PdfService
+    try {
+      console.log(`[PDF] Calling PdfService to build '${design}' design...`);
+      let pdfBuffer: Buffer;
+      if (design === 'pos') {
+        pdfBuffer = await this.pdfService.generatePosReceipt(order as any);
+      } else {
+        pdfBuffer = await this.pdfService.generateA4Invoice(order as any);
+      }
+      console.log(`[PDF] ✅ PDF buffer created successfully. Size: ${pdfBuffer.length} bytes.`);
+      return pdfBuffer;
+    } catch (error) {
+      console.error('[PDF] ❌ An error occurred during PDF generation:', error);
+      throw new InternalServerErrorException('Failed to generate PDF document.');
+    }
+  }
+
+    async getBusinessSales(businessId: string, query: SalePaginationDto) {
+    const { page = 1, limit = 15, search } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.SaleWhereInput = {
+      businessId: businessId,
+      ...(search && {
+        OR: [
+          { partyName: { contains: search, mode: 'insensitive' } },
+          { invoicePrefix: { contains: search, mode: 'insensitive' } },
+          // Note: Searching invoiceNo (Int) requires a different approach if needed
+        ],
+      }),
+    };
+
+    const [sales, totalSales] = await this.prisma.$transaction([
+      this.prisma.sale.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { invoiceDate: 'desc' },
+        // Select only the fields needed for a list view
+        select: {
+          id: true,
+          invoicePrefix: true,
+          invoiceNo: true,
+          invoiceDate: true,
+          partyName: true,
+          totalAmount: true,
+          status: true,
+          isSettled: true,
+          balanceAmount: true,
+        },
+      }),
+      this.prisma.sale.count({ where }),
+    ]);
+
+    return {
+      sales: sales.map(sale => ({
+        ...sale,
+        invoiceNumber: `${sale.invoicePrefix}-${sale.invoiceNo}`, // Combine for easy display
+      })),
+      pagination: {
+        total: totalSales,
+        page,
+        limit,
+        lastPage: Math.ceil(totalSales / limit),
+      },
+    };
+  }
+
+  /**
+   * API: Get a single sale by its ID, ensuring it belongs to the seller.
+   */
+  async getBusinessSaleById(businessId: string, saleId: string) {
+    const sale = await this.prisma.sale.findUnique({
+      where: { id: saleId },
+      include: {
+        saleItems: true, // Include all details for the single view
+        saleTaxes: true,
+        saleAdditionalCharges: true,
+      },
+    });
+
+    // Security check: ensure the fetched sale belongs to the business
+    if (!sale || sale.businessId !== businessId) {
+      throw new NotFoundException(`Sale with ID "${saleId}" not found or does not belong to your business.`);
+    }
+
+    return sale;
+  }
+}
