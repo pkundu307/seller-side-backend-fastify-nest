@@ -1,10 +1,11 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
-import { OrderStatus } from "@prisma/client";
+import { OrderStatus } from "@prisma/client"; // Keep for the type
 import { IsDate, IsEnum, IsOptional, IsString } from "class-validator";
 
 export class UpdateSellerOrderDto {
   @ApiPropertyOptional({ enum: OrderStatus })
-  @IsEnum(OrderStatus)
+  // --- FIX ---
+  @IsEnum(['pending', 'processing', 'shipped', 'delivered', 'cancelled'])
   @IsOptional()
   status?: OrderStatus;
 

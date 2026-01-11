@@ -55,6 +55,8 @@ model User {
   role                String                 @default("user")
   image               String?
   name                String?
+    identityVerified Boolean @default(false)
+  lastKycReviewAt  DateTime?
   createdAt           DateTime               @default(now())
   businesses          Business[]
   notifications       SellerNotification[]
@@ -137,12 +139,27 @@ model Business {
   slug                   String?                 @unique
   socialLinks            Json?
   websiteUrl             String?
+   businessType              String          @default("PROPRIETORSHIP")
+  legalName                 String?         // Legal name from PAN card
+  panNumber                 String?         @unique // Should be unique
+  kycStatus                 SellerKycStatus @default(PENDING)
+  kycSubmittedAt            DateTime?
+  kycVerifiedAt             DateTime?
+  kycRejectedAt             DateTime?
+  kycRemarks                String?
+  sellerAgreementAccepted   Boolean         @default(false)
+  sellerAgreementVersion    String?
+  sellerAgreementAcceptedAt DateTime?
+  isPayoutEnabled           Boolean         @default(false)
+  kycDocumentsJson          Json?           @map("kyc_documents") 
   owner                  User                    @relation(fields: [ownerId], references: [id])
+  urchases Purchase[]
+expenses Expense[]
+activities ActivityLog[] @relation("BusinessActivities")
   itemUnits              ItemUnit[]
   products               Product[]
   reviews                Review[]
   sales                  Sale[]
-  activities             ActivityLog[]           @relation("BusinessActivities")
   plan                   SubscriptionPlan        @default(FREE)
   subscriptionExpiresAt  DateTime?
   stripeCustomerId       String?                 @unique
@@ -151,6 +168,9 @@ model Business {
   supportTickets         SupportTicket[]
   staffMembers           StaffMember[]
   roles                  Role[]
+  kycDocuments      SellerKycDocument[]
+  settlements       SellerSettlement[]
+  agreementLogs     SellerAgreementLog[]
 }
 
 model SellerNotification {
@@ -272,6 +292,7 @@ model Variant {
   stockActivities        StockActivity[]
   product                Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
   attributeValues        VariantAttributeValue[]
+  purchaseItems          PurchaseItem[]
 
   @@index([productId])
 }
@@ -359,6 +380,10 @@ model Order {
   shippedAt             DateTime?
   customerUser          CustomerUser  @relation(fields: [customerUserId], references: [id])
   items                 OrderItem[]
+    returnRequests        ReturnRequest[] // <-- FIX for the first error
+      settlements           SellerSettlement[]
+
+
 }
 
 model OrderItem {
@@ -373,6 +398,9 @@ model OrderItem {
   customizationImages  String[]
   order                Order    @relation(fields: [orderId], references: [id])
   variant              Variant? @relation(fields: [variantId], references: [id])
+      returnedIn           ReturnItem[] // <-- FIX for the second error (replaces 'returnRequests')
+
+
 }
 
 model CartItem {
@@ -393,6 +421,7 @@ model OrderInitiate {
   status         OrderInitiateStatus @default(pending)
   customerUserId String
   createdAt      DateTime            @default(now())
+  details        Json?
   updatedAt      DateTime            @updatedAt
   customerUser   CustomerUser        @relation(fields: [customerUserId], references: [id])
 }
@@ -988,6 +1017,200 @@ model SupportTicketMessage {
   @@index([ticketId])
 }
 
+
+model ReturnRequest {
+  id              String           @id @default(uuid())
+  orderId         String
+  order           Order            @relation(fields: [orderId], references: [id]) // Connects to the whole Order
+  customerUserId  String
+  reason          String
+  status          String           // "PENDING_APPROVAL", "APPROVED", etc.
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  items           ReturnItem[]     // This now links to the join table, not directly to OrderItem
+}
+model ReturnItem {
+  id              String        @id @default(uuid())
+  returnRequestId String
+  returnRequest   ReturnRequest @relation(fields: [returnRequestId], references: [id])
+  orderItemId     String
+  orderItem       OrderItem     @relation(fields: [orderItemId], references: [id])
+  
+  quantity        Int           // The quantity of this specific item being returned
+
+  @@unique([returnRequestId, orderItemId]) // Prevents adding the same item to a return request twice
+}
+
+
+model SellerKycDocument {
+  id          String                  @id @default(uuid())
+  businessId  String
+  type        SellerKycDocumentType
+  documentUrl String
+  status      SellerKycDocumentStatus @default(PENDING)
+  remarks     String?
+  uploadedAt  DateTime                @default(now())
+  verifiedAt  DateTime?
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId])
+}
+
+model SellerSettlement {
+  id          String   @id @default(uuid())
+  businessId  String
+  orderId     String   // This can be the main Order ID or a specific OrderItem ID if you settle per item
+  
+  grossAmount Decimal  // Value of the item(s) sold
+  commission  Decimal  // Platform's commission
+  tcsAmount   Decimal  // Tax Collected at Source
+  netPayable  Decimal  // The final amount to be paid to the seller
+
+  status      SettlementStatus @default(PENDING)
+  payoutDate  DateTime?
+  referenceId String?          // Transaction ID from the payout
+
+  createdAt DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id])
+  order    Order    @relation(fields: [orderId], references: [id])
+
+  @@unique([businessId, orderId]) // A seller can only have one settlement per order
+  @@index([businessId])
+  @@index([orderId])
+}
+
+model SellerAgreementLog {
+  id        String   @id @default(uuid())
+  businessId String
+  version   String   // e.g., "v2.1 - 2026-01-01"
+  acceptedAt DateTime @default(now())
+  ipAddress String?
+
+  business Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId])
+}
+
+model Purchase {
+  id                String         @id @default(uuid())
+  businessId        String
+  business          Business       @relation(fields: [businessId], references: [id])
+  
+  supplierName      String         @db.VarChar(256)
+  supplierGstin     String?        @db.VarChar(128)
+  supplierAddress   String?
+  
+  purchaseOrderNo   String         // e.g., "PO-1001"
+  purchaseOrderDate DateTime
+  expectedDate      DateTime?
+  
+  totalAmount       Decimal
+  amountPaid        Decimal        @default(0)
+  balanceDue        Decimal
+  
+  status            PurchaseStatus @default(DRAFT)
+  notes             String?
+
+  // --- THIS IS THE KEY INVENTORY FLAG ---
+  // If true, the items in this purchase will increase the stock count of the variants.
+  addToInventory    Boolean        @default(true)
+  
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  
+  items             PurchaseItem[]
+
+  @@unique([businessId, purchaseOrderNo])
+}
+
+model PurchaseItem {
+  id              String   @id @default(uuid())
+  purchaseId      String
+  purchase        Purchase @relation(fields: [purchaseId], references: [id])
+  
+  // Link to the actual product variant in your system
+  variantId       String
+  variant         Variant  @relation(fields: [variantId], references: [id])
+  
+  itemName        String   @db.VarChar(512) // Copied for historical accuracy
+  hsnCode         String?  @db.VarChar(128)
+  
+  quantity        Int      // Quantity purchased
+  purchasePrice   Decimal  // Price per unit
+  
+  taxRate         Decimal  @default(0)
+  taxAmount       Decimal  @default(0)
+  discount        Decimal  @default(0)
+  totalAmount     Decimal  // (quantity * purchasePrice) + taxAmount - discount
+  
+  createdAt       DateTime @default(now())
+}
+
+
+// --- EXPENSE MODELS (for tracking other business costs) ---
+
+model Expense {
+  id          String   @id @default(uuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id])
+  
+  expenseDate DateTime
+  category    ExpenseCategory @default(OTHER)
+  totalAmount Decimal
+  
+  vendorName  String?         // Who was paid (e.g., "Landlord", "Google Ads")
+  invoiceRef  String?         // Reference number for the expense bill
+  isPaid      Boolean         @default(true)
+  paymentMode String?         // "Bank Transfer", "Credit Card", "Cash"
+  notes       String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  items       ExpenseItem[]
+
+  @@index([businessId])
+}
+
+model ExpenseItem {
+  id          String   @id @default(uuid())
+  expenseId   String
+  expense     Expense  @relation(fields: [expenseId], references: [id])
+  
+  description String   // e.g., "Monthly Rent for Office", "Facebook Ad Campaign"
+  amount      Decimal
+  taxAmount   Decimal  @default(0)
+}
+
+
+enum SellerKycStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum SellerKycDocumentType {
+  PAN
+  GST_CERTIFICATE
+  BANK_PROOF
+  ADDRESS_PROOF
+}
+
+enum SellerKycDocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SettlementStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
 // For the Seller Support Ticketing System
 enum TicketStatus {
   OPEN
@@ -1085,4 +1308,24 @@ enum OrderStatus {
 enum OrderInitiateStatus {
   pending
   completed
+}
+
+enum PurchaseStatus {
+  DRAFT       // Purchase order created but not sent
+  ORDERED     // Sent to the supplier
+  RECEIVED    // Goods have been received
+  PARTIAL     // Partially received
+  CANCELLED
+}
+
+enum ExpenseCategory {
+  RENT
+  SALARIES
+  MARKETING
+  UTILITIES // Electricity, Water, Internet
+  SUPPLIES
+  TRAVEL
+  REPAIRS
+  SOFTWARE
+  OTHER
 }

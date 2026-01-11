@@ -1,21 +1,26 @@
 // src/orders/dto/create-order.dto.ts
 import { IsEnum, IsNotEmpty, IsOptional, IsNumber, IsObject, IsArray, IsString } from 'class-validator';
-import { PaymentMethod } from '@prisma/client';
+import { PaymentMethod, Prisma } from '@prisma/client'; // Keep this for the type annotation
 
 export class CreateOrderDto {
   @IsNotEmpty()
-  @IsEnum(PaymentMethod)
-  paymentMethod: PaymentMethod; // Should be 'cash_on_delivery'
+  // --- THIS IS THE FIX ---
+  // Instead of passing the imported PaymentMethod object (which can be undefined during a circular dependency),
+  // we pass a simple array of the valid string values.
+  // This has no dependencies and will always be defined.
+  @IsEnum(['online', 'cash_on_delivery'])
+  paymentMethod: PaymentMethod; // The property type itself remains the safe Prisma type.
 
   @IsNotEmpty()
   @IsObject()
-  selectedAddress: any; // Or use a specific Address DTO/Interface
+  // For better type safety, you could create a specific nested DTO for the address,
+  // but for now, this will accept the JSON object from the frontend.
+  selectedAddress: Prisma.JsonObject;
 
-  // --- NEW FIELD ---
   @IsArray()
-  @IsString({ each: true }) // Ensures every item in array is a string
+  @IsString({ each: true })
   @IsNotEmpty()
-  cartItemIds: string[]; // The IDs of the specific items to order
+  cartItemIds: string[];
 
   @IsOptional()
   @IsNumber()

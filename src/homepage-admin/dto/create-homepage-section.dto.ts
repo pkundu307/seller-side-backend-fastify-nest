@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { SectionType } from '@prisma/client';
+import { SectionType } from '@prisma/client'; // Keep for the type
 import { IsEnum, IsJSON, IsOptional, IsString } from 'class-validator';
 
 export class CreateHomepageSectionDto {
@@ -8,7 +8,8 @@ export class CreateHomepageSectionDto {
   title: string;
 
   @ApiProperty({ enum: SectionType })
-  @IsEnum(SectionType)
+  // --- FIX ---
+  @IsEnum(['HERO_SLIDER', 'SCROLLABLE_ROW', 'GRID_2XN', 'GRID_3XN', 'GRID_SQUARE_COMPACT', 'SINGLE_BANNER', 'PRODUCT_CAROUSEL'])
   type: SectionType;
   
   @ApiPropertyOptional({ description: 'Optional subtitle for the section' })
@@ -16,7 +17,7 @@ export class CreateHomepageSectionDto {
   @IsString()
   subtitle?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'JSON string for custom styling' })
   @IsOptional()
   @IsJSON()
   styleConfig?: string;

@@ -1,0 +1,21 @@
+# Git and Docker
+.git
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Node.js
+node_modules
+npm-debug.log
+
+# NestJS build output (we will build this inside the container)
+dist
+
+# Environment files and secrets
+# .env
+firebase-credentials.json
+
+# Misc
+README.md
+baseline.sql

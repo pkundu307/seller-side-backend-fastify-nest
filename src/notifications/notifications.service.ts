@@ -1,11 +1,29 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { NotificationType, Prisma } from '@prisma/client';
+import { CustomerUser, NotificationType, Prisma, User } from '@prisma/client';
+import { ClientProxy } from '@nestjs/microservices';
+// import { RABBITMQ_SERVICE } from 'src/rabbitmq/rabbitmq.module';
 
+
+interface NotificationPayload {
+  recipientId: string;
+  recipientEmail: string; // <-- ADD THIS
+  recipientType: 'customer' | 'seller';
+  notificationId: string;
+  title: string;
+  message: string;
+  type: NotificationType;
+  metadata?: Prisma.JsonValue;
+}
 @Injectable()
 export class NotificationService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService,
+        // @Inject(RABBITMQ_SERVICE) private readonly rabbitClient: ClientProxy,
 
+  ) {}
+  async onModuleDestroy() {
+    // await this.rabbitClient.close();
+  }
   /**
    * Creates a notification for a CustomerUser.
    * @param customerUserId - The ID of the customer to notify.
@@ -14,50 +32,71 @@ export class NotificationService {
    * @param type - The category of the notification (e.g., ORDER, PROMOTION).
    * @param metadata - Optional JSON object for extra data (e.g., { orderId: '...' }).
    */
-  async createForCustomer(
-    customerUserId: string,
+ async createForCustomer(
+    user: Pick<CustomerUser, 'id' | 'email'>,
     title: string,
     message: string,
     type: NotificationType = NotificationType.SYSTEM,
-    metadata?: Prisma.JsonObject,
+    metadata?: Prisma.JsonObject, // The input can still be an object for clarity
   ) {
-    return this.prisma.customerNotification.create({
-      data: {
-        customerUserId,
-        title,
-        message,
-        type,
-        metadata,
-      },
+    // 1. Create the notification record in the database.
+    const notification = await this.prisma.customerNotification.create({
+      data: { customerUserId: user.id, title, message, type, metadata },
     });
+
+    // 2. Prepare the payload with the email included.
+    // This now works because notification.metadata (JsonValue) is assignable to payload.metadata (JsonValue).
+    const payload: NotificationPayload = {
+      recipientId: user.id,
+      recipientEmail: user.email,
+      recipientType: 'customer',
+      notificationId: notification.id,
+      title: notification.title,
+      message: notification.message,
+      type: notification.type,
+      metadata: notification.metadata, // This assignment is now valid
+    };
+
+    // 3. Publish the event to RabbitMQ.
+    // this.rabbitClient.emit('notification_created', payload);
+    
+    return notification;
   }
 
   /**
-   * Creates a notification for a seller/admin User.
-   * @param userId - The ID of the user to notify.
-   * @param title - The title of the notification.
-   * @param message - The main content of the notification.
-   * @param type - The category of the notification (e.g., ORDER, ALERT).
-   * @param metadata - Optional JSON object for extra data (e.g., { orderId: '...', businessId: '...' }).
+   * Creates a notification for a seller/admin User and publishes it to RabbitMQ.
+   * @param user - The seller user object, must contain id and email.
    */
   async createForSeller(
-    userId: string,
+    user: Pick<User, 'id' | 'email'>,
     title: string,
     message: string,
     type: NotificationType = NotificationType.SYSTEM,
     metadata?: Prisma.JsonObject,
   ) {
-    return this.prisma.sellerNotification.create({
-      data: {
-        userId,
-        title,
-        message,
-        type,
-        metadata,
-      },
+    // 1. Create the database record.
+    const notification = await this.prisma.sellerNotification.create({
+      data: { userId: user.id, title, message, type, metadata },
     });
-  }
 
+    // 2. Prepare the payload.
+    // This now works for the same reason as above.
+    const payload: NotificationPayload = {
+      recipientId: user.id,
+      recipientEmail: user.email,
+      recipientType: 'seller',
+      notificationId: notification.id,
+      title: notification.title,
+      message: notification.message,
+      type: notification.type,
+      metadata: notification.metadata, // This assignment is now valid
+    };
+
+    // 3. Publish the event.
+    // this.rabbitClient.emit('notification_created', payload);
+
+    return notification;
+  }
   /**
    * Fetches all notifications for a specific CustomerUser, paginated.
    */

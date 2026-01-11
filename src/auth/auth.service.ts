@@ -61,7 +61,7 @@ export class AuthService {
       type: CustomerType.user, // Default type
     });
         await this.notificationService.createForCustomer(
-      user.id,
+      user,
       'Welcome to Jottosop!',
       'We are excited to have you. Explore our amazing collection and enjoy your shopping experience.',
       NotificationType.SYSTEM, // Using 'SYSTEM' type for this
@@ -110,7 +110,7 @@ export class AuthService {
           type: CustomerType.user,
         });
           await this.notificationService.createForCustomer(
-      user.id,
+      user,
       'Welcome to Jottosop!',
       'We are excited to have you. Explore our amazing collection and enjoy your shopping experience.',
       NotificationType.SYSTEM, // Using 'SYSTEM' type for this

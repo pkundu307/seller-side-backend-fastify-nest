@@ -3,6 +3,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { OrderStatus, PaymentStatus, NotificationType } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
+import { CancelOrderDto } from './dto/cancel-order.dto';
 
 function generateOrderNumber() {
   return `ORD-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -342,5 +343,114 @@ export class OrdersService {
         };
       })
     };
+  }
+
+
+   async cancelOrder(customerUserId: string, orderId: string, dto: CancelOrderDto) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Fetch the order and its items, ensuring it belongs to the user.
+      const order = await tx.order.findUnique({
+        where: { id: orderId },
+        include: {
+          items: {
+            include: {
+              variant: {
+                include: {
+                  product: {
+                    select: { isCustomizable: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!order) {
+        throw new NotFoundException(`Order with ID "${orderId}" not found.`);
+      }
+      if (order.customerUserId !== customerUserId) {
+        throw new ForbiddenException('You do not have permission to cancel this order.');
+      }
+
+      // 2. Apply Cancellation Business Rules
+      const currentStatus = order.status;
+
+      if (currentStatus === OrderStatus.shipped || currentStatus === OrderStatus.delivered) {
+        throw new BadRequestException('Cannot cancel an order that has already been shipped.');
+      }
+      if (currentStatus === OrderStatus.cancelled) {
+        throw new BadRequestException('This order has already been cancelled.');
+      }
+
+      // Special rule for 'processing' state
+      if (currentStatus === OrderStatus.processing) {
+        // Check if any item in the order is customizable
+        const hasCustomizableProduct = order.items.some(
+          item => item.variant?.product?.isCustomizable === true,
+        );
+        if (hasCustomizableProduct) {
+          throw new BadRequestException(
+            'Cannot cancel this order as it contains a customizable product that is already being processed.',
+          );
+        }
+      }
+
+      // 3. If all checks pass, update the order
+      const updatedOrder = await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: OrderStatus.cancelled,
+          cancelledAt: new Date(),
+          cancellationReason: `Customer cancellation: ${dto.reason}`,
+        },
+      });
+
+      // 4. Restock the items
+      for (const item of order.items) {
+        if (item.variantId) {
+          await tx.variant.update({
+            where: { id: item.variantId },
+            data: { stock: { increment: item.quantity } },
+          });
+        }
+      }
+
+      // 5. Trigger a refund if the order was paid online
+      if (order.paymentMethod === 'online' && order.paymentStatus === 'completed') {
+        // Here you would integrate with your payment gateway's refund API
+        // For example: await this.razorpay.payments.refund(...)
+        // For now, we'll just log it.
+        console.log(`REFUND TRIGGERED: A refund needs to be processed for order ${order.orderNumber}.`);
+      }
+
+      // 6. Notify the relevant sellers
+      const businessIds = new Set<string>();
+      const itemsWithBusiness = await tx.orderItem.findMany({
+        where: { orderId: order.id },
+        include: { variant: { include: { product: { select: { businessId: true } } } } }
+      });
+      itemsWithBusiness.forEach(item => {
+        if (item.variant?.product?.businessId) {
+            businessIds.add(item.variant.product.businessId);
+        }
+      });
+      
+      const sellers = await tx.user.findMany({
+          where: { businesses: { some: { id: { in: Array.from(businessIds) } } } }
+      });
+
+      // for (const seller of sellers) {
+      //     await this.notificationService.createForSeller(
+      //         seller,
+      //         'Order Cancelled by Customer',
+      //         `Order #${order.orderNumber} has been cancelled by the customer. Reason: ${dto.reason}. Please do not ship.`,
+      //         NotificationType.ALERT,
+      //         { orderId: order.id }
+      //     );
+      // }
+
+      return updatedOrder;
+    });
   }
 }
