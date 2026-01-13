@@ -50,6 +50,8 @@ export class CategoryService {
   // --- CATEGORY CRUD ---
 
   async createCategory(createCategoryDto: CreateCategoryDto) {
+    console.log(createCategoryDto.gstRate,createCategoryDto.name);
+    
     // If a parentId is provided, first check if it exists
     if (createCategoryDto.parentId) {
       const parentExists = await this.prisma.category.findUnique({
@@ -65,6 +67,7 @@ export class CategoryService {
       return await this.prisma.category.create({
         data: {
           name: createCategoryDto.name,
+          gstRate: createCategoryDto.gstRate,
           parentId: createCategoryDto.parentId,
           slug: slug, // Assuming you have a slug field
         },

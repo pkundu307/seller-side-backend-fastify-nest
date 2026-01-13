@@ -31,6 +31,8 @@ export class CategoryController { // Renamed for consistency
   @ApiOperation({ summary: 'Create a new category' })
   @ApiResponse({ status: 201, description: 'Category created successfully.' })
   create(@Body() createCategoryDto: CreateCategoryDto) {
+    console.log(createCategoryDto);
+    
     return this.categoriesService.createCategory(createCategoryDto);
   }
 

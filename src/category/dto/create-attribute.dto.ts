@@ -47,4 +47,10 @@ export class AddAttributesBatchDto {
   @ValidateNested({ each: true })
   @Type(() => AttributeInputDto)
   attributes: AttributeInputDto[];
+
+  //gst rate
+  @ApiProperty({ example: 18, description: 'The GST rate for the category' })
+  @IsNumber()
+  @IsNotEmpty()
+  gstRate: number;
 }
