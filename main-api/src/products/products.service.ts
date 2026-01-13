@@ -172,33 +172,59 @@ export class ProductsService {
 
     // FIXED: The entire method logic is now correctly structured.
 async createProduct(businessId: string, formData: any) {
-    const uploadedImageUrls: string[] = [];
+  console.log(`[CREATE_PRODUCT] Service triggered for business ID: ${businessId}`);
+  console.log('[CREATE_PRODUCT] Received Raw FormData:', JSON.stringify(formData, null, 2));
+
+  const uploadedImageUrlsForRollback: string[] = [];
 
   try {
-    // 1. Upload main product images (same as before)
-    const productImagesUrls: string[] = [];
-    if (formData.images && formData.images.length > 0) {
-      for (const image of formData.images) {
-        const imageUrl = await this.s3Service.uploadImage(
-          image.buffer,
-          image.filename,
-          image.mimetype,
-          "products"
-        );
-        productImagesUrls.push(imageUrl);
-           uploadedImageUrls.push(imageUrl); 
+    // --- 1. PROCESS MAIN PRODUCT IMAGES ---
+    console.log('[CREATE_PRODUCT] 🔄 Step 1: Processing main product images...');
+    const finalProductImages: string[] = [];
+
+    // A. Handle file uploads
+    if (formData.imageFiles && formData.imageFiles.length > 0) {
+      console.log(`[CREATE_PRODUCT] Found ${formData.imageFiles.length} product image file(s) to upload.`);
+      for (const image of formData.imageFiles) {
+        const imageUrl = await this.s3Service.uploadImage(image.buffer, image.filename, image.mimetype, "products");
+        finalProductImages.push(imageUrl);
+        uploadedImageUrlsForRollback.push(imageUrl);
       }
+    } else {
+      console.log('[CREATE_PRODUCT] No product image files to upload.');
     }
 
+    // B. Handle direct URLs
+    if (formData.productImageUrls && Array.isArray(formData.productImageUrls)) {
+      console.log(`[CREATE_PRODUCT] Found ${formData.productImageUrls.length} direct product image URL(s).`);
+      finalProductImages.push(...formData.productImageUrls);
+    } else {
+      console.log('[CREATE_PRODUCT] No direct product image URLs provided.');
+    }
+    console.log('[CREATE_PRODUCT] ✅ Final combined product images:', finalProductImages);
+    
+    // --- 2. GENERATE AND VALIDATE SLUG ---
+    console.log(`[CREATE_PRODUCT] 🔄 Step 2: Generating and validating slug for title: "${formData.title}"`);
     const slug = this.generateSlug(formData.title);
+    const existingProductWithSlug = await this.prisma.product.findUnique({ where: { slug } });
+    if (existingProductWithSlug) {
+      console.error(`[CREATE_PRODUCT] ❌ Slug conflict found for slug: "${slug}"`);
+      throw new BadRequestException('A product with this title already exists, resulting in a duplicate slug.');
+    }
+    console.log(`[CREATE_PRODUCT] ✅ Slug is unique: ${slug}`);
 
-    // 2. Process variants with their specific images
+    // --- 3. PROCESS VARIANTS ---
+    console.log(`[CREATE_PRODUCT] 🔄 Step 3: Processing ${formData.variants.length} variant(s)...`);
     const variantsToCreate = await Promise.all(
       formData.variants.map(async (variant: any, index: number) => {
-        // Validate attribute options (same as before)
-        const attributeOptionIds = variant.attributes.map((attr: any) =>
-          parseInt(attr.attributeOptionId, 10),
-        );
+        console.log(`[VARIANT_LOOP | Index ${index}] --- Start processing variant with SKU: ${variant.sku} ---`);
+
+        // 3a. Attribute validation
+        if (!variant.attributes || !Array.isArray(variant.attributes) || variant.attributes.length === 0) {
+          throw new BadRequestException(`Variant with SKU ${variant.sku} must have at least one attribute.`);
+        }
+        const attributeOptionIds = variant.attributes.map((attr: any) => parseInt(attr.attributeOptionId, 10));
+        console.log(`[VARIANT_LOOP | Index ${index}] Validating Attribute Option IDs:`, attributeOptionIds);
 
         const chosenOptions = await this.prisma.attributeOption.findMany({
           where: { id: { in: attributeOptionIds } },
@@ -206,58 +232,64 @@ async createProduct(businessId: string, formData: any) {
         });
 
         if (chosenOptions.length !== attributeOptionIds.length) {
-          throw new BadRequestException('One or more provided attributeOptionIds are invalid.');
+          throw new BadRequestException(`One or more attribute options for variant SKU ${variant.sku} are invalid.`);
         }
-
         const parentAttributeIds = chosenOptions.map((opt) => opt.attributeId);
         if (new Set(parentAttributeIds).size !== parentAttributeIds.length) {
           throw new BadRequestException(`Variant with SKU ${variant.sku} cannot have multiple values for the same attribute type.`);
         }
-
+        console.log(`[VARIANT_LOOP | Index ${index}] ✅ Attribute options validated successfully.`);
+        
         const attributeValuesToCreate = chosenOptions.map((option) => ({
-          attributeOption: { connect: { id: option.id } },
           attribute: { connect: { id: option.attributeId } },
+          attributeOption: { connect: { id: option.id } },
         }));
 
-        // Handle variant-specific images using the new approach
-        const variantImageUrls: string[] = [];
-        
-        // Try to find images by index first, then by SKU
-        const variantImages = formData.variantImagesMap.get(index.toString()) || 
-                             formData.variantImagesMap.get(variant.sku) || [];
+        // 3b. Handle variant images
+        const finalVariantImages: string[] = [];
+        const variantImageFiles = formData.variantImageFilesMap.get(index.toString()) || 
+                                 formData.variantImageFilesMap.get(variant.sku) || [];
 
-        for (const imageData of variantImages) {
-          const imageUrl = await this.s3Service.uploadImage(
-            imageData.buffer,
-            imageData.filename,
-            imageData.mimetype,
-            "products"
-          );
-          variantImageUrls.push(imageUrl);
-            uploadedImageUrls.push(imageUrl);
+        if (variantImageFiles.length > 0) {
+          console.log(`[VARIANT_LOOP | Index ${index}] Found ${variantImageFiles.length} image file(s) for this variant.`);
+          for (const imageData of variantImageFiles) {
+            const imageUrl = await this.s3Service.uploadImage(imageData.buffer, imageData.filename, imageData.mimetype, "products");
+            finalVariantImages.push(imageUrl);
+            uploadedImageUrlsForRollback.push(imageUrl);
+          }
         }
+        
+        if (variant.imageUrls && Array.isArray(variant.imageUrls) && variant.imageUrls.length > 0) {
+          console.log(`[VARIANT_LOOP | Index ${index}] Found ${variant.imageUrls.length} direct image URL(s) for this variant.`);
+          finalVariantImages.push(...variant.imageUrls);
+        }
+        console.log(`[VARIANT_LOOP | Index ${index}] ✅ Final combined images for this variant:`, finalVariantImages);
 
-        return {
+        const variantDataForPrisma = {
           sku: variant.sku,
           price: new Prisma.Decimal(variant.price),
           stock: parseInt(variant.stock, 10),
           mrp: variant.mrp ? new Prisma.Decimal(variant.mrp) : undefined,
           hsnCode: variant.hsnCode,
-          images: variantImageUrls,
-          attributeValues: {
-            create: attributeValuesToCreate,
-          },
+          images: finalVariantImages,
+          attributeValues: { create: attributeValuesToCreate },
         };
+
+        console.log(`[VARIANT_LOOP | Index ${index}] --- Finished processing variant. ---`);
+        return variantDataForPrisma;
       }),
     );
+    console.log('[CREATE_PRODUCT] ✅ All variants processed successfully.');
+    console.log('[CREATE_PRODUCT] Final `variantsToCreate` object:', JSON.stringify(variantsToCreate, null, 2));
 
-    // Rest of the method remains the same...
+    // --- 4. CREATE PRODUCT IN DATABASE ---
+    console.log('[CREATE_PRODUCT] 🔄 Step 4: Calling prisma.product.create with all data...');
     const product = await this.prisma.product.create({
       data: {
         title: formData.title,
         description: formData.description,
         slug: slug,
-        images: productImagesUrls,
+        images: finalProductImages,
         business: { connect: { id: businessId } },
         category: { connect: { id: parseInt(formData.categoryId, 10) } },
         variants: {
@@ -278,18 +310,24 @@ async createProduct(businessId: string, formData: any) {
         },
       },
     });
+    console.log(`[CREATE_PRODUCT] ✅ Prisma successfully created product with ID: ${product.id}`);
 
     return { success: true, message: 'Product created successfully', data: product };
   } catch (error) {
-    // Error handling remains the same...
-     if (uploadedImageUrls.length > 0) {
-      console.error('An error occurred during product creation. Rolling back S3 uploads...');
-     }
+    console.error(`[CREATE_PRODUCT] ❌ ERROR caught in createProduct service:`, error);
+    if (uploadedImageUrlsForRollback.length > 0) {
+      console.warn('[CREATE_PRODUCT] Rolling back S3 uploads...');
+      await this.s3Service.deleteImages(uploadedImageUrlsForRollback);
+      console.warn('[CREATE_PRODUCT] ✅ S3 rollback complete.');
+    }
+    
+    // Specific Prisma error handling
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === 'P2002') {
-        const target = error.meta?.target as string[];
-        if (target.includes('slug')) throw new BadRequestException('A product with this title already exists.');
-        if (target.includes('sku')) throw new BadRequestException('One of the provided SKU values is already in use.');
+        const target = (error.meta?.target as string[]) || [];
+        if (target.includes('sku')) {
+          throw new BadRequestException('One of the provided SKU values is already in use.');
+        }
       }
       if (error.code === 'P2025') {
         throw new BadRequestException('The provided categoryId or an attributeOptionId does not exist.');

@@ -36,7 +36,7 @@ export class ProductsController {
     @Req() req: FastifyRequest,
     @Param('businessId') businessId: string,
   ) {
-    try { // <-- ADD TRY BLOCK
+    try {
       const user = req.user as any;
       console.log('[CONTROLLER] User:', user);
 
@@ -53,7 +53,7 @@ export class ProductsController {
       console.log('[CONTROLLER] Business check passed:', business.name);
 
       const formData = await this.parseMultipartData(req);
-      console.log('[CONTROLLER] Parsed formData:', JSON.stringify(formData, null, 2)); // Use stringify for better readability of nested objects
+      console.log('[CONTROLLER] Parsed formData:', JSON.stringify(formData, null, 2));
 
       console.log('[CONTROLLER] Running validation...');
       this.validateProductData(formData);
@@ -64,98 +64,95 @@ export class ProductsController {
       console.log('[CONTROLLER] productsService.createProduct SUCCEEDED.');
       return result;
 
-    } catch (error) { // <-- ADD CATCH BLOCK
+    } catch (error) {
       console.error('[CONTROLLER] An error occurred in addProduct:', error);
-      // Re-throw the error so NestJS can handle it and send the appropriate HTTP response
       throw error;
     }
   }
-  
-  // ... (rest of the controller code is unchanged)
-  // ... parseMultipartData, validateProductData, etc.
-  
-  // --- REVISED & TYPE-SAFE PARSER ---
-  private async parseMultipartData(req: FastifyRequest): Promise<any> {
-    if (!req.isMultipart()) {
-      throw new BadRequestException('Request is not multipart/form-data.');
-    }
 
-    const formData: any = { variants: [] };
-    const productImages: Array<{ buffer: Buffer; filename: string; mimetype: string }> = [];
-    const variantImagesMap = new Map<string, Array<{ buffer: Buffer; filename: string; mimetype: string }>>();
+  // --- ENHANCED PARSER: Supports BOTH file uploads AND URL arrays ---
+private async parseMultipartData(req: FastifyRequest): Promise<any> {
+  if (!req.isMultipart()) {
+    throw new BadRequestException('Request is not multipart/form-data.');
+  }
+
+  const formData: any = { variants: [] };
+  const imageFiles: Array<{ buffer: Buffer; filename: string; mimetype: string }> = [];
+  const variantImageFilesMap = new Map<string, Array<{ buffer: Buffer; filename: string; mimetype: string }>>();
+  let productImageUrls: string[] = [];
+
 
     for await (const part of req.parts()) {
-      if ('value' in part) {
-        // This is a MultipartField, so it has a `value` property.
-        if (part.fieldname === 'variants') {
-          try {
+      if ('value' in part) { // It's a field
+        try {
+          if (part.fieldname === 'variants') {
             formData.variants = JSON.parse(part.value as string);
-          } catch {
-            throw new BadRequestException('Invalid JSON format for the "variants" field.');
+          } else if (part.fieldname === 'productImageUrls') { // <-- Match the frontend form data key
+            productImageUrls = JSON.parse(part.value as string);
+            if (!Array.isArray(productImageUrls)) throw new Error('productImageUrls must be an array.');
+          } else {
+            formData[part.fieldname] = part.value;
           }
-        } else {
-          formData[part.fieldname] = part.value;
+        } catch (e) {
+          throw new BadRequestException(`Invalid JSON format for field "${part.fieldname}": ${e.message}`);
         }
-      } else {
-        // This is a MultipartFile.
+      } else { // It's a file
         const buffer = await part.toBuffer();
         if (part.fieldname === 'images') {
-          productImages.push({ buffer, filename: part.filename, mimetype: part.mimetype });
+          imageFiles.push({ buffer, filename: part.filename, mimetype: part.mimetype });
         } else if (part.fieldname.startsWith('variantImages_')) {
-          const variantId = part.fieldname.replace('variantImages_', '');
-          if (!variantImagesMap.has(variantId)) {
-            variantImagesMap.set(variantId, []);
+          const identifier = part.fieldname.replace('variantImages_', '');
+          if (!variantImageFilesMap.has(identifier)) {
+            variantImageFilesMap.set(identifier, []);
           }
-          variantImagesMap.get(variantId)!.push({ buffer, filename: part.filename, mimetype: part.mimetype });
+          variantImageFilesMap.get(identifier)!.push({ buffer, filename: part.filename, mimetype: part.mimetype });
         }
       }
     }
 
-    formData.images = productImages;
-    formData.variantImagesMap = variantImagesMap;
+    // Attach all parsed data to the final object with consistent naming
+   formData.imageFiles = imageFiles;
+  formData.productImageUrls = productImageUrls;
+  formData.variantImageFilesMap = variantImageFilesMap;
     return formData;
   }
 
-  // REWRITTEN: This validation logic now matches the new schema.
+  /**
+   * Corrected validation logic.
+   */
   private validateProductData(formData: any): void {
-    const { title, categoryId, variants, images } = formData;
+    const { title, categoryId, variants, imageFiles, productImageUrls } = formData;
+    
     if (!title) throw new BadRequestException('Product title is required.');
-    if (!categoryId || isNaN(parseInt(categoryId, 10)))
-      throw new BadRequestException('A valid categoryId is required.');
-    if (!images || images.length === 0)
-      throw new BadRequestException('At least one product image is required.');
-    if (!Array.isArray(variants) || variants.length === 0)
-      throw new BadRequestException('At least one variant is required.');
-
-    for (const variant of variants) {
-      if (!variant.sku)
-        throw new BadRequestException('Each variant must have a SKU.');
-      if (!variant.price || isNaN(parseFloat(variant.price)))
-        throw new BadRequestException(
-          `Variant with SKU ${variant.sku} must have a valid price.`,
-        );
-      if (!variant.stock || isNaN(parseInt(variant.stock, 10)))
-        throw new BadRequestException(
-          `Variant with SKU ${variant.sku} must have a valid stock count.`,
-        );
-      if (
-        !Array.isArray(variant.attributes) ||
-        variant.attributes.length === 0
-      ) {
-        throw new BadRequestException(
-          `Variant with SKU ${variant.sku} must have at least one attribute.`,
-        );
-      }
+    if (!categoryId || isNaN(parseInt(categoryId, 10))) throw new BadRequestException('A valid categoryId is required.');
+    
+    // --- CORRECTED VALIDATION LOGIC ---
+    const hasImageFiles = imageFiles && imageFiles.length > 0;
+    const hasImageUrls = productImageUrls && Array.isArray(productImageUrls) && productImageUrls.length > 0;
+    if (!hasImageFiles && !hasImageUrls) {
+      throw new BadRequestException('Either product image files OR product image URLs must be provided.');
+    }
+    // --- END OF CORRECTION ---
+    
+    if (!Array.isArray(variants) || variants.length === 0) throw new BadRequestException('At least one variant is required.');
+    for (const [index, variant] of variants.entries()) {
       for (const attr of variant.attributes) {
-        if (
-          !attr.attributeOptionId ||
-          isNaN(parseInt(attr.attributeOptionId, 10))
-        ) {
-          // throw a new BadRequestException(
-          //   `Each attribute for a variant must have a valid attributeOptionId.`,
-          // );
+        if (!attr.attributeOptionId || isNaN(parseInt(attr.attributeOptionId, 10))) {
+          throw new BadRequestException(
+            `Each attribute for variant ${variant.sku || index + 1} must have a valid attributeOptionId.`,
+          );
         }
       }
+
+      // Variant images validation (files OR URLs)
+      const variantKey = variant.sku;
+      const hasVariantFiles = formData.variantImagesMap && formData.variantImagesMap[variantKey] && formData.variantImagesMap[variantKey].length > 0;
+      const hasVariantUrls = variant.imageUrls && Array.isArray(variant.imageUrls) && variant.imageUrls.length > 0;
+      
+      // Variants don't require images (optional)
+      // if (!hasVariantFiles && !hasVariantUrls) {
+      //   console.warn(`Variant ${variantKey} has no images or URLs`);
+      // }
     }
   }
 
