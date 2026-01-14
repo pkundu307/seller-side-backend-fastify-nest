@@ -1,12 +1,11 @@
-// src/product-search/dto/search-products.dto.ts
+// src/products/dto/search-products.dto.ts
 
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsInt } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class SearchProductsDto {
   @ApiPropertyOptional({
-    description: 'The search term for product titles, descriptions, etc.',
+    description: 'The search term to look for in product titles, descriptions, SKUs, etc.',
     example: 'modern chair',
   })
   @IsOptional()
@@ -18,16 +17,14 @@ export class SearchProductsDto {
     example: '15',
   })
   @IsOptional()
-  @Type(() => Number) // Transform query param string to number
-  @IsInt()
-  categoryId?: number;
+  @IsString() // We receive it as a string from query params
+  categoryId?: string;
 
-  // --- THIS IS THE KEY CHANGE ---
   @ApiPropertyOptional({
-    description: 'Fetch a single, specific product by its unique slug.',
-    example: 'red-cotton-t-shirt',
+    description: 'Fetch a single, specific product by its ID.',
+    example: 'a1b2c3d4-e5f6-7890-1234-567890abcdef',
   })
   @IsOptional()
-  @IsString()
-  slug?: string; // Changed from productId
+  @IsUUID()
+  productId?: string;
 }
