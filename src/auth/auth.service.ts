@@ -14,6 +14,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { ConfigService } from '@nestjs/config';
 import { AuthSource, CustomerType, CustomerUser, NotificationType } from '@prisma/client';
 import { NotificationService } from 'src/notifications/notifications.service';
+import { PrismaService } from 'src/prisma/prisma.service'; // <--- IMPORT THIS
 
 @Injectable()
 export class AuthService {
@@ -22,24 +23,28 @@ export class AuthService {
   constructor(
     private customerUserService: CustomerUserService,
     private jwtService: JwtService,
-     private readonly notificationService: NotificationService, 
+    private readonly notificationService: NotificationService,
     private configService: ConfigService,
+    private prisma: PrismaService, // <--- INJECT THIS
   ) {
     this.googleClient = new OAuth2Client(
       this.configService.get('GOOGLE_CLIENT_ID'),
     );
   }
 
-  private createToken(user: CustomerUser) {
+  // --- Helper to Standardize Payload ---
+  private createToken(user: any, userType: 'CUSTOMER' | 'SELLER') {
     const payload = {
       email: user.email,
       sub: user.id,
-      role: user.type, // Maps the 'type' from db to 'role' in JWT
+      role: userType === 'CUSTOMER' ? user.type : user.role, // Handle different field names
+      userType: userType, // Store type in token for easier future checks
     };
     return {
       token: this.jwtService.sign(payload),
       name: user.name,
-      role: user.type,
+      role: payload.role,
+      type: userType
     };
   }
 
@@ -58,32 +63,40 @@ export class AuthService {
       email,
       password: hashedPassword,
       authSource: AuthSource.self,
-      type: CustomerType.user, // Default type
+      type: CustomerType.user,
     });
-        await this.notificationService.createForCustomer(
+    
+    await this.notificationService.createForCustomer(
       user,
       'Welcome to Jottosop!',
       'We are excited to have you. Explore our amazing collection and enjoy your shopping experience.',
-      NotificationType.SYSTEM, // Using 'SYSTEM' type for this
+      NotificationType.SYSTEM,
     );
-    return this.createToken(user);
+    
+    return this.createToken(user, 'CUSTOMER');
   }
 
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
-    const user = await this.customerUserService.findByEmail(email);
-
-    if (!user || !user.password) {
-      // Deny login if user signed up with Google or doesn't exist
-      throw new UnauthorizedException('Invalid credentials');
+    
+    // 1. Try Customer Login
+    const customer = await this.customerUserService.findByEmail(email);
+    if (customer && customer.password) {
+      const isMatch = await bcrypt.compare(password, customer.password);
+      if (isMatch) return this.createToken(customer, 'CUSTOMER');
     }
 
-    const isPasswordMatching = await bcrypt.compare(password, user.password);
-    if (!isPasswordMatching) {
-      throw new UnauthorizedException('Invalid credentials');
+    // 2. Try Seller/Admin Login (If customer not found or pass mismatch)
+    // Note: If you want strictly separate login forms, remove this fallback.
+    const seller = await this.prisma.user.findUnique({ where: { email } });
+    if (seller && seller.password) {
+      // Assuming seller passwords are also bcrypt hashed
+      // If you haven't implemented Seller password hashing yet, ensure you do.
+      const isMatch = await bcrypt.compare(password, seller.password);
+      if (isMatch) return this.createToken(seller, 'SELLER');
     }
 
-    return this.createToken(user);
+    throw new UnauthorizedException('Invalid credentials');
   }
 
   async googleLogin(googleLoginDto: GoogleLoginDto) {
@@ -100,7 +113,7 @@ export class AuthService {
 
       let user = await this.customerUserService.findByEmail(payload.email);
 
-      // If user doesn't exist, create a new one
+      // If user doesn't exist, create a new Customer
       if (!user) {
         user = await this.customerUserService.create({
           email: payload.email,
@@ -109,18 +122,79 @@ export class AuthService {
           authSource: AuthSource.google,
           type: CustomerType.user,
         });
-          await this.notificationService.createForCustomer(
-      user,
-      'Welcome to Jottosop!',
-      'We are excited to have you. Explore our amazing collection and enjoy your shopping experience.',
-      NotificationType.SYSTEM, // Using 'SYSTEM' type for this
-    );
+        await this.notificationService.createForCustomer(
+          user,
+          'Welcome to Jottosop!',
+          'We are excited to have you.',
+          NotificationType.SYSTEM,
+        );
       }
   
-      return this.createToken(user);
+      return this.createToken(user, 'CUSTOMER');
     } catch (error) {
       console.error('Google Login Error:', error);
       throw new InternalServerErrorException('Google authentication failed');
     }
+  }
+
+  // --- NEW INTROSPECT METHOD ---
+  async introspect(userPayload: any) {
+    // 1. Safe Extraction: Check for 'sub', 'id', or 'userId' to be safe
+    const userId = userPayload.sub || userPayload.id || userPayload.userId;
+
+    if (!userId) {
+      console.error('Introspect Failed: No User ID in payload', userPayload);
+      throw new UnauthorizedException('Invalid token: User ID missing');
+    }
+
+    // 2. Check Customer Table
+    const customer = await this.prisma.customerUser.findUnique({
+      where: { id: userId },
+    });
+
+    if (customer) {
+      // Regenerate Token
+      const tokenResponse = this.createToken(customer, 'CUSTOMER');
+      return {
+        user: {
+          id: customer.id,
+          name: customer.name,
+          email: customer.email,
+          picture: customer.picture,
+          type: 'CUSTOMER',
+          role: customer.type, 
+        },
+        token: tokenResponse.token
+      };
+    }
+
+    // 3. Check Seller/User Table
+    const seller = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { 
+        staffProfile: { include: { role: { include: { permissions: true } } } } 
+      }
+    });
+
+    if (seller) {
+      const tokenResponse = this.createToken(seller, 'SELLER');
+      
+      const permissions = seller.staffProfile?.role?.permissions.map(p => p.action + ':' + p.subject) || [];
+
+      return {
+        user: {
+          id: seller.id,
+          name: seller.name,
+          email: seller.email,
+          type: 'SELLER',
+          role: seller.role,
+          permissions: permissions
+        },
+        token: tokenResponse.token
+      };
+    }
+
+    // 4. If neither found
+    throw new UnauthorizedException('User no longer exists or account is disabled.');
   }
 }

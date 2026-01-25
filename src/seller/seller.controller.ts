@@ -9,6 +9,10 @@ import { UpdateSellerOrderDto } from './dto/update-order.dtp';
 import { FastifyReply } from 'fastify';
 import { CreatePosSaleDto } from './dto/create-pos-sale.dto';
 import { SalePaginationDto } from './dto/sale-pagination.dto';
+import { GetSalesStatsDto } from './dto/get-sales-stats.dto';
+import { GetPosCustomersDto } from './dto/get-pos-customers.dto';
+import { UpdatePosSaleDto } from './dto/update-pos-sale.dto';
+import { PdfService } from './pdf.service';
 
 @ApiTags('Seller Dashboard')
 @ApiBearerAuth()
@@ -18,6 +22,7 @@ export class SellerController {
   constructor(
     private readonly sellerService: SellerService,
     private readonly prisma: PrismaService, // Inject Prisma for ownership check
+    private readonly pdfService: PdfService
   ) {}
 
   // Middleware-like function to verify ownership
@@ -146,4 +151,44 @@ async createPosSale(
     await this.verifyBusinessOwnership(req.user.id, businessId);
     return this.sellerService.getBusinessSaleById(businessId, saleId);
   }
+  
+ @Get(':businessId/sales/stats')
+  @ApiOperation({ summary: 'Get sales statistics and timeline for a dashboard' })
+  @ApiResponse({ status: 200, description: 'Returns aggregated sales data.' })
+  async getStats(
+    @Param('businessId') businessId: string,
+    @Query() query: GetSalesStatsDto,
+  ) {
+    return this.sellerService.getSalesStats(businessId, query);
+  }
+  @Get(':businessId/pos/products')
+@ApiOperation({ summary: 'Minified product search for POS dropdown' })
+async getPosProducts(
+  @Param('businessId', ParseUUIDPipe) businessId: string,
+  @Query('search') search?: string, // <--- marked as optional
+) {
+  return this.sellerService.getPosProducts(businessId, search);
+}
+
+@Get(':businessId/customers')
+@ApiOperation({ summary: 'Get all POS customers linked to this business' })
+async getBusinessCustomers(
+  @Param('businessId', ParseUUIDPipe) businessId: string,
+  @Query() query: GetPosCustomersDto,
+) {
+  return this.sellerService.getPosCustomers(businessId, query);
+}
+ @Patch(':businessId/sales/:saleId')
+  @ApiOperation({ summary: 'Update an existing sale (Reverts and Re-applies)' })
+  async updatePosSale(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Param('saleId', ParseUUIDPipe) saleId: string,
+    @Body() dto: UpdatePosSaleDto,
+  ) {
+    await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.updatePosSale(businessId, saleId, dto);
+  }
+
+  // 2. Download Invoice PDF (Fastify Version)
 }

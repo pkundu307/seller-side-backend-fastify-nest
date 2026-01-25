@@ -63,3 +63,33 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
+
+// // npx ts-node prisma/seed.ts
+// import { PrismaClient } from '@prisma/client';
+// const prisma = new PrismaClient();
+
+// async function main() {
+//   console.log('Seeding database...');
+
+//   // 1. Create Default Categories (Examples)
+//   const electronics = await prisma.category.upsert({
+//     where: { slug: 'electronics' },
+//     update: {},
+//     create: { name: 'Electronics', slug: 'electronics', gstRate: 18 },
+//   });
+
+//   // 2. Create Subscription Plans (If managing manually, though Enums handle logic)
+//   // This step is optional depending on if you have a Plan model or just Enum.
+//   // You strictly use Enum 'SubscriptionPlan', so no DB seed needed for Plans.
+
+//   console.log('Seeding completed.');
+// }
+
+// main()
+//   .catch((e) => {
+//     console.error(e);
+//     process.exit(1);
+//   })
+//   .finally(async () => {
+//     await prisma.$disconnect();
+//   });

@@ -1,12 +1,14 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SellerPaginationDto } from './dto/seller-pagination.dto';
-import { OrderStatus, PaymentMethod, Prisma } from '@prisma/client';
+import { BankCashCheque, OrderStatus, PaymentMethod, Prisma } from '@prisma/client';
 import { UpdateSellerOrderDto } from './dto/update-order.dtp';
-import { CreatePosSaleDto } from './dto/create-pos-sale.dto';
-
+import { CreatePosSaleDto, PosPaymentMode } from './dto/create-pos-sale.dto';
+import { UpdatePosSaleDto } from './dto/update-pos-sale.dto';
 import { PdfService } from './pdf.service';
 import { SalePaginationDto } from './dto/sale-pagination.dto';
+import { GetSalesStatsDto } from './dto/get-sales-stats.dto';
+import { GetPosCustomersDto } from './dto/get-pos-customers.dto';
 // Define a type for the address object to cast the JSON to
 interface ShippingAddress {
   street: string;
@@ -316,89 +318,313 @@ async updateOrderStatus(businessId: string, orderId: string, dto: UpdateSellerOr
   }
 
 
-  async createPosSale(businessId: string, dto: CreatePosSaleDto) {
-  const { customerName = 'Walk-in Customer', customerPhone = '', items } = dto;
+// seller.service.ts
+async createPosSale(businessId: string, dto: CreatePosSaleDto) {
+    const {
+      customerName = 'Walk-in Customer',
+      customerPhone = '',
+      items,
+      paymentMode = PosPaymentMode.CASH,
+      amountReceived,
+      additionalCharges = [],
+      gstin = '',
+      address = '',
+      pan = '',
+      email = '', // Extract email from DTO
+      depositAccountId,
+    } = dto;
 
-  const variantIds = items.map(item => item.variantId);
-  const variants = await this.prisma.variant.findMany({
-    where: {
-      id: { in: variantIds },
-      product: { businessId: businessId }, // Security check: variants must belong to seller
-    },
-    select: { id: true, price: true, stock: true, sku: true, hsnCode: true }
-  });
+    // 0. Fetch Business Name
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      select: { name: true },
+    });
 
-  if (variants.length !== variantIds.length) {
-    throw new BadRequestException("One or more variants are invalid or do not belong to your business.");
-  }
-  
-  // Check stock and calculate total
-  let totalAmount = new Prisma.Decimal(0);
-  const saleItemsToCreate = items.map(item => {
-    const variant = variants.find(v => v.id === item.variantId);
-    if (!variant) throw new InternalServerErrorException(); // Should not happen
-    if (variant.stock < item.quantity) {
-      throw new BadRequestException(`Insufficient stock for SKU ${variant.sku}. Available: ${variant.stock}, Requested: ${item.quantity}`);
+    if (!business) throw new NotFoundException('Business not found');
+
+    // 1. Fetch Variants
+    const variantIds = items.map((item) => item.variantId);
+    const variants = await this.prisma.variant.findMany({
+      where: {
+        id: { in: variantIds },
+        product: { businessId: businessId },
+      },
+      include: { product: { select: { title: true } } },
+    });
+
+    if (variants.length !== variantIds.length) {
+      throw new BadRequestException('One or more items do not belong to your business.');
     }
-    const itemTotal = variant.price.times(item.quantity);
-    totalAmount = totalAmount.plus(itemTotal);
-    
-    return {
-      itemId: variant.id,
-      itemName: variant.sku,
-      hsnCode: variant.hsnCode || '',
-      quantity: item.quantity,
-      price: variant.price,
-      taxableAmount: itemTotal,
-      amount: itemTotal,
-      // Defaulting other required SaleItem fields
-       itemDescription: '', sacCode: '', batchNo: '', manufactureDate: new Date(),
-       expiryDate: new Date(), priceType: '', unit: '', discountPercent: 0,
-       discountAmount: 0, tax: '', taxAmount: 0, cess: '', cessAmount: 0,
-       isMrpEnabled: false, isWholesaleEnabled: false, isSerialisationEnabled: false,
-       isBatchingEnabled: false, sellingPrice: 0, sellingPriceType: '',
-       purchasePrice: 0, purchasePriceType: '', mrp: 0, wholesalePrice: 0,
-       wholesalePriceType: '', wholesaleQuantity: 0, itemCode: ''
-    };
-  });
 
-  return this.prisma.$transaction(async (tx) => {
-  // 1. Create the Sale record
-  const newSale = await tx.sale.create({
-    data: {
-      businessId: businessId,
-      partyName: customerName,
-      phoneNo: customerPhone,
-      invoiceDate: new Date(),
-      invoiceNo: Math.floor(1000 + Math.random() * 9000),
-      invoicePrefix: 'POS',
-      totalAmount: totalAmount,
-      totalTaxableAmount: totalAmount, // Assuming no tax for simplicity
-      status: 'FINALIZED',
-      isSettled: true, // Assuming POS sales are settled immediately
-      balanceAmount: 0,
-      notes: 'In-store Point-of-Sale transaction.',
-      saleItems: { create: saleItemsToCreate },
-      // --- Populating other required fields with defaults ---
-      partyId: '', saleType: '', paymentTerm: 0, partyType: '', businessName: '',
-      billingAddress: '', shippingAddress: '', placeOfSupply: '', taxId: '', panNo: '',
-      isDiscountAfterTaxEnabled: false, discountPercent: 0, discountAmount: 0, totalTaxAmount: 0,
-      isAutoRoundoffEnabled: false, roundoffType: '', roundoffAmount: 0, termCondition: '',
-      isScanItemEnabled: false, isConverted: false, party: '', isDueDateEnabled: false, dueDate: new Date()
-    },
-  });
-    
-    // 2. Decrement stock for each variant
+    // 2. Calculate ITEM Totals
+    let totalItemsAmountDec = new Prisma.Decimal(0);
+    const saleItemsData: Prisma.SaleItemCreateWithoutSaleInput[] = [];
+
     for (const item of items) {
-      await tx.variant.update({
-        where: { id: item.variantId },
-        data: { stock: { decrement: item.quantity } },
+      const variant = variants.find((v) => v.id === item.variantId);
+      if (!variant) continue;
+
+      if (variant.stock < item.quantity) {
+        throw new BadRequestException(`Insufficient stock: ${variant.product.title}`);
+      }
+
+      const quantityDec = new Prisma.Decimal(item.quantity);
+      const priceDec = new Prisma.Decimal(variant.price);
+      const itemTotalDec = priceDec.times(quantityDec);
+
+      totalItemsAmountDec = totalItemsAmountDec.plus(itemTotalDec);
+
+      saleItemsData.push({
+        itemId: variant.id,
+        itemName: `${variant.product.title} - ${variant.sku}`,
+        itemCode: variant.sku,
+        itemDescription: variant.description || '',
+        quantity: quantityDec,
+        price: priceDec,
+        unit: variant.dimensionUnit || 'PCS',
+        taxableAmount: itemTotalDec,
+        amount: itemTotalDec,
+        hsnCode: variant.hsnCode || '',
+        sacCode: variant.sacCode || '',
+        batchNo: '',
+        manufactureDate: new Date(),
+        expiryDate: new Date(),
+        priceType: 'MRP',
+        discountPercent: new Prisma.Decimal(0),
+        discountAmount: new Prisma.Decimal(0),
+        tax: '0%',
+        taxAmount: new Prisma.Decimal(0),
+        cess: '',
+        cessAmount: new Prisma.Decimal(0),
+        isMrpEnabled: true,
+        isWholesaleEnabled: false,
+        isSerialisationEnabled: false,
+        isBatchingEnabled: false,
+        sellingPrice: priceDec,
+        sellingPriceType: 'MRP',
+        purchasePrice: variant.purchasePrice || new Prisma.Decimal(0),
+        purchasePriceType: 'MRP',
+        mrp: variant.mrp || new Prisma.Decimal(0),
+        wholesalePrice: new Prisma.Decimal(0),
+        wholesalePriceType: '',
+        wholesaleQuantity: new Prisma.Decimal(0),
       });
     }
 
-    return newSale;
-  });
-}
+    // 3. Calculate ADDITIONAL CHARGES
+    let totalChargesDec = new Prisma.Decimal(0);
+    const additionalChargesData: Prisma.SaleAdditionalChargeCreateWithoutSaleInput[] = [];
+
+    if (additionalCharges && additionalCharges.length > 0) {
+      for (const charge of additionalCharges) {
+        const chargeAmount = new Prisma.Decimal(charge.amount);
+        totalChargesDec = totalChargesDec.plus(chargeAmount);
+        additionalChargesData.push({
+          name: charge.name,
+          amount: chargeAmount,
+          tax: '0',
+        });
+      }
+    }
+
+    // 4. Final Financials
+    const grandTotalDec = totalItemsAmountDec.plus(totalChargesDec);
+    const amountReceivedDec = new Prisma.Decimal(amountReceived || 0);
+    const balanceAmountDec = grandTotalDec.minus(amountReceivedDec);
+    const isSettled = balanceAmountDec.lte(0);
+
+    return this.prisma.$transaction(async (tx) => {
+      // 5. ACCOUNTING: Resolve Shop Account
+      let targetAccount: BankCashCheque | null = null;
+
+      if (depositAccountId) {
+        targetAccount = await tx.bankCashCheque.findFirst({
+          where: { id: depositAccountId, businessId, isEnabled: true },
+        });
+        if (!targetAccount) throw new BadRequestException('Selected account is invalid.');
+      } else {
+        const targetAccountType = paymentMode === 'CASH' ? 'CASH' : { in: ['BANK', 'UPI'] };
+        targetAccount = await tx.bankCashCheque.findFirst({
+          where: {
+            businessId,
+            accountType: targetAccountType as any,
+            isEnabled: true,
+          },
+          orderBy: { isDefault: 'desc' },
+        });
+
+        if (!targetAccount) {
+          targetAccount = await tx.bankCashCheque.create({
+            data: {
+              businessId,
+              accountName: paymentMode === 'CASH' ? 'Cash Drawer' : 'Main Bank Account',
+              accountType: paymentMode === 'CASH' ? 'CASH' : 'BANK',
+              isDefault: true,
+              isEnabled: true,
+              openingBalance: 0,
+              closingBalance: 0,
+            },
+          });
+        }
+      }
+
+      // 6. CUSTOMER LOGIC
+      let customerUserId: string | undefined = undefined;
+
+      if (balanceAmountDec.greaterThan(0) || customerPhone) {
+        if (!customerPhone && balanceAmountDec.greaterThan(0)) {
+          throw new BadRequestException('Customer Phone Number is required for Credit sales.');
+        }
+        if (customerPhone) {
+          const customer = await this.findOrCreatePosCustomer(tx, customerName, customerPhone);
+          customerUserId = customer.id;
+        }
+      }
+
+      // 7. Generate Invoice Number
+      const lastSale = await tx.sale.findFirst({
+        where: { businessId },
+        orderBy: { invoiceNo: 'desc' },
+        select: { invoiceNo: true },
+      });
+      const nextInvoiceNo = (lastSale?.invoiceNo || 0) + 1;
+
+      // 8. Create the Sale
+      const newSale = await tx.sale.create({
+        data: {
+          businessId,
+          businessName: business.name,
+          partyName: customerName,
+          phoneNo: customerPhone,
+          partyId: customerUserId || '',
+          partyType: customerUserId ? 'Registered' : 'Unregistered',
+          party: '',
+          placeOfSupply: '',
+          invoicePrefix: 'POS',
+          invoiceNo: nextInvoiceNo,
+          invoiceDate: new Date(),
+          isDueDateEnabled: false,
+          dueDate: new Date(),
+          paymentTerm: 0,
+          totalAmount: grandTotalDec,
+          totalTaxableAmount: totalItemsAmountDec,
+          totalTaxAmount: new Prisma.Decimal(0),
+          balanceAmount: balanceAmountDec.greaterThan(0) ? balanceAmountDec : 0,
+          isSettled: isSettled,
+          status: 'FINALIZED',
+          isScanItemEnabled: false,
+          isConverted: false,
+          isDiscountAfterTaxEnabled: false,
+          isAutoRoundoffEnabled: false,
+          notes: 'POS Transaction',
+          termCondition: '',
+          billingAddress: address,
+          shippingAddress: address,
+          taxId: gstin,
+          panNo: pan,
+          discountPercent: new Prisma.Decimal(0),
+          discountAmount: new Prisma.Decimal(0),
+          roundoffType: '',
+          roundoffAmount: new Prisma.Decimal(0),
+          saleType: paymentMode === 'CASH' ? 'CASH' : 'BANK',
+          saleItems: { create: saleItemsData },
+          saleAdditionalCharges: { create: additionalChargesData },
+          salePaymentModes: amountReceivedDec.greaterThan(0) && targetAccount
+            ? {
+                create: {
+                  bankCashChequeId: targetAccount.id,
+                  accountName: targetAccount.accountName,
+                  paymentMode: paymentMode,
+                  amount: amountReceivedDec,
+                  ifsc: targetAccount.bankIfscCode || '',
+                  acNo: targetAccount.bankAccountNo || '',
+                },
+              }
+            : undefined,
+        },
+        include: { saleItems: true, saleAdditionalCharges: true },
+      });
+
+      // 9. UPDATE SHOP LEDGER
+      if (amountReceivedDec.greaterThan(0) && targetAccount) {
+        await tx.bankCashCheque.update({
+          where: { id: targetAccount.id },
+          data: { closingBalance: { increment: amountReceivedDec } },
+        });
+
+        await tx.bankCashChequeTransaction.create({
+          data: {
+            businessId,
+            accountId: targetAccount.id,
+            transactionType: 'CREDIT',
+            amount: amountReceivedDec,
+            runningBalance: targetAccount.closingBalance.plus(amountReceivedDec),
+            referenceId: newSale.id,
+            referenceType: 'SALE',
+            invoiceNo: `POS-${nextInvoiceNo}`,
+            paymentMode: paymentMode,
+            partyName: customerName,
+          },
+        });
+      }
+
+      // 10. UPDATE CUSTOMER LEDGER (Party Ledger)
+      console.log(customerName,customerPhone);
+      
+      if (balanceAmountDec.greaterThan(0) && customerUserId) {
+        await tx.partyLedger.create({
+          data: {
+            businessId,
+            partyType: 'CUSTOMER',
+            referenceId: customerUserId,
+            partyName: customerName,
+            
+            // --- MAPPING NEW FIELDS ---
+            phoneNo: customerPhone || null,
+            email: email || null,
+            gstin: gstin || null,
+            // -------------------------
+
+            transactionDate: new Date(),
+            description: `Credit Sale Inv #POS-${nextInvoiceNo}`,
+            debit: balanceAmountDec,
+            credit: 0,
+            linkedSaleId: newSale.id,
+          },
+        });
+      }
+
+      // 11. Decrement Stock
+      for (const item of items) {
+        await tx.variant.update({
+          where: { id: item.variantId },
+          data: { stock: { decrement: item.quantity } },
+        });
+      }
+
+      return newSale;
+    });
+  }
+  // --- Helper to Create Shadow Accounts ---
+  private async findOrCreatePosCustomer(tx: any, name: string, phone: string) {
+    let customer = await tx.customerUser.findUnique({ where: { phoneNumber: phone } });
+    console.log(phone,name);
+    
+    if (!customer) {
+      customer = await tx.customerUser.create({
+        data: {
+          name: name || 'Unknown',
+          phoneNumber: phone,
+          email: `${phone}@pos.local`, // Dummy email
+          authSource: 'self',
+          type: 'user',
+          isPhoneVerified: true,
+        },
+      });
+    }
+    return customer;
+  }
+
 
   async generateShippingLabelPdf(businessId: string, orderId: string, design: 'a4' | 'pos' = 'a4'): Promise<Buffer> {
     console.log(`[PDF] Starting generation for Order ID: ${orderId}, Design: ${design}`);
@@ -528,5 +754,501 @@ async updateOrderStatus(businessId: string, orderId: string, dto: UpdateSellerOr
     }
 
     return sale;
+  }
+
+  async getSalesStats(businessId: string, query: GetSalesStatsDto) {
+    // 1. Determine Date Range (Default to last 30 days)
+    const end = query.to ? new Date(query.to) : new Date();
+    const start = query.from ? new Date(query.from) : new Date(new Date().setDate(end.getDate() - 30));
+
+    // Ensure strictly valid date objects for Prisma
+    // Setting time to start of day and end of day to cover full days
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    const whereCondition: Prisma.SaleWhereInput = {
+      businessId: businessId,
+      invoiceDate: {
+        gte: start,
+        lte: end,
+      },
+      status: { not: 'CANCELLED' } // Exclude cancelled sales
+    };
+
+    // 2. Parallel Queries for Efficiency
+    const [aggregates, paymentModes, topProducts, timeline] = await Promise.all([
+      
+      // A. Key Metrics (Total Revenue, Count, Tax)
+      this.prisma.sale.aggregate({
+        where: whereCondition,
+        _sum: {
+          totalAmount: true,
+          totalTaxAmount: true,
+          balanceAmount: true,
+        },
+        _count: {
+          id: true,
+        },
+      }),
+
+      // B. Payment Method Breakdown
+      this.prisma.salePaymentMode.groupBy({
+        by: ['paymentMode'],
+        where: {
+          sale: whereCondition, // Filter by the same date range/business
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
+
+      // C. Top 5 Selling Products (by Quantity)
+      this.prisma.saleItem.groupBy({
+        by: ['itemName', 'itemCode'], // Group by Name and SKU
+        where: {
+          sale: whereCondition,
+        },
+        _sum: {
+          quantity: true,
+          amount: true,
+        },
+        orderBy: {
+          _sum: {
+            quantity: 'desc',
+          },
+        },
+        take: 5,
+      }),
+
+      // D. Sales Timeline (Graph Data) - Using Raw SQL for Postgres Date Truncation
+      this.prisma.$queryRaw<{ date: Date; total: number; count: number }[]>`
+        SELECT 
+          DATE("invoiceDate") as date, 
+          SUM("totalAmount") as total,
+          COUNT(id) as count
+        FROM "Sale"
+        WHERE "businessId" = ${businessId}
+          AND "invoiceDate" >= ${start}
+          AND "invoiceDate" <= ${end}
+          AND "status" != 'CANCELLED'
+        GROUP BY DATE("invoiceDate")
+        ORDER BY date ASC
+      `
+    ]);
+
+    // 3. Process and Format Data
+    const totalRevenue = aggregates._sum.totalAmount || 0;
+    const totalOrders = aggregates._count.id || 0;
+    
+    // Calculate Average Order Value (AOV)
+    const avgOrderValue = totalOrders > 0 
+      ? Number(totalRevenue) / totalOrders 
+      : 0;
+
+    return {
+      meta: {
+        from: start,
+        to: end,
+      },
+      summary: {
+        totalRevenue: totalRevenue,
+        totalOrders: totalOrders,
+        totalTaxCollected: aggregates._sum.totalTaxAmount || 0,
+        outstandingBalance: aggregates._sum.balanceAmount || 0,
+        averageOrderValue: avgOrderValue.toFixed(2),
+      },
+      paymentMethods: paymentModes.map(pm => ({
+        method: pm.paymentMode,
+        amount: pm._sum.amount || 0,
+      })),
+      topProducts: topProducts.map(p => ({
+        name: p.itemName,
+        sku: p.itemCode,
+        quantitySold: p._sum.quantity || 0,
+        revenueGenerated: p._sum.amount || 0,
+      })),
+      timeline: timeline.map(t => ({
+        date: t.date, // ISO Date string
+        revenue: t.total,
+        orders: Number(t.count), // Raw count usually comes as BigInt in raw queries, ensure casting
+      })),
+    };
+  }
+
+async getPosProducts(businessId: string, search?: string) {
+  // 1. Base Condition: Always filter by business, active status, and not deleted
+  const whereCondition: Prisma.ProductWhereInput = {
+    businessId,
+    deletedAt: null,
+  };
+
+  // 2. Add Search Logic (Only if search string exists)
+  if (search && search.trim() !== '') {
+    whereCondition.OR = [
+      { title: { contains: search, mode: 'insensitive' } }, // Search Name
+      { 
+        variants: { 
+          some: { 
+            sku: { contains: search, mode: 'insensitive' }, // Search SKU/Barcode
+            deletedAt: null 
+          } 
+        } 
+      },
+    ];
+  }
+
+  // 3. Fetch Data
+  const products = await this.prisma.product.findMany({
+    where: whereCondition,
+    take: 100, // Limit results
+    orderBy: { title: 'asc' }, // A-Z order
+    select: {
+      id: true,
+      title: true,
+      images: true,
+      variants: {
+        where: { 
+          deletedAt: null,
+          status: 'ACTIVE' 
+        },
+        select: {
+          id: true,
+          sku: true,
+          price: true,
+          stock: true,
+          dimensionUnit: true,
+          attributeValues: {
+            select: {
+              attributeOption: { select: { value: true } }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // 4. Transform for Frontend
+  return products.map(p => ({
+    id: p.id,
+    title: p.title,
+    image: p.images?.[0] || null, // 1st image only
+    variants: p.variants.map(v => ({
+      variantId: v.id,
+      sku: v.sku,
+      price: Number(v.price), // Ensure number type
+      stock: v.stock,
+      unit: v.dimensionUnit,
+      // Creates string like "Red / XL" or "" if no attributes
+      attributes: v.attributeValues.map(av => av.attributeOption.value).join(' / ') 
+    }))
+  }));
+}
+
+async getPosCustomers(businessId: string, query: GetPosCustomersDto) {
+  const { page = 1, limit = 10, search } = query;
+  const skip = (page - 1) * limit;
+
+  // 1. Get IDs from SALES (Active Buyers)
+  const salesPromise = this.prisma.sale.findMany({
+    where: { businessId, partyId: { not: undefined }, deletedAt: null },
+    select: { partyId: true },
+    distinct: ['partyId']
+  });
+
+  // 2. Get IDs from LEDGER (People with Opening Balance/Manual Credit)
+  const ledgerPromise = this.prisma.partyLedger.findMany({
+    where: { businessId, referenceId: { not: null } }, // referenceId links to CustomerUser
+    select: { referenceId: true },
+    distinct: ['referenceId']
+  });
+
+  const [sales, ledgerEntries] = await Promise.all([salesPromise, ledgerPromise]);
+
+  // 3. Merge and De-duplicate IDs
+  const allCustomerIds = new Set([
+    ...sales.map(s => s.partyId),
+    ...ledgerEntries.map(l => l.referenceId)
+  ]);
+  
+  // Convert to array and filter out empty strings/nulls
+  const uniqueIds = Array.from(allCustomerIds).filter((id): id is string => id !== null);
+
+  // 4. Filter CustomerUser Table (The Source of Truth)
+  const whereCondition: Prisma.CustomerUserWhereInput = {
+    id: { in: uniqueIds },
+    deletedAt: null,
+  };
+
+  // 5. Apply Search (Name/Phone/Email)
+  if (search) {
+    whereCondition.AND = {
+      OR: [
+        { name: { contains: search, mode: 'insensitive' } },
+        { phoneNumber: { contains: search } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ],
+    };
+  }
+
+  // 6. Fetch Full Profiles with Ledger Balance
+  // We perform a transaction to get the profiles AND count total for pagination
+  const [customers, total] = await this.prisma.$transaction([
+    this.prisma.customerUser.findMany({
+      where: whereCondition,
+      skip,
+      take: limit,
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        phoneNumber: true,
+        email: true,
+        picture: true,
+        addresses: {
+          where: { isDefault: true },
+          take: 1,
+          select: { street: true, city: true }
+        },
+        // OPTIONAL: Fetch their wallet/ledger balance summary here if needed
+        wallet: { select: { balance: true } } 
+      }
+    }),
+    this.prisma.customerUser.count({ where: whereCondition }),
+  ]);
+
+  const totalPages = Math.ceil(total / limit);
+
+  return {
+    data: customers.map((c) => ({
+      id: c.id,
+      name: c.name,
+      phone: c.phoneNumber,
+      // Hide the dummy "shadow" emails we generate
+      email: c.email && c.email.endsWith('@pos.local') ? null : c.email, 
+      address: c.addresses[0] ? `${c.addresses[0].street}, ${c.addresses[0].city}` : null,
+      balance: c.wallet?.balance || 0 // Current Wallet Balance
+    })),
+    meta: {
+      total,
+      page,
+      limit,
+      totalPages,
+      hasNextPage: page < totalPages,
+    },
+  };
+}
+
+async updatePosSale(businessId: string, saleId: string, dto: UpdatePosSaleDto) {
+    // 1. Fetch Existing Sale
+    const existingSale = await this.prisma.sale.findUnique({
+      where: { id: saleId },
+      include: { 
+        saleItems: true, 
+        salePaymentModes: true,
+        saleAdditionalCharges: true 
+      }
+    });
+
+    if (!existingSale || existingSale.businessId !== businessId) {
+      throw new NotFoundException("Sale not found");
+    }
+
+    // 2. Fetch Variants for New Items
+    const variantIds = dto.items.map(i => i.variantId);
+    const variants = await this.prisma.variant.findMany({
+      where: { id: { in: variantIds }, product: { businessId } },
+      include: { product: { select: { title: true } } }
+    });
+
+    if (variants.length !== variantIds.length) throw new BadRequestException("Invalid items.");
+
+    return this.prisma.$transaction(async (tx) => {
+      // --- A. REVERT OLD STATE ---
+
+      // A1. Revert Stock
+      for (const oldItem of existingSale.saleItems) {
+        await tx.variant.update({
+          where: { id: oldItem.itemId }, 
+          data: { stock: { increment: Number(oldItem.quantity) } }
+        });
+      }
+
+      // A2. Revert Shop Ledger
+      if (existingSale.salePaymentModes.length > 0) {
+        const oldPayment = existingSale.salePaymentModes[0];
+        await tx.bankCashCheque.update({
+          where: { id: oldPayment.bankCashChequeId },
+          data: { closingBalance: { decrement: oldPayment.amount } }
+        });
+        await tx.bankCashChequeTransaction.create({
+          data: {
+            businessId,
+            accountId: oldPayment.bankCashChequeId,
+            transactionType: 'DEBIT',
+            amount: oldPayment.amount,
+            runningBalance: 0, 
+            referenceId: saleId,
+            referenceType: 'SALE',
+            invoiceNo: `REV-${existingSale.invoicePrefix}-${existingSale.invoiceNo}`,
+            partyName: `Correction: ${existingSale.partyName}`,
+            transactionNo: 'REVERSAL'
+          }
+        });
+      }
+
+      // A3. Revert Customer Ledger
+      // FIX: Use 'partyId' instead of 'customerUserId'
+      if (Number(existingSale.balanceAmount) > 0 && existingSale.partyId) {
+        await tx.partyLedger.deleteMany({
+          where: { linkedSaleId: saleId }
+        });
+      }
+
+      // A4. Delete Old Details
+      await tx.saleItem.deleteMany({ where: { saleId } });
+      await tx.saleAdditionalCharge.deleteMany({ where: { saleId } });
+      await tx.salePaymentMode.deleteMany({ where: { saleId } });
+
+
+      // --- B. CALCULATE NEW STATE ---
+      
+      let totalItemsAmountDec = new Prisma.Decimal(0);
+      const saleItemsData: Prisma.SaleItemCreateWithoutSaleInput[] = [];
+
+      for (const item of dto.items) {
+        const variant = variants.find(v => v.id === item.variantId);
+        
+        if (!variant) continue;
+
+        const quantityDec = new Prisma.Decimal(item.quantity);
+        const priceDec = new Prisma.Decimal(variant.price);
+        const itemTotal = priceDec.times(quantityDec);
+        totalItemsAmountDec = totalItemsAmountDec.plus(itemTotal);
+
+        saleItemsData.push({
+          itemId: variant.id,
+          itemName: `${variant.product.title} - ${variant.sku}`,
+          itemCode: variant.sku,
+          quantity: quantityDec,
+          price: priceDec,
+          amount: itemTotal,
+          taxableAmount: itemTotal,
+          unit: variant.dimensionUnit || 'PCS',
+          hsnCode: variant.hsnCode || '', itemDescription: '', sacCode: '', batchNo: '', manufactureDate: new Date(), expiryDate: new Date(), priceType: 'MRP', discountPercent: 0, discountAmount: 0, tax: '0%', taxAmount: 0, cess: '', cessAmount: 0, isMrpEnabled: true, isWholesaleEnabled: false, isSerialisationEnabled: false, isBatchingEnabled: false, sellingPrice: priceDec, sellingPriceType: 'MRP', purchasePrice: 0, purchasePriceType: 'MRP', mrp: 0, wholesalePrice: 0, wholesalePriceType: '', wholesaleQuantity: 0
+        });
+      }
+
+      // Charges
+      let totalChargesDec = new Prisma.Decimal(0);
+      const chargesData: Prisma.SaleAdditionalChargeCreateWithoutSaleInput[] = [];
+      
+      if (dto.additionalCharges) {
+        for (const ch of dto.additionalCharges) {
+          const amt = new Prisma.Decimal(ch.amount);
+          totalChargesDec = totalChargesDec.plus(amt);
+          chargesData.push({ name: ch.name, amount: amt, tax: '0' });
+        }
+      }
+
+      const grandTotalDec = totalItemsAmountDec.plus(totalChargesDec);
+      const receivedDec = new Prisma.Decimal(dto.amountReceived || 0);
+      const balanceDec = grandTotalDec.minus(receivedDec);
+      const isSettled = balanceDec.lte(0);
+
+      // --- C. APPLY NEW STATE ---
+
+      // C1. Update Sale Header
+      const updatedSale = await tx.sale.update({
+        where: { id: saleId },
+        data: {
+          partyName: dto.customerName,
+          phoneNo: dto.customerPhone,
+          totalAmount: grandTotalDec,
+          totalTaxableAmount: totalItemsAmountDec,
+          balanceAmount: balanceDec.greaterThan(0) ? balanceDec : 0,
+          isSettled,
+          status: 'FINALIZED',
+          notes: 'Updated POS Transaction',
+          
+          saleItems: { create: saleItemsData },
+          saleAdditionalCharges: { create: chargesData }
+        }
+      });
+
+      // C2. Handle Financials
+      if (receivedDec.greaterThan(0)) {
+        let targetAccount: BankCashCheque | null = null;
+        
+        if (dto.depositAccountId) {
+           targetAccount = await tx.bankCashCheque.findFirst({ where: { id: dto.depositAccountId } });
+        } else {
+           const type = dto.paymentMode === 'CASH' ? 'CASH' : { in: ['BANK', 'UPI'] };
+           targetAccount = await tx.bankCashCheque.findFirst({ where: { businessId, accountType: type as any, isEnabled: true } });
+        }
+
+        if (targetAccount) {
+          await tx.bankCashCheque.update({
+            where: { id: targetAccount.id },
+            data: { closingBalance: { increment: receivedDec } }
+          });
+          await tx.bankCashChequeTransaction.create({
+            data: {
+              businessId, accountId: targetAccount.id, transactionType: 'CREDIT',
+              amount: receivedDec, runningBalance: 0, 
+              referenceId: saleId, referenceType: 'SALE', invoiceNo: `UPD-${updatedSale.invoiceNo}`,
+              partyName: dto.customerName
+            }
+          });
+          await tx.salePaymentMode.create({
+            data: {
+              saleId,
+              bankCashChequeId: targetAccount.id,
+              accountName: targetAccount.accountName,
+              paymentMode: dto.paymentMode || 'CASH', // Fallback to CASH if undefined
+              amount: receivedDec,
+              ifsc: '', acNo: ''
+            }
+          });
+        }
+      }
+
+      // C3. Handle Customer Ledger
+      // FIX: Use 'partyId' instead of 'customerUserId'
+      if (balanceDec.greaterThan(0) && existingSale.partyId) {
+        await tx.partyLedger.create({
+          data: {
+            businessId, partyType: 'CUSTOMER', referenceId: existingSale.partyId,
+            partyName: dto.customerName || 'Unknown', transactionDate: new Date(),
+            description: `Updated Inv #${updatedSale.invoiceNo}`,
+            debit: balanceDec, credit: 0, linkedSaleId: saleId
+          }
+        });
+      }
+
+      // C4. Deduct New Stock
+      for (const item of dto.items) {
+        await tx.variant.update({
+          where: { id: item.variantId },
+          data: { stock: { decrement: item.quantity } }
+        });
+      }
+
+      return updatedSale;
+    });
+  }
+
+  async verifyBusinessOwnership(userId: string, businessId: string) {
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      select: { ownerId: true },
+    });
+
+    if (!business) {
+      throw new NotFoundException(`Business with ID "${businessId}" not found`);
+    }
+
+    if (business.ownerId !== userId) {
+      throw new ForbiddenException('You do not have permission to access this business.');
+    }
   }
 }

@@ -9,7 +9,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { slugify } from '../utils/slugify'; 
-import { Prisma } from '@prisma/client';
+import { AccountType, Prisma } from '@prisma/client';
 
 @Injectable()
 export class BusinessService {
@@ -19,31 +19,41 @@ export class BusinessService {
   // CREATE BUSINESS
   // ========================================================
   async createBusiness(dto: CreateBusinessDto, ownerId: string) {
-    // 1. Generate Slug from Name
+    // 1. Generate Slug
     let slug = slugify(dto.name);
 
     // 2. Ensure Slug Uniqueness
-    // If "My Store" exists, we don't want to crash. We change it to "my-store-1234"
     const existingSlug = await this.prisma.business.findUnique({ where: { slug } });
     if (existingSlug) {
       slug = `${slug}-${Math.floor(1000 + Math.random() * 9000)}`;
     }
 
     try {
-      // 3. Create Record
+      // 3. Create Business AND Cash Drawer in one Atomic Transaction
       const business = await this.prisma.business.create({
         data: {
           ...dto,
           ownerId,
-          slug, // Save the generated slug
-          // id: ... (Removed: Let Prisma/DB generate the UUID automatically)
+          slug,
+          
+          // --- NEW: Automatically create the Cash Entity ---
+          bankAccounts: {
+            create: {
+              accountName: 'Cash Drawer', // Standard Name
+              accountType: AccountType.CASH, // Use the Enum
+              isDefault: true, // Mark as default for POS
+              isEnabled: true,
+              openingBalance: 0,
+              closingBalance: 0
+            }
+          }
         },
       });
 
       return business;
 
     } catch (error) {
-      // 4. Handle Unique Constraint Violations (e.g., GST Number)
+      // 4. Handle Unique Constraint Violations
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
           const target = error.meta?.target as string[];

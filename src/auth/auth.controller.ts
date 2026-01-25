@@ -1,11 +1,12 @@
 // src/auth/auth.controller.ts
-import { Body, Controller, Post, Get, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
+import { Body, Controller, Post, Get, UseGuards, Request, HttpCode, HttpStatus, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register-user.dto';
 import { LoginDto } from './dto/login-user.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { auth } from 'google-auth-library';
+import { ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 
 @Controller('auth')
 export class AuthController {
@@ -38,5 +39,15 @@ export class AuthController {
       message: 'This is a protected route.',
       user: req.user,
     };
+  }
+
+    @Get('introspect')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Validate token and get fresh user details' })
+  @ApiResponse({ status: 200, description: 'Returns user profile and new token.' })
+  introspect(@Req() req) {
+    // req.user is populated by JwtAuthGuard (the decoded JWT payload)
+    return this.authService.introspect(req.user);
   }
 }

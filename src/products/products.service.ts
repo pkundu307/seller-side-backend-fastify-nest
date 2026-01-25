@@ -686,7 +686,7 @@ async updateProduct(
  async getProductDetailsForCustomer(productId: string) {
     const product = await this.prisma.product.findUnique({
       where: {
-        id: productId,
+        slug: productId,
         isPublished: true, // Only return published products to customers
       },
       include: {

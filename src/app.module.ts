@@ -29,6 +29,8 @@ import { KeepAliveModule } from './utils/keep-alive.module';
 import { WishlistModule } from './wishlist/wishlist.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SeoModule } from './seo/seo.module';
+import { BankCashChequeModule } from './bank-cash-cheque/bank-cash-cheque.module';
+import { QuotationModule } from './seller/quotation/quotation.module';
 
 @Module({
   imports: [
@@ -63,6 +65,8 @@ import { SeoModule } from './seo/seo.module';
     ProductsModule,
    
     CustomerUserModule,
+
+    QuotationModule,
    
     CustomerModule,
    
@@ -94,7 +98,9 @@ import { SeoModule } from './seo/seo.module';
    
     NotificationsModule,
    
-    SeoModule    
+    SeoModule,
+   
+    BankCashChequeModule    
   ],
   providers: [PrismaService],
 
