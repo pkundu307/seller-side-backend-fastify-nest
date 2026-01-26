@@ -48,7 +48,7 @@ export class SeoService {
     products.forEach((product) => {
       sitemap += `
   <url>
-    <loc>${baseUrl}/products/${product.slug}</loc>
+    <loc>${baseUrl}/product/${product.slug}</loc>
     <lastmod>${product.updatedAt.toISOString()}</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.7</priority>
