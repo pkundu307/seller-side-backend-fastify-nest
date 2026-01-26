@@ -311,4 +311,17 @@ export class QuotationService {
     }
     return user;
   }
+
+   async findOneWithBusiness(businessId: string, id: string) {
+    const quote = await this.prisma.quotation.findFirst({
+      where: { id, businessId },
+      include: { 
+        items: true,
+        business: true // <--- Important: Fetch business details for the PDF header
+      }
+    });
+    
+    if (!quote) throw new NotFoundException("Quotation not found");
+    return quote;
+  }
 }

@@ -1,5 +1,6 @@
 import { 
-  Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards, ParseUUIDPipe, ParseIntPipe 
+  Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards, ParseUUIDPipe, ParseIntPipe, 
+  Res
 } from '@nestjs/common';
 import { QuotationService } from './quotation.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
@@ -8,13 +9,17 @@ import { UpdateQuotationDto } from './dto/update-quotation.dto';
 import { ConvertQuotationDto } from './dto/convert-quotation.dto';
 import { ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { QuotationStatus } from '@prisma/client';
+import { PdfService } from '../pdf.service';
+import { FastifyReply } from 'fastify';
 
 @ApiTags('Seller Quotations')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('seller/:businessId/quotations')
 export class QuotationController {
-  constructor(private readonly quotationService: QuotationService) {}
+  constructor(private readonly quotationService: QuotationService,
+              private readonly pdfService: PdfService
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new quotation' })
@@ -88,5 +93,26 @@ export class QuotationController {
     @Req() req: any
   ) {
     return this.quotationService.convertToSale(businessId, req.user.id, id, dto);
+  }
+
+
+    @Get(':id/pdf')
+  @ApiOperation({ summary: 'Download Quotation as PDF' })
+  async downloadPdf(
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: FastifyReply
+  ) {
+    // 1. Get Data (Reuse existing service method, but ensure it includes Business details)
+    const quotation = await this.quotationService.findOneWithBusiness(businessId, id);
+
+    // 2. Generate PDF
+    const buffer = await this.pdfService.generateQuotationPdf(quotation);
+
+    // 3. Send Response
+    res.header('Content-Type', 'application/pdf');
+    res.header('Content-Disposition', `attachment; filename=${quotation.quotationNo}.pdf`);
+    res.header('Content-Length', buffer.length.toString());
+    res.send(buffer);
   }
 }

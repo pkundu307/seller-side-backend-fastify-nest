@@ -1,6 +1,6 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Business, Order } from '@prisma/client';
+import { Business, Order, Quotation, QuotationItem, Sale, SaleAdditionalCharge, SaleItem, SalePaymentMode } from '@prisma/client';
 import * as PDFDocument from 'pdfkit';
 
 // Define a type for the enriched order data
@@ -21,6 +21,17 @@ type FullOrderDetails = Order & {
   }>;
 };
 
+type FullSale = Sale & {
+  saleItems: SaleItem[];
+  saleAdditionalCharges: SaleAdditionalCharge[];
+  salePaymentModes: SalePaymentMode[];
+  business: Business;
+};
+
+type FullQuotation = Quotation & { 
+  items: QuotationItem[], 
+  business: Business 
+};
 @Injectable()
 export class PdfService {
   constructor(private prisma: PrismaService) {}
@@ -234,5 +245,264 @@ export class PdfService {
     const labelPadded = label.padEnd(15);
     const valuePadded = value.padStart(15);
     doc.text(`${labelPadded}${valuePadded}`);
+  }
+
+  async generateQuotationPdf(quotation: FullQuotation): Promise<Buffer> {
+    return new Promise((resolve) => {
+      const doc = new PDFDocument({ margin: 50, size: 'A4' });
+      const buffers: Buffer[] = [];
+
+      doc.on('data', (buffer) => buffers.push(buffer));
+      doc.on('end', () => resolve(Buffer.concat(buffers)));
+
+      // --- COLORS & FONTS ---
+      const primaryColor = '#4F46E5'; // Indigo-600
+      const grayColor = '#4B5563';    // Gray-600
+
+      // --- 1. HEADER ---
+      // Logo placeholder (Left) or Business Name
+      doc.fontSize(20).fillColor(primaryColor)
+         .text(quotation.business.name || 'Business Name', 50, 50);
+      
+      // Title (Right)
+      doc.fontSize(24).fillColor(grayColor)
+         .text('QUOTATION', 350, 50, { align: 'right' });
+
+      doc.fontSize(10).fillColor('black').moveDown();
+
+      // Seller Details (Left)
+      doc.font('Helvetica-Bold').text('From:', 50, 100);
+      doc.font('Helvetica')
+         .text(quotation.business.address || '', 50, 115)
+         .text(`${quotation.business.city}, ${quotation.business.state} - ${quotation.business.postalCode}`, 50, 130)
+         .text(`Phone: ${quotation.business.phone}`, 50, 145)
+         .text(`Email: ${quotation.business.ownerId ? 'Contact Seller' : ''}`, 50, 160); // Customize if email available
+
+      // Quote Meta (Right)
+      const metaX = 350;
+      doc.font('Helvetica-Bold').text('Quotation Details:', metaX, 100);
+      doc.font('Helvetica');
+      doc.text(`Quote #:`, metaX, 115).text(quotation.quotationNo, metaX + 60, 115, { align: 'right' });
+      doc.text(`Date:`, metaX, 130).text(new Date(quotation.date).toLocaleDateString(), metaX + 60, 130, { align: 'right' });
+      doc.text(`Valid Until:`, metaX, 145).text(new Date(quotation.validUntil).toLocaleDateString(), metaX + 60, 145, { align: 'right' });
+
+      // Client Details (Left, below seller)
+      const billToY = 200;
+      doc.font('Helvetica-Bold').text('Bill To:', 50, billToY);
+      doc.font('Helvetica')
+         .text(quotation.partyName, 50, billToY + 15)
+         .text(`Phone: ${quotation.partyPhone || 'N/A'}`, 50, billToY + 30);
+
+      // --- 2. TABLE ---
+      const tableTop = 270;
+      const colX = { item: 50, qty: 320, price: 380, total: 470 };
+      
+      // Header Background
+      doc.rect(50, tableTop - 5, 500, 20).fill('#F3F4F6').stroke();
+      doc.fillColor('black');
+
+      // Header Text
+      doc.font('Helvetica-Bold');
+      doc.text('Item Description', colX.item + 5, tableTop);
+      doc.text('Qty', colX.qty, tableTop);
+      doc.text('Price', colX.price, tableTop);
+      doc.text('Total', colX.total, tableTop);
+
+      let y = tableTop + 25;
+      doc.font('Helvetica');
+
+      quotation.items.forEach((item, i) => {
+        // Striped rows
+        if (i % 2 !== 0) {
+            doc.rect(50, y - 5, 500, 20).fill('#F9FAFB');
+            doc.fillColor('black');
+        }
+
+        doc.text(item.itemName, colX.item + 5, y, { width: 250 });
+        doc.text(item.quantity.toString(), colX.qty, y);
+        doc.text(Number(item.price).toFixed(2), colX.price, y);
+        doc.text(Number(item.amount).toFixed(2), colX.total, y);
+        y += 20;
+      });
+
+      // Line
+      doc.moveTo(50, y).lineTo(550, y).strokeColor('#E5E7EB').stroke();
+      y += 10;
+
+      // --- 3. TOTALS ---
+      const totalX = 350;
+      doc.font('Helvetica-Bold').fontSize(12);
+      doc.text('Total Amount:', totalX, y);
+      doc.fillColor(primaryColor).text(`INR ${Number(quotation.totalAmount).toFixed(2)}`, totalX + 100, y, { align: 'right' });
+      
+      // --- 4. FOOTER ---
+      const bottomY = 700;
+      doc.fontSize(10).fillColor('black');
+      doc.text('Terms & Conditions:', 50, bottomY);
+      doc.fontSize(8).text('1. This quotation is valid until the date specified.', 50, bottomY + 15);
+      doc.text('2. Payment terms are to be discussed upon acceptance.', 50, bottomY + 28);
+      
+      doc.fontSize(12).text('Authorized Signatory', 400, bottomY, { align: 'center' });
+      doc.moveDown(2);
+      doc.fontSize(10).text(quotation.business.name, 400, doc.y, { align: 'center' });
+
+      doc.end();
+    });
+  }
+
+   async generateSaleInvoicePdf(sale: FullSale): Promise<Buffer> {
+    return new Promise((resolve) => {
+      const doc = new PDFDocument({ margin: 50, size: 'A4' });
+      const buffers: Buffer[] = [];
+
+      doc.on('data', (buffer) => buffers.push(buffer));
+      doc.on('end', () => resolve(Buffer.concat(buffers)));
+
+      // --- COLORS ---
+      const primaryColor = '#111827'; // Near Black
+      const secondaryColor = '#6B7280'; // Gray
+
+      // --- 1. HEADER ---
+      doc.fontSize(20).fillColor(primaryColor)
+         .text(sale.business.name, 50, 50);
+
+      doc.fontSize(10).fillColor(secondaryColor)
+         .text(sale.business.address || '', 50, 75)
+         .text(`${sale.business.city || ''}, ${sale.business.state || ''} - ${sale.business.postalCode || ''}`, 50, 90)
+         .text(`Phone: ${sale.business.phone}`, 50, 105);
+      
+      if (sale.business.gstNumber) {
+        doc.text(`GSTIN: ${sale.business.gstNumber}`, 50, 120);
+      }
+
+      // Title Block (Right)
+      doc.fontSize(20).fillColor(primaryColor)
+         .text('TAX INVOICE', 350, 50, { align: 'right' });
+      
+      doc.fontSize(10).fillColor('black');
+      const metaX = 400;
+      doc.font('Helvetica-Bold').text('Invoice Details:', metaX, 90);
+      doc.font('Helvetica');
+      doc.text(`Invoice No:`, metaX, 105).text(`${sale.invoicePrefix}-${sale.invoiceNo}`, metaX + 70, 105, { align: 'right' });
+      doc.text(`Date:`, metaX, 120).text(new Date(sale.invoiceDate).toLocaleDateString(), metaX + 70, 120, { align: 'right' });
+      doc.text(`Payment:`, metaX, 135).text(sale.saleType, metaX + 70, 135, { align: 'right' });
+
+      // --- 2. BILL TO ---
+      doc.moveDown(2);
+      const billToY = 170;
+      doc.rect(50, billToY - 5, 500, 55).fill('#F9FAFB').stroke('#E5E7EB');
+      
+      doc.fillColor('black').font('Helvetica-Bold').text('Bill To:', 60, billToY + 5);
+      doc.font('Helvetica').text(sale.partyName, 60, billToY + 20);
+      doc.text(`Phone: ${sale.phoneNo || 'N/A'}`, 60, billToY + 35);
+      
+      if (sale.billingAddress) {
+        doc.text(sale.billingAddress, 250, billToY + 20, { width: 280, align: 'right' });
+      }
+      if (sale.taxId) {
+        doc.text(`GSTIN: ${sale.taxId}`, 250, billToY + 35, { width: 280, align: 'right' });
+      }
+
+      // --- 3. ITEMS TABLE ---
+      const tableTop = 250;
+      const colX = { item: 50, hsn: 280, qty: 340, price: 390, total: 470 };
+
+      // Table Header
+      doc.font('Helvetica-Bold').fontSize(9);
+      doc.text('Item Description', colX.item, tableTop);
+      doc.text('HSN/SAC', colX.hsn, tableTop);
+      doc.text('Qty', colX.qty, tableTop);
+      doc.text('Price', colX.price, tableTop);
+      doc.text('Amount', colX.total, tableTop);
+      
+      doc.moveTo(50, tableTop + 12).lineTo(550, tableTop + 12).stroke();
+
+      // Rows
+      let y = tableTop + 25;
+      doc.font('Helvetica').fontSize(9);
+
+      sale.saleItems.forEach((item, index) => {
+        // Row Background for readability
+        if (index % 2 === 0) {
+            doc.rect(50, y - 5, 500, 18).fill('#F9FAFB');
+            doc.fillColor('black');
+        }
+
+        doc.text(item.itemName, colX.item, y, { width: 220 });
+        doc.text(item.hsnCode || '-', colX.hsn, y);
+        doc.text(Number(item.quantity).toString(), colX.qty, y);
+        doc.text(Number(item.price).toFixed(2), colX.price, y);
+        doc.text(Number(item.amount).toFixed(2), colX.total, y);
+        y += 20;
+      });
+
+      doc.moveTo(50, y).lineTo(550, y).strokeColor('#E5E7EB').stroke();
+      y += 10;
+
+      // --- 4. CALCULATIONS (Bottom Right) ---
+      const calcX = 350;
+      const valX = 470;
+      
+      // Subtotal
+      doc.text('Subtotal:', calcX, y);
+      doc.text(Number(sale.totalTaxableAmount).toFixed(2), valX, y);
+      y += 15;
+
+      // Additional Charges
+      if (sale.saleAdditionalCharges && sale.saleAdditionalCharges.length > 0) {
+        sale.saleAdditionalCharges.forEach(charge => {
+          doc.text(charge.name, calcX, y);
+          doc.text(`+ ${Number(charge.amount).toFixed(2)}`, valX, y);
+          y += 15;
+        });
+      }
+
+      // Taxes (Simplified display, can expand if you have complex tax logic)
+      if (Number(sale.totalTaxAmount) > 0) {
+        doc.text('Total Tax:', calcX, y);
+        doc.text(`+ ${Number(sale.totalTaxAmount).toFixed(2)}`, valX, y);
+        y += 15;
+      }
+
+      // Divider
+      doc.moveTo(340, y).lineTo(550, y).stroke();
+      y += 10;
+
+      // Grand Total
+      doc.font('Helvetica-Bold').fontSize(11);
+      doc.text('Grand Total:', calcX, y);
+      doc.text(Number(sale.totalAmount).toFixed(2), valX, y);
+      y += 20;
+
+      // Payments & Balance
+      const amountReceived = Number(sale.totalAmount) - Number(sale.balanceAmount);
+      
+      doc.fontSize(9).fillColor('#059669'); // Green
+      doc.text('Amount Received:', calcX, y);
+      doc.text(amountReceived.toFixed(2), valX, y);
+      y += 15;
+
+      if (Number(sale.balanceAmount) > 0) {
+        doc.fillColor('#DC2626'); // Red
+        doc.text('Balance Due:', calcX, y);
+        doc.text(Number(sale.balanceAmount).toFixed(2), valX, y);
+      }
+
+      // --- 5. FOOTER & SIGNATURE ---
+      const bottomY = 700;
+      doc.fillColor('black');
+      
+      // Terms
+      doc.fontSize(8).text('Terms & Conditions:', 50, bottomY);
+      doc.text('1. Goods once sold will not be taken back.', 50, bottomY + 12);
+      doc.text('2. Subject to local jurisdiction.', 50, bottomY + 24);
+
+      // Signature
+      doc.fontSize(10).text('Authorized Signatory', 400, bottomY, { align: 'center' });
+      doc.moveDown(2);
+      doc.font('Helvetica-Bold').text(sale.business.name, 400, doc.y, { align: 'center' });
+
+      doc.end();
+    });
   }
 }

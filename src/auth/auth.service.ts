@@ -78,6 +78,7 @@ export class AuthService {
 
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
+    console.log(email,password);
     
     // 1. Try Customer Login
     const customer = await this.customerUserService.findByEmail(email);

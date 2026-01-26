@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsDateString, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class SalePaginationDto {
   @ApiPropertyOptional({ description: 'Page number for pagination', default: 1 })
@@ -21,4 +21,14 @@ export class SalePaginationDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+    @ApiPropertyOptional({ description: 'Start date (ISO format YYYY-MM-DD)' })
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiPropertyOptional({ description: 'End date (ISO format YYYY-MM-DD)' })
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
 }

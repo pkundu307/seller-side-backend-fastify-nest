@@ -13,6 +13,7 @@ import { GetSalesStatsDto } from './dto/get-sales-stats.dto';
 import { GetPosCustomersDto } from './dto/get-pos-customers.dto';
 import { UpdatePosSaleDto } from './dto/update-pos-sale.dto';
 import { PdfService } from './pdf.service';
+import { DashboardFilterDto } from './dto/dashboard-filter.dto';
 
 @ApiTags('Seller Dashboard')
 @ApiBearerAuth()
@@ -191,4 +192,44 @@ async getBusinessCustomers(
   }
 
   // 2. Download Invoice PDF (Fastify Version)
+   @Get(':businessId/sales/:saleId/pdf')
+  @ApiOperation({ summary: 'Generate PDF Invoice for a Sale' })
+  async generateSalePdf(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Param('saleId', ParseUUIDPipe) saleId: string,
+    @Res() res: FastifyReply,
+  ) {
+    // 1. Security Check
+    await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
+
+    // 2. Fetch Data (Includes Business Info now)
+    const sale = await this.sellerService.getBusinessSaleById(businessId, saleId);
+
+    // 3. Generate PDF
+    // Cast sale to 'any' if TypeScript complains about strict type matching 
+    // or ensure getBusinessSaleById return type matches FullSale
+    const buffer = await this.pdfService.generateSaleInvoicePdf(sale as any);
+
+    // 4. Send Response
+    res.header('Content-Type', 'application/pdf');
+    res.header(
+      'Content-Disposition',
+      `attachment; filename=Invoice-${sale.invoicePrefix}-${sale.invoiceNo}.pdf`,
+    );
+    res.header('Content-Length', buffer.length.toString());
+
+    res.send(buffer);
+  }
+
+    @Get(':businessId/dashboard/overview')
+  @ApiOperation({ summary: 'Get main dashboard stats (Sales, Purchases, Graph, Recent Activity)' })
+  async getDashboardOverview(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Query() query: DashboardFilterDto,
+  ) {
+    await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.getDashboardOverview(businessId, query);
+  }
 }

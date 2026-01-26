@@ -9,6 +9,7 @@ import { PdfService } from './pdf.service';
 import { SalePaginationDto } from './dto/sale-pagination.dto';
 import { GetSalesStatsDto } from './dto/get-sales-stats.dto';
 import { GetPosCustomersDto } from './dto/get-pos-customers.dto';
+import { DashboardFilterDto } from './dto/dashboard-filter.dto';
 // Define a type for the address object to cast the JSON to
 interface ShippingAddress {
   street: string;
@@ -684,28 +685,61 @@ async createPosSale(businessId: string, dto: CreatePosSaleDto) {
     }
   }
 
-    async getBusinessSales(businessId: string, query: SalePaginationDto) {
-    const { page = 1, limit = 15, search } = query;
+async getBusinessSales(businessId: string, query: SalePaginationDto) {
+    const { page = 1, limit = 15, search, startDate, endDate } = query;
     const skip = (page - 1) * limit;
 
+    // --- 1. Date Range Logic ---
+    let dateFrom: Date;
+    let dateTo: Date;
+
+    if (startDate || endDate) {
+      // If user provides dates, use them.
+      // If one is missing, default to far past or current future, 
+      // but usually, UI sends both or none. Here we handle defaults if partial.
+      dateFrom = startDate ? new Date(startDate) : new Date(0); // Epoch if missing
+      dateTo = endDate ? new Date(endDate) : new Date(); // Now if missing
+    } else {
+      // Default: Current Day (End) and 7 Days Ago (Start)
+      const today = new Date();
+      dateTo = new Date(today);
+      
+      const pastDate = new Date(today);
+      pastDate.setDate(today.getDate() - 7);
+      dateFrom = pastDate;
+    }
+
+    // IMPORTANT: Set times to ensure we cover the whole day
+    // Start of the 'From' day (00:00:00)
+    dateFrom.setHours(0, 0, 0, 0);
+    // End of the 'To' day (23:59:59)
+    dateTo.setHours(23, 59, 59, 999);
+
+    // --- 2. Build Where Clause ---
     const where: Prisma.SaleWhereInput = {
       businessId: businessId,
+      invoiceDate: {
+        gte: dateFrom,
+        lte: dateTo,
+      },
       ...(search && {
         OR: [
           { partyName: { contains: search, mode: 'insensitive' } },
           { invoicePrefix: { contains: search, mode: 'insensitive' } },
-          // Note: Searching invoiceNo (Int) requires a different approach if needed
+          // For Invoice No (Int), we can't use 'contains'. 
+          // If search is a number, we can try exact match
+          ...(Number(search) ? [{ invoiceNo: Number(search) }] : [])
         ],
       }),
     };
 
+    // --- 3. Query Database ---
     const [sales, totalSales] = await this.prisma.$transaction([
       this.prisma.sale.findMany({
         where,
         skip,
         take: limit,
         orderBy: { invoiceDate: 'desc' },
-        // Select only the fields needed for a list view
         select: {
           id: true,
           invoicePrefix: true,
@@ -724,7 +758,7 @@ async createPosSale(businessId: string, dto: CreatePosSaleDto) {
     return {
       sales: sales.map(sale => ({
         ...sale,
-        invoiceNumber: `${sale.invoicePrefix}-${sale.invoiceNo}`, // Combine for easy display
+        invoiceNumber: `${sale.invoicePrefix}-${sale.invoiceNo}`,
       })),
       pagination: {
         total: totalSales,
@@ -732,9 +766,13 @@ async createPosSale(businessId: string, dto: CreatePosSaleDto) {
         limit,
         lastPage: Math.ceil(totalSales / limit),
       },
+      // Optional: Return the applied date range so frontend knows what was filtered
+      dateRange: {
+        from: dateFrom,
+        to: dateTo
+      }
     };
   }
-
   /**
    * API: Get a single sale by its ID, ensuring it belongs to the seller.
    */
@@ -745,6 +783,8 @@ async createPosSale(businessId: string, dto: CreatePosSaleDto) {
         saleItems: true, // Include all details for the single view
         saleTaxes: true,
         saleAdditionalCharges: true,
+         salePaymentModes: true,
+        business: true
       },
     });
 
@@ -1251,4 +1291,158 @@ async updatePosSale(businessId: string, saleId: string, dto: UpdatePosSaleDto) {
       throw new ForbiddenException('You do not have permission to access this business.');
     }
   }
+
+
+async getDashboardOverview(businessId: string, query: DashboardFilterDto) {
+    // 1. Date Logic
+    const end = query.endDate ? new Date(query.endDate) : new Date();
+    const start = query.startDate ? new Date(query.startDate) : new Date();
+    
+    if (!query.startDate) {
+      start.setDate(end.getDate() - 30);
+    }
+
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    // 2. Run Parallel Queries
+    const [
+      totalSalesAgg,
+      totalPurchasesAgg,
+      totalReceivablesAgg,
+      totalPayablesAgg,
+      recentSales,
+      recentPurchases,
+      recentOnlineOrders,
+      salesGraphData
+    ] = await this.prisma.$transaction([
+      
+      // A. Total Sales
+      this.prisma.sale.aggregate({
+        where: { 
+          businessId, 
+          status: { not: 'CANCELLED' },
+          invoiceDate: { gte: start, lte: end } 
+        },
+        _sum: { totalAmount: true }
+      }),
+
+      // B. Total Purchases
+      this.prisma.purchase.aggregate({
+        where: { 
+          businessId, 
+          status: { not: 'CANCELLED' },
+          purchaseOrderDate: { gte: start, lte: end } 
+        },
+        _sum: { totalAmount: true }
+      }),
+
+      // C. Receivables (All Time)
+      this.prisma.sale.aggregate({
+        where: { 
+          businessId, 
+          status: { not: 'CANCELLED' },
+          isSettled: false,
+          balanceAmount: { gt: 0 }
+        },
+        _sum: { balanceAmount: true }
+      }),
+
+      // D. Payables (All Time)
+      this.prisma.purchase.aggregate({
+        where: { 
+          businessId, 
+          status: { not: 'CANCELLED' },
+          balanceDue: { gt: 0 }
+        },
+        _sum: { balanceDue: true }
+      }),
+
+      // E. Last 5 Sales
+      this.prisma.sale.findMany({
+        where: { businessId },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          invoiceNo: true,
+          invoicePrefix: true,
+          partyName: true,
+          totalAmount: true,
+          status: true,
+          invoiceDate: true
+        }
+      }),
+
+      // F. Last 5 Purchases
+      this.prisma.purchase.findMany({
+        where: { businessId },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          purchaseOrderNo: true,
+          supplierName: true,
+          totalAmount: true,
+          status: true,
+          purchaseOrderDate: true
+        }
+      }),
+
+      // G. Last 5 Online Orders
+      this.prisma.order.findMany({
+        where: { 
+          // FIX 1: Go through 'variant' to get to 'product'
+          items: { some: { variant: { product: { businessId } } } } 
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        include: { customerUser: { select: { name: true } } }
+      }),
+
+      // H. Graph Data
+      this.prisma.$queryRaw<{ date: Date; total: number }[]>`
+        SELECT DATE("invoiceDate") as date, SUM("totalAmount") as total
+        FROM "Sale"
+        WHERE "businessId" = ${businessId}
+          AND "status" != 'CANCELLED'
+          AND "invoiceDate" >= ${start}
+          AND "invoiceDate" <= ${end}
+        GROUP BY DATE("invoiceDate")
+        ORDER BY date ASC
+      `
+    ]);
+
+    const formattedGraph = salesGraphData.map(d => ({
+      name: new Date(d.date).toLocaleDateString('en-US', { day: 'numeric', month: 'short' }),
+      sales: Number(d.total)
+    }));
+
+    return {
+      cards: {
+        totalSale: totalSalesAgg._sum.totalAmount || 0,
+        totalPurchase: totalPurchasesAgg._sum.totalAmount || 0,
+        totalToCollect: totalReceivablesAgg._sum.balanceAmount || 0,
+        totalToPay: totalPayablesAgg._sum.balanceDue || 0,
+      },
+      graphData: formattedGraph,
+      recentActivity: {
+        sales: recentSales.map(s => ({
+          ...s,
+          invoiceNumber: `${s.invoicePrefix}-${s.invoiceNo}`
+        })),
+        purchases: recentPurchases,
+        // FIX 2: Explicitly cast 'o' to any to bypass TS inference issue on the 'include' property
+        onlineOrders: recentOnlineOrders.map((o: any) => ({
+          id: o.id,
+          orderNumber: o.orderNumber,
+          customerName: o.customerUser?.name || 'Unknown',
+          amount: o.totalAmount,
+          status: o.status,
+          date: o.createdAt
+        }))
+      }
+    };
+  }
+  
 }
