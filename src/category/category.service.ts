@@ -155,6 +155,10 @@ return results.map((p) => ({
   async addAttributesToCategoryBatch(dto: AddAttributesBatchDto) {
     const { categoryId, attributes } = dto;
 
+    this.logger.log(`--- Starting Batch Attribute Creation for Category: ${categoryId} ---`);
+    this.logger.log(`Received Payload: ${JSON.stringify(attributes, null, 2)}`);
+
+    // 1. Check Category Existence
     const category = await this.prisma.category.findUnique({
       where: { id: categoryId },
     });
@@ -163,50 +167,78 @@ return results.map((p) => ({
       throw new NotFoundException(`Category with ID "${categoryId}" not found.`);
     }
 
+    // 2. Check Hierarchy
     const childCount = await this.prisma.category.count({
       where: { parentId: category.id },
     });
 
     if (childCount > 0) {
-      console.log(childCount);
-      
+      this.logger.warn(`Category ${categoryId} has ${childCount} children. Cannot add attributes.`);
       throw new BadRequestException('Attributes can only be added to child-most categories.');
     }
 
+    // 3. Pre-Validation: Check for duplicates within the INPUT array
+    // (This causes P2002 errors even if DB is empty)
+    const names = attributes.map(a => a.name.toLowerCase());
+    const uniqueNames = new Set(names);
+    if (names.length !== uniqueNames.size) {
+      this.logger.error('Duplicate attribute names found in the input payload.');
+      throw new BadRequestException('Duplicate attribute names sent in the same request.');
+    }
+
     try {
+      this.logger.log(`Validation passed. Attempting DB Transaction...`);
+
       const createdAttributes = await this.prisma.$transaction(
-        attributes.map(attributeData =>
-          this.prisma.attribute.create({
+        attributes.map(attributeData => {
+          
+          // Log individual slug generation to check for slug collisions
+          const optionsData = attributeData.options.map((opt, index) => {
+            const slug = slugify(opt.value);
+            this.logger.debug(`Generating Option: ${opt.value} -> Slug: ${slug}`);
+            return {
+              value: opt.value,
+              slug: slug,
+              position: index,
+            };
+          });
+
+          return this.prisma.attribute.create({
             data: {
               name: attributeData.name,
               categoryId: category.id,
               options: {
-                create: attributeData.options.map((opt, index) => ({
-                  value: opt.value,
-                  // --- THE FIX IS HERE ---
-                  // Now calling your specific slugify function correctly
-                  slug: slugify(opt.value),
-                  // -----------------------
-                  position: index,
-                })),
+                create: optionsData,
               },
             },
             include: {
               options: true,
             },
-          })
-        )
+          });
+        })
       );
+
+      this.logger.log(`Successfully created ${createdAttributes.length} attributes.`);
       return createdAttributes;
 
     } catch (error) {
+        this.logger.error(`Transaction Failed! Code: ${error.code}`);
+        this.logger.error(`Error Meta: ${JSON.stringify(error.meta)}`); // This tells you WHICH field failed
+        
         if (error.code === 'P2002') {
-            throw new BadRequestException('One or more attribute names or option values already exist for this category.');
+            const target = error.meta?.target;
+            this.logger.error(`Unique constraint violation on: ${target}`);
+            
+            throw new BadRequestException(
+              `Conflict: The attribute or option already exists. Violation on field: [${target}]`
+            );
         }
+        
+        // Log the full error for other unknown issues
+        console.error(error);
         throw error;
     }
   }
-
   
   // A helper function for creating slugs
   private generateSlug(name: string): string {
