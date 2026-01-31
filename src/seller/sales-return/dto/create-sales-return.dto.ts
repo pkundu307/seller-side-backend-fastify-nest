@@ -2,10 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { 
   IsArray, 
+  IsBoolean, 
   IsEnum, 
   IsInt, 
   IsNotEmpty, 
-  IsNumber, 
   IsOptional, 
   IsString, 
   IsUUID, 
@@ -13,11 +13,10 @@ import {
   ValidateNested 
 } from 'class-validator';
 
-// Enum for how the money is returned
 export enum ReturnAction {
-  REFUND_CASH = 'REFUND_CASH',       // Give cash back from drawer
-  REFUND_ONLINE = 'REFUND_ONLINE',   // Send money via UPI/Bank
-  ADJUST_LEDGER = 'ADJUST_LEDGER'    // Reduce customer's debt (Udhaar cancel)
+  REFUND_CASH = 'REFUND_CASH',
+  REFUND_ONLINE = 'REFUND_ONLINE',
+  ADJUST_LEDGER = 'ADJUST_LEDGER'
 }
 
 export class ReturnItemDto {
@@ -30,6 +29,14 @@ export class ReturnItemDto {
   @IsInt()
   @Min(1)
   quantity: number;
+
+  @ApiProperty({ 
+    description: "If true, stock increases. If false, item is scrapped (damaged).", 
+    default: true 
+  })
+  @IsBoolean()
+  @IsOptional()
+  isRestock?: boolean = true; // Default to putting back on shelf
 }
 
 export class CreateSalesReturnDto {
@@ -53,7 +60,7 @@ export class CreateSalesReturnDto {
   @IsString()
   reason?: string;
 
-  @ApiPropertyOptional({ description: "Specific shop account ID to deduct refund from" })
+  @ApiPropertyOptional()
   @IsOptional()
   @IsUUID()
   refundAccountId?: string;

@@ -13,7 +13,7 @@ export class SalesReturnService {
   constructor(private readonly prisma: PrismaService) {}
 
   // ==================================================================
-  // 1. CREATE SALES RETURN (CREDIT NOTE)
+  // 1. CREATE SALES RETURN & CREDIT NOTE
   // ==================================================================
   async create(businessId: string, dto: CreateSalesReturnDto) {
     // 1. Fetch Original Sale
@@ -26,12 +26,12 @@ export class SalesReturnService {
       throw new NotFoundException("Original Sale not found.");
     }
 
-    // 2. Validate Items & Calculate Refund Amount
-    let refundAmountDec = new Prisma.Decimal(0);
-    let taxReversalDec = new Prisma.Decimal(0);
+    // 2. Calculation Phase
+    let totalRefundAmountDec = new Prisma.Decimal(0);
+    // In a full GST system, you would calculate SGST/CGST reversal here based on original tax rates
+    let totalTaxReversalDec = new Prisma.Decimal(0); 
 
     for (const returnItem of dto.items) {
-      // Find item in original sale to get the Price AT THAT TIME
       const originalItem = sale.saleItems.find(i => i.itemId === returnItem.variantId);
       
       if (!originalItem) {
@@ -39,72 +39,97 @@ export class SalesReturnService {
       }
       
       if (Number(originalItem.quantity) < returnItem.quantity) {
-        throw new BadRequestException(`Cannot return more than purchased. Sold: ${originalItem.quantity}, Returning: ${returnItem.quantity}`);
+        throw new BadRequestException(`Cannot return more than purchased.`);
       }
 
-      // Calculate value based on original selling price
+      // Financial Value = Quantity * Price Sold At
       const itemTotal = originalItem.price.times(returnItem.quantity);
-      refundAmountDec = refundAmountDec.plus(itemTotal);
-      
-      // Approximate tax reversal (simplified)
-      // For precise tax, you'd calculate based on original tax rate
-      // taxReversalDec = taxReversalDec.plus(...) 
+      totalRefundAmountDec = totalRefundAmountDec.plus(itemTotal);
     }
 
     return this.prisma.$transaction(async (tx) => {
-      // --- A. Generate Credit Note Number ---
-      const cnNo = `CN-${Date.now().toString().slice(-6)}`;
+      // --- STEP A: ISSUE CREDIT NOTE (The Financial Document) ---
+      // This is the legal document proving we owe the customer money.
+      const cnNo = `CN-${Date.now().toString().slice(-6)}`; // Replace with sequential logic in production
 
-      // --- B. Create Credit Note Record ---
       const creditNote = await tx.creditNote.create({
         data: {
           businessId,
           saleId: dto.saleId,
           noteNo: cnNo,
           date: new Date(),
-          reason: dto.reason || 'Customer Return',
-          amount: refundAmountDec,
-          taxAmount: taxReversalDec,
+          reason: dto.reason || 'Sales Return',
+          amount: totalRefundAmountDec,
+          taxAmount: totalTaxReversalDec,
           status: 'ACTIVE'
         }
       });
 
-      // --- C. Handle Inventory (Stock Increase) ---
+      // --- STEP B: SALES RETURN (The Physical Goods / Logistics) ---
       for (const item of dto.items) {
-        await tx.variant.update({
-          where: { id: item.variantId },
-          data: { stock: { increment: item.quantity } }
+        const originalItem = sale.saleItems.find(i => i.itemId === item.variantId);
+        
+        if (!originalItem) throw new BadRequestException("Item not found"); // Should be caught above
+
+        // 1. Inventory Action (Conditional)
+        if (item.isRestock !== false) {
+          // "Sales Return": The goods physically returned to the shelf.
+          await tx.variant.update({
+            where: { id: item.variantId },
+            data: { stock: { increment: item.quantity } }
+          });
+        } 
+        // Else: "Scrap": The goods returned but were thrown away. 
+        // We still issue a Credit Note (money back), but Stock does NOT increase.
+
+        // 2. Update Original Invoice Logic (Concatenate Notes)
+        const dateStr = new Date().toLocaleDateString('en-GB'); 
+        const statusStr = item.isRestock !== false ? 'Restocked' : 'Scrapped';
+        const returnMsg = `[${dateStr}] Returned: ${item.quantity} (${statusStr}) - CN: ${cnNo}`;
+        
+        // Handle Schema mapping
+        const currentDesc = originalItem.itemDescription || '';
+        const newDesc = currentDesc ? `${currentDesc} | ${returnMsg}` : returnMsg;
+
+        // We strictly reduce the quantity on the Invoice line item to reflect "Net Sold"
+        await tx.saleItem.update({
+          where: { id: originalItem.id },
+          data: { 
+            quantity: { decrement: item.quantity },
+            itemDescription: newDesc,
+            // Adjust line amount so Invoice Totals match Net Sold
+            amount: originalItem.price.times(Number(originalItem.quantity) - item.quantity)
+          }
         });
       }
 
-      // --- D. Handle Financials (Refund or Ledger) ---
+      // --- STEP C: SETTLEMENT (Paying the Credit Note) ---
       
       if (dto.action === ReturnAction.ADJUST_LEDGER) {
-        // Option 1: Adjust Party Ledger (Reduce their debt)
+        // Option 1: Store Credit (Party Ledger)
         if (!sale.partyId) throw new BadRequestException("Cannot adjust ledger for anonymous customer.");
 
         await tx.partyLedger.create({
           data: {
             businessId,
             partyType: 'CUSTOMER',
-            referenceId: sale.partyId, // Link to Customer
+            referenceId: sale.partyId,
             partyName: sale.partyName,
             transactionDate: new Date(),
-            description: `Sales Return (CN #${cnNo})`,
-            credit: refundAmountDec, // Credit reduces their Debit (Owed) balance
+            description: `Credit Note #${cnNo} (Adjustment)`,
+            credit: totalRefundAmountDec, // Credit reduces their Debit (Owed) balance
             debit: 0,
             linkedSaleId: sale.id
           }
         });
 
       } else {
-        // Option 2: Refund Money (Cash/Online)
+        // Option 2: Immediate Refund (Cash/Bank)
         let targetAccount: BankCashCheque | null = null;
 
         if (dto.refundAccountId) {
            targetAccount = await tx.bankCashCheque.findFirst({ where: { id: dto.refundAccountId } });
         } else {
-           // Auto-discovery
            const type = dto.action === ReturnAction.REFUND_CASH ? 'CASH' : { in: ['BANK', 'UPI'] };
            targetAccount = await tx.bankCashCheque.findFirst({
              where: { businessId, accountType: type as any, isEnabled: true },
@@ -113,21 +138,20 @@ export class SalesReturnService {
         }
 
         if (targetAccount) {
-          // Decrement Shop Balance
+          // Money leaves the Shop Account
           await tx.bankCashCheque.update({
             where: { id: targetAccount.id },
-            data: { closingBalance: { decrement: refundAmountDec } }
+            data: { closingBalance: { decrement: totalRefundAmountDec } }
           });
 
-          // Log Transaction
           await tx.bankCashChequeTransaction.create({
             data: {
               businessId,
               accountId: targetAccount.id,
-              transactionType: 'DEBIT', // Money Leaving Shop
-              amount: refundAmountDec,
-              runningBalance: targetAccount.closingBalance.minus(refundAmountDec),
-              referenceType: 'MANUAL_ADJUSTMENT', // Or SALES_RETURN enum if available
+              transactionType: 'DEBIT', 
+              amount: totalRefundAmountDec,
+              runningBalance: targetAccount.closingBalance.minus(totalRefundAmountDec),
+              referenceType: 'MANUAL_ADJUSTMENT',
               transactionNo: cnNo,
               partyName: sale.partyName,
               paymentMode: dto.action === ReturnAction.REFUND_CASH ? 'CASH' : 'ONLINE',
@@ -140,7 +164,6 @@ export class SalesReturnService {
       return creditNote;
     });
   }
-
   // ==================================================================
   // 2. GET ALL RETURNS
   // ==================================================================
@@ -212,6 +235,70 @@ export class SalesReturnService {
     return this.prisma.creditNote.update({
         where: { id },
         data: { status: 'CANCELLED' }
+    });
+  }
+  // ==================================================================
+    // 5. GET INVOICES BY CUSTOMER (For creating return)
+  // ==================================================================
+  async getInvoicesByCustomer(businessId: string, customerId: string) {
+    // Fetch only finalized sales that are not cancelled
+    const sales = await this.prisma.sale.findMany({
+      where: {
+        businessId,
+        partyId: customerId, // Match the customer
+        status: 'FINALIZED',
+        deletedAt: null
+      },
+      orderBy: { invoiceDate: 'desc' }, // Newest first
+      select: {
+        id: true,
+        invoiceNo: true,
+        invoicePrefix: true,
+        invoiceDate: true,
+        totalAmount: true,
+        
+        // Include items to show what can be returned
+        saleItems: {
+          select: {
+            itemId: true, // Variant ID
+            itemName: true,
+            quantity: true, // Original Qty Sold
+            price: true,
+            amount: true
+          }
+        },
+        
+        // Include Credit Notes to check if items were ALREADY returned
+        creditNotes: {
+          where: { status: 'ACTIVE' },
+          select: {
+            amount: true,
+            createdAt: true
+          }
+        }
+      }
+    });
+
+    // Format for Frontend
+    return sales.map(sale => {
+      // Calculate total previously returned amount (approximate check)
+      // A more complex system would track per-item returns, but this is a good summary.
+      const totalReturnedValue = sale.creditNotes.reduce((sum, cn) => sum + Number(cn.amount), 0);
+
+      return {
+        saleId: sale.id,
+        invoiceNumber: `${sale.invoicePrefix}-${sale.invoiceNo}`,
+        date: sale.invoiceDate,
+        totalAmount: Number(sale.totalAmount),
+        returnedAmountSoFar: totalReturnedValue,
+        canReturn: totalReturnedValue < Number(sale.totalAmount), // Flag if fully refunded
+        items: sale.saleItems.map(item => ({
+          variantId: item.itemId,
+          name: item.itemName,
+          soldQuantity: Number(item.quantity),
+          price: Number(item.price)
+        }))
+      };
     });
   }
 }

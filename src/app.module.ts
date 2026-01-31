@@ -31,6 +31,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { SeoModule } from './seo/seo.module';
 import { BankCashChequeModule } from './bank-cash-cheque/bank-cash-cheque.module';
 import { QuotationModule } from './seller/quotation/quotation.module';
+import { ProformaInvoiceModule } from './seller/proforma-invoice/proforma-invoice.module';
 
 @Module({
   imports: [
@@ -77,6 +78,8 @@ import { QuotationModule } from './seller/quotation/quotation.module';
     BannerModule,
    
     CartModule,
+
+    ProformaInvoiceModule,
    
     CustomizationImageModule,
    

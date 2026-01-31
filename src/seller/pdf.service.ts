@@ -505,4 +505,30 @@ export class PdfService {
       doc.end();
     });
   }
+  async generateProformaInvoicePdf(proforma: FullQuotation): Promise<Buffer> {
+    return new Promise((resolve) => {
+      const doc = new PDFDocument({ margin: 50, size: 'A4' });
+      // ... (buffer logic) ...
+
+      // --- 1. HEADER ---
+      // ... (business details are the same) ...
+      
+      // KEY CHANGE: Title and Labels
+      doc.fontSize(24).fillColor('grayColor')
+         .text('PROFORMA INVOICE', 350, 50, { align: 'right' }); // <-- TITLE CHANGE
+      
+      // ...
+
+      // Meta Details (Right)
+      // doc.font('Helvetica-Bold').text('Proforma Details:', metaX, 100);
+      // doc.font('Helvetica');
+      // doc.text(`Proforma #:`, 115).text(proforma. metaX + 60, 115); // <-- FIELD CHANGE
+      // doc.text(`Date:`,  130).text(new Date(proforma.proformaDate).toLocaleDateString(), metaX + 60, 130); // <-- FIELD CHANGE
+      // doc.text(`Valid Until:`,  145).text(new Date(proforma.validUntil).toLocaleDateString(), metaX + 60, 145);
+
+      // ... (Rest of the PDF generation logic is identical to the quotation PDF) ...
+
+      doc.end();
+    });
+}
 }

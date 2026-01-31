@@ -6,12 +6,22 @@ import { PdfModule } from './pdf.module';
 import { QuotationModule } from './quotation/quotation.module';
 import { PdfService } from './pdf.service';
 import { PaymentInModule } from './payment-in/payment-in.module';
+import { ReportsModule } from './reports/reports.module';
+import { ProformaInvoiceModule } from './proforma-invoice/proforma-invoice.module';
 
 @Module({
-    imports: [PrismaModule, PdfModule,QuotationModule,forwardRef(() => PaymentInModule)], // <-- ADD PdfModule
+  imports: [
+    PrismaModule,
+    PdfModule,
+    QuotationModule,
+    ProformaInvoiceModule,
+    forwardRef(() => PaymentInModule),
+    forwardRef(() => ProformaInvoiceModule),
+    forwardRef(() => ReportsModule),
+  ], // <-- ADD PdfModule
 
   controllers: [SellerController],
-  providers: [SellerService,PdfService],
+  providers: [SellerService, PdfService],
   exports: [SellerService],
 })
 export class SellerModule {}

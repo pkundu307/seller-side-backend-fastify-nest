@@ -62,4 +62,15 @@ export class SalesReturnController {
     await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
     return this.salesReturnService.remove(businessId, id);
   }
+
+    @Get('invoices-by-customer')
+  @ApiOperation({ summary: 'Get invoices for a customer to create a return' })
+  async getInvoicesByCustomer(
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Query('customerId', ParseUUIDPipe) customerId: string,
+    @Req() req: UserRequest
+  ) {
+    await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
+    return this.salesReturnService.getInvoicesByCustomer(businessId, customerId);
+  }
 }

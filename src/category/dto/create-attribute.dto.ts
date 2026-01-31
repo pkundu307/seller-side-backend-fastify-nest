@@ -54,3 +54,10 @@ export class AddAttributesBatchDto {
   // @IsNotEmpty()
   // gstRate: number;
 }
+
+export class CreateAttributeOptionDto {
+  @ApiProperty({ example: 'XL', description: 'The value of the option (e.g., Red, XL)' })
+  @IsString()
+  @IsNotEmpty()
+  value: string;
+}

@@ -179,6 +179,7 @@ model Business {
   warehouses                Warehouse[]
   taxEntries                TaxEntry[]
   partyLedgers              PartyLedger[]
+  fixedAssets FixedAsset[] // Add this relation
 }
 
 model SellerNotification {
@@ -1284,11 +1285,13 @@ model Quotation {
   status      QuotationStatus @default(PENDING)
 
   items QuotationItem[]
+   proformaNo   String?   // e.g., "PI-2026-005", Unique per Business if needed
+  proformaDate DateTime?
 
   convertedSaleId String? // If converted to Sale
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
-
+ @@unique([businessId, proformaNo]) 
   @@unique([businessId, quotationNo])
 }
 
@@ -1492,7 +1495,27 @@ model PartyLedger {
   @@index([businessId])
   @@index([referenceId])
 }
+model FixedAsset {
+  id            String   @id @default(uuid())
+  businessId    String
+  business      Business @relation(fields: [businessId], references: [id])
 
+  name          String   // e.g., "Dell Laptop", "Delivery Scooter"
+  purchaseDate  DateTime
+  purchasePrice Decimal  // Original Cost (e.g., 50,000)
+  
+  // This value decreases over time
+  currentValue  Decimal  // Book Value (e.g., 40,000)
+  
+  depreciationRate Decimal @default(10) // e.g., 10% per year
+  
+  isActive      Boolean  @default(true) // False if sold or scrapped
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([businessId])
+}
 enum TaxType {
   TDS_PAYABLE // You deducted, need to pay Govt
   TDS_RECEIVABLE // Client deducted, you claim later
@@ -1505,6 +1528,8 @@ enum QuotationStatus {
   ACCEPTED
   REJECTED
   CONVERTED
+  PROFORMA_GENERATED
+  CANCELED 
 }
 
 enum ChallanStatus {
@@ -1673,5 +1698,7 @@ enum ExpenseCategory {
   TRAVEL
   REPAIRS
   SOFTWARE
+   DRAWINGS        // Money taken by owner (Reduces Equity, NOT Profit)
+  CAPITAL_ASSET   // Buying a machine/computer (Goes to Assets, NOT Expense)
   OTHER
 }
