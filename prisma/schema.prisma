@@ -28,7 +28,9 @@ model CustomerUser {
   notifications     CustomerNotification[]
   orders            Order[]
   orderInitiates    OrderInitiate[]
+  productWaitlists ProductWaitlist[]
   reviews           Review[]
+  appointments Appointment[]
   wishlistItems     Wishlist[]
   wallet            CustomerWallet?
   userInteractions  UserInteraction[]
@@ -177,9 +179,56 @@ model Business {
   creditNotes               CreditNote[]
   debitNotes                DebitNote[]
   warehouses                Warehouse[]
+  productWaitlists ProductWaitlist[]
   taxEntries                TaxEntry[]
   partyLedgers              PartyLedger[]
-  fixedAssets FixedAsset[] // Add this relation
+  fixedAssets               FixedAsset[] // Add this relation
+  industryType IndustryType @default(RETAIL_GENERAL)
+  businessConfig Json?  @default("{}")
+
+  // 3. Operational Details
+  currency      String   @default("INR")
+  timezone      String   @default("Asia/Kolkata")
+  
+  // 4. Relations to new modules
+  tables        RestaurantTable[]      // For Restaurants
+  modifierGroups ModifierGroup[]       // For Food Add-ons (Extra Cheese, No Ice)
+  kitchenTickets KitchenTicket[]       // KOTs
+  appointments   Appointment[]     
+
+}
+model Appointment {
+  id          String   @id @default(uuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id])
+
+  // Who is coming?
+  customerUserId String?
+  customerUser   CustomerUser? @relation(fields: [customerUserId], references: [id])
+  customerName   String?       // For walk-ins/guests without an account
+  customerPhone  String?
+
+  // Who is providing the service? (Stylist, Doctor, Mechanic)
+  staffId     String?
+  staff       StaffMember? @relation(fields: [staffId], references: [id])
+
+  // What is the service? (Linked to Product table where type = SERVICE)
+  serviceId   String
+  service     Product      @relation(fields: [serviceId], references: [id])
+
+  // When?
+  startTime   DateTime
+  endTime     DateTime     // Derived from Product duration
+  
+  status      AppointmentStatus @default(PENDING)
+  notes       String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([businessId])
+  @@index([staffId])
+  @@index([startTime])
 }
 
 model SellerNotification {
@@ -249,6 +298,7 @@ model Product {
   businessId          String
   categoryId          Int
   publishDate         DateTime?
+  appointments Appointment[]
   customizationConfig Json?
   model3dUrl          String?
   isArable            Boolean                  @default(false)
@@ -263,9 +313,12 @@ model Product {
   reviews             Review[]
   variants            Variant[]
   wishlistItems       Wishlist[]
+  productWaitlists ProductWaitlist[]
   sponsorships        SponsoredProduct[]
   deletedAt           DateTime?
-
+  productType   ProductType @default(STANDARD)
+ modifierGroups ProductModifier[] 
+  recipe         BillOfMaterial?   // See below
   @@index([title])
   @@index([searchVector], map: "product_search_idx", type: Gin)
   @@index([tags], map: "product_tags_array_idx", type: Gin)
@@ -305,6 +358,8 @@ model Variant {
   attributeValues        VariantAttributeValue[]
   purchaseItems          PurchaseItem[]
   warehouseStocks        WarehouseStock[]
+  productWaitlists ProductWaitlist[]
+  bomItems         BomItem[] 
   deletedAt              DateTime?
 
   @@index([productId])
@@ -347,6 +402,25 @@ model VariantAttributeValue {
   @@map("variant_attribute_value")
 }
 
+model BillOfMaterial {
+  id          String   @id @default(uuid())
+  productId   String   @unique // The "Parent" (e.g., Chicken Burger)
+  product     Product  @relation(fields: [productId], references: [id])
+
+  items       BomItem[]
+}
+
+model BomItem {
+  id             String         @id @default(uuid())
+  billOfMaterialId String
+  billOfMaterial BillOfMaterial @relation(fields: [billOfMaterialId], references: [id])
+
+  // The "Child" ingredient (e.g., Burger Bun)
+  variantId      String         
+  variant        Variant        @relation(fields: [variantId], references: [id])
+
+  quantity       Decimal        // How much to deduct (e.g., 0.05 KG of Cheese)
+}
 model Review {
   id                 String       @id @default(uuid())
   rating             Int
@@ -816,6 +890,7 @@ model StaffMember {
 
   attendance    Attendance[]
   salaryPayouts SalaryPayout[]
+appointments Appointment[]
 
   @@index([businessId])
 }
@@ -1163,7 +1238,7 @@ model PurchaseItem {
   createdAt DateTime @default(now())
 }
 
-// --- EXPENSE MODELS (for tracking other business costs) ---
+// src/schema.prisma
 
 model Expense {
   id         String   @id @default(uuid())
@@ -1172,12 +1247,22 @@ model Expense {
 
   expenseDate DateTime
   category    ExpenseCategory @default(OTHER)
-  totalAmount Decimal
+  
+  // --- GST HEADER DETAILS ---
+  vendorName    String? 
+  vendorGstin   String?    @db.VarChar(15)  // To match with GSTR-2A
+  placeOfSupply String?    @db.VarChar(128) // State Name (Determines IGST vs CGST/SGST)
+  invoiceRef    String?    
+  isRcmApplicable Boolean  @default(false)  // Reverse Charge Mechanism
+  itcClaimed      Boolean  @default(true)   // Is this eligible for Input Tax Credit?
 
-  vendorName  String? // Who was paid (e.g., "Landlord", "Google Ads")
-  invoiceRef  String? // Reference number for the expense bill
+  // --- TOTALS ---
+  totalTaxableAmount Decimal @default(0) // Amount before tax
+  totalTaxAmount     Decimal @default(0) // Total GST
+  totalAmount        Decimal             // Final Amount Paid
+
   isPaid      Boolean @default(true)
-  paymentMode String? // "Bank Transfer", "Credit Card", "Cash"
+  paymentMode String?
   notes       String?
 
   createdAt DateTime @default(now())
@@ -1194,9 +1279,22 @@ model ExpenseItem {
   expenseId String
   expense   Expense @relation(fields: [expenseId], references: [id])
 
-  description String // e.g., "Monthly Rent for Office", "Facebook Ad Campaign"
-  amount      Decimal
-  taxAmount   Decimal @default(0)
+  description String 
+  
+  // --- GST LINE DETAILS ---
+  hsnCode       String?  @db.VarChar(20) // Critical for compliance
+  taxableAmount Decimal  // Base Cost
+  taxRate       Decimal  @default(0)     // e.g. 5, 12, 18, 28
+  
+  // Calculated Splits
+  cgstAmount    Decimal  @default(0)
+  sgstAmount    Decimal  @default(0)
+  igstAmount    Decimal  @default(0)
+  cessAmount    Decimal  @default(0)
+
+  totalAmount   Decimal  // taxableAmount + taxes
+
+  @@index([expenseId])
 }
 
 model BankCashCheque {
@@ -1516,6 +1614,127 @@ model FixedAsset {
 
   @@index([businessId])
 }
+model ModifierGroup {
+  id          String     @id @default(uuid())
+  businessId  String
+  business    Business   @relation(fields: [businessId], references: [id])
+  
+  name        String     // e.g., "Pizza Toppings", "Sugar Level"
+  minSelection Int       @default(0) // 0 = Optional
+  maxSelection Int       @default(1) // 1 = Single Select (Radio), >1 = Multi (Checkbox)
+
+  modifiers   Modifier[]
+  products    ProductModifier[] // Many-to-Many: Which products use this group?
+}
+
+model Modifier {
+  id              String        @id @default(uuid())
+  modifierGroupId String
+  group           ModifierGroup @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade)
+
+  name            String        // "Extra Cheese"
+  price           Decimal       @default(0) // Additional cost
+  isVegetarian    Boolean       @default(true)
+}
+
+// Join Table: Link Products to Modifier Groups
+// e.g., "Farmhouse Pizza" uses "Pizza Toppings" group
+model ProductModifier {
+  productId       String
+  modifierGroupId String
+  product         Product       @relation(fields: [productId], references: [id])
+  modifierGroup   ModifierGroup @relation(fields: [modifierGroupId], references: [id])
+
+  @@id([productId, modifierGroupId])
+}
+
+model KitchenTicket {
+  id            String    @id @default(uuid())
+  businessId    String
+  business      Business  @relation(fields: [businessId], references: [id])
+
+  orderId       String    // Link to your main Order/Sale
+  // order      Order     @relation(...) 
+
+  kotNumber     Int       // Daily running number (e.g., KOT #5)
+  status        KotStatus @default(PENDING)
+  
+  items         Json      // Snapshot of items in this KOT: [{ name: "Burger", qty: 2, notes: "No onion" }]
+  
+  createdAt     DateTime  @default(now())
+  completedAt   DateTime? 
+}
+model RestaurantTable {
+  id          String      @id @default(uuid())
+  businessId  String
+  business    Business    @relation(fields: [businessId], references: [id])
+
+  name        String      // "Table 1", "Patio-2"
+  zone        String?     // "Indoor", "Outdoor", "Rooftop"
+  capacity    Int         @default(4)
+  
+  status      TableStatus @default(AVAILABLE)
+  
+  // If occupied, link to the current active order/sale
+  activeOrderId String?   @unique 
+  // (Note: You might link this to Order or Sale depending on your flow)
+
+  qrCodeUrl   String?     // For "Scan to Order"
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([businessId, name])
+}
+
+model ProductWaitlist {
+  id String @id @default(uuid())
+
+  // --- Links ---
+  businessId     String
+  productId      String
+  variantId      String?       // Optional: If they want specific size/color
+  customerUserId String?       // Optional: If logged in
+
+  // --- Contact Details (For Guests or Overrides) ---
+  email          String?
+  phone          String?
+  
+  // --- Configuration ---
+  channel        NotificationChannel @default(EMAIL)
+  status         WaitlistStatus      @default(PENDING)
+  locale         String              @default("en-US") // For email template language
+
+  // --- Metadata ---
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  notifiedAt     DateTime? // When the alert was actually sent
+
+  // --- Relations ---
+  business       Business      @relation(fields: [businessId], references: [id])
+  product        Product       @relation(fields: [productId], references: [id])
+  variant        Variant?      @relation(fields: [variantId], references: [id])
+  customerUser   CustomerUser? @relation(fields: [customerUserId], references: [id])
+
+  // --- Indexes for Performance ---
+  // Vital: When stock updates, we query by Variant/Product + Status
+  @@index([productId, variantId, status]) 
+  @@index([businessId])
+}
+
+enum WaitlistStatus {
+  PENDING
+  NOTIFIED
+  FAILED
+  CANCELLED // User unsubscribed before stock arrived
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+  PUSH_NOTIFICATION
+}
 enum TaxType {
   TDS_PAYABLE // You deducted, need to pay Govt
   TDS_RECEIVABLE // Client deducted, you claim later
@@ -1556,7 +1775,14 @@ enum ReferenceType {
   EXPENSE
   MANUAL_ADJUSTMENT
 }
-
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
 enum SellerKycStatus {
   PENDING
   VERIFIED
@@ -1701,4 +1927,33 @@ enum ExpenseCategory {
    DRAWINGS        // Money taken by owner (Reduces Equity, NOT Profit)
   CAPITAL_ASSET   // Buying a machine/computer (Goes to Assets, NOT Expense)
   OTHER
+}
+enum IndustryType {
+  RETAIL_GENERAL     // Standard Shop
+  RETAIL_PHARMACY    // Medical Store
+  RETAIL_FASHION     // Clothing
+  RESTAURANT_QSR     // Fast Food (No tables, just queue)
+  RESTAURANT_DINEIN  // Fine Dine (Tables + Waiters)
+  SERVICE_SALON      // Appointments
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  CLEANING
+}
+
+enum KotStatus {
+  PENDING      // Sent to kitchen
+  PREPARING    // Chef accepted
+  READY        // Ready to serve
+  SERVED       // On table
+  CANCELLED
+}
+
+enum ProductType {
+  STANDARD     // Buy & Sell (Coke Bottle)
+  PREPARED     // Made in Kitchen (Burger)
+  SERVICE      // Haircut (No Stock)
 }

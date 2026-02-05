@@ -18,6 +18,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 // --- Import your real authentication guard and request type ---
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { UserRequest } from '../auth/auth.types';
+import { AddToWaitlistDto } from './dto/add-to-waitlist.dto';
 
 @ApiTags('User Addresses')
 @ApiBearerAuth() // Indicates that all endpoints in this controller require a JWT Bearer token
@@ -77,4 +78,20 @@ export class CustomerUserController {
     const userId = req.user.id;
     return this.customerUserService.deleteAddress(userId, addressId);
   }
+
+    @Post('waitlist')
+  @ApiOperation({ summary: 'Notify me when a product is back in stock' })
+  async addToWaitlist(
+    @Req() req: UserRequest,
+    @Body() dto: AddToWaitlistDto,
+  ) {
+    return this.customerUserService.addToWaitlist(req.user.id, dto);
+  }
+
+  @Get('waitlist')
+  @ApiOperation({ summary: 'View my active restock alerts' })
+  async getMyWaitlist(@Req() req: UserRequest) {
+    return this.customerUserService.getMyWaitlist(req.user.id);
+  }
+
 }

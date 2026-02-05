@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Req, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -10,6 +10,7 @@ import { MultipartFile } from 'fastify-multipart';
 import { FastifyRequest } from 'fastify'
 import { UpdateBusinessVerificationDto } from './dto/update-business-verification.dto';
 import { CreateHomepageSectionDto } from './dto/create-homepage-section.dto';
+import { AdminProductFilterDto, UpdateProductPublishStatusDto } from './dto/product-verification.dto';
 
 interface ParsedHomepageFiles {
   itemImages: Map<number, { buffer: Buffer; filename: string; mimetype: string }>;
@@ -256,4 +257,27 @@ private async parseBannerMultipartData(
 
 
   
+
+
+
+  @Get('/products')
+  @ApiOperation({ summary: 'List products for verification (Paginated)' })
+  async listProducts(@Query() query: AdminProductFilterDto) {
+    return this.adminService.getProductsForVerification(query);
+  }
+
+  @Get('products/:id')
+  @ApiOperation({ summary: 'Get full product details for verification' })
+  async getDetail(@Param('id') id: string) {
+    return this.adminService.getProductDetailForAdmin(id);
+  }
+
+  @Patch('/products/:id/publish-status')
+  @ApiOperation({ summary: 'Publish/Unpublish product and send remarks to seller' })
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateProductPublishStatusDto
+  ) {
+    return this.adminService.updateProductPublishStatus(id, dto);
+  }
 }

@@ -8,6 +8,7 @@ import { PdfService } from './pdf.service';
 import { PaymentInModule } from './payment-in/payment-in.module';
 import { ReportsModule } from './reports/reports.module';
 import { ProformaInvoiceModule } from './proforma-invoice/proforma-invoice.module';
+import { ExpensesModule } from './expenses/expenses.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ProformaInvoiceModule } from './proforma-invoice/proforma-invoice.modul
     forwardRef(() => PaymentInModule),
     forwardRef(() => ProformaInvoiceModule),
     forwardRef(() => ReportsModule),
+       ExpensesModule,
   ], // <-- ADD PdfModule
 
   controllers: [SellerController],

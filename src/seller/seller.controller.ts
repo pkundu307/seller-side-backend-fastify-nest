@@ -232,4 +232,14 @@ async getBusinessCustomers(
     await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
     return this.sellerService.getDashboardOverview(businessId, query);
   }
+
+    @Get(':businessId/waitlist/summary')
+  @ApiOperation({ summary: 'Seller Analytics: See which products have the most people waiting' })
+  async getWaitlistSummary(
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Req() req: UserRequest,
+  ) {
+    await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.getWaitlistAnalytics(businessId);
+  }
 }

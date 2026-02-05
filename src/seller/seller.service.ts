@@ -1444,5 +1444,53 @@ async getDashboardOverview(businessId: string, query: DashboardFilterDto) {
       }
     };
   }
-  
+    async getWaitlistAnalytics(businessId: string) {
+    // 1. Get all pending waitlist entries for this business
+    // We group them by Product and Variant to show "High Demand" items
+    const demand = await this.prisma.productWaitlist.groupBy({
+      by: ['productId', 'variantId'],
+      where: {
+        businessId,
+        status: 'PENDING',
+      },
+      _count: {
+        _all: true,
+      },
+      orderBy: {
+        _count: {
+          productId: 'desc',
+        },
+      },
+    });
+
+    // 2. Enrich the data with Product and Variant names for the UI
+    const enrichedDemand = await Promise.all(
+      demand.map(async (item) => {
+        const product = await this.prisma.product.findUnique({
+          where: { id: item.productId },
+          select: { title: true, images: true },
+        });
+
+        const variant = item.variantId
+          ? await this.prisma.variant.findUnique({
+              where: { id: item.variantId },
+              select: { sku: true, price: true, stock: true },
+            })
+          : null;
+
+        return {
+          productId: item.productId,
+          variantId: item.variantId,
+          productTitle: product?.title,
+          productImage: product?.images?.[0],
+          sku: variant?.sku || 'Main Product',
+          currentStock: variant?.stock || 0,
+          waiterCount: item._count._all,
+        };
+      }),
+    );
+
+    return enrichedDemand;
+  }
+
 }

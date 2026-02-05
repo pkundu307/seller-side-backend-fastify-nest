@@ -5,6 +5,7 @@ import { CreateBannerDto } from './dto/create-banner.dto';
 import { S3Service } from '../products/utils/s3Service';
 import { UpdateBusinessVerificationDto } from './dto/update-business-verification.dto';
 import { CreateHomepageSectionDto } from './dto/create-homepage-section.dto';
+import { AdminProductFilterDto, UpdateProductPublishStatusDto } from './dto/product-verification.dto';
 interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
   brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
@@ -317,5 +318,100 @@ export class AdminService {
     });
   }
 
+async getProductsForVerification(query: AdminProductFilterDto) {
+    // FIX: Provide explicit defaults here to satisfy TypeScript
+    console.log(AdminProductFilterDto);
+    
+    const page = query.page || 1;
+    const limit = query.limit || 10;
+    const { businessId, isPublished, needsVerification } = query;
+    
+    const skip = (page - 1) * limit;
+
+    const where: any = { deletedAt: null };
+
+    if (businessId) where.businessId = businessId;
+    if (isPublished !== undefined) where.isPublished = isPublished;
+    
+    if (needsVerification) {
+      where.isFeatured = true;
+      where.isPublished = false;
+    }
+
+    const [products, total] = await this.prisma.$transaction([
+      this.prisma.product.findMany({
+        where,
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          title: true,
+          isPublished: true,
+          isFeatured: true,
+          updatedAt: true,
+          business: { select: { name: true } },
+          _count: { select: { variants: true } }
+        },
+        orderBy: { updatedAt: 'desc' }
+      }),
+      this.prisma.product.count({ where })
+    ]);
+
+    return {
+      data: products,
+      meta: {
+        total,
+        page,
+        lastPage: Math.ceil(total / limit) // Now 'limit' is guaranteed to be a number
+      }
+    };
+  }
+  // 2. Fetch full details including variants for deep verification
+  async getProductDetailForAdmin(productId: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      include: {
+        business: { select: { name: true, ownerId: true } },
+        category: { select: { name: true } },
+        variants: true, // Includes all prices, stock, and attributes
+      }
+    });
+
+    if (!product) throw new NotFoundException('Product not found');
+    return product;
+  }
+
+  // 3. Update publish status and notify seller
+  async updateProductPublishStatus(productId: string, dto: UpdateProductPublishStatusDto) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      include: { business: true }
+    });
+
+    if (!product) throw new NotFoundException('Product not found');
+
+    return this.prisma.$transaction(async (tx) => {
+      // A. Update the product
+      const updatedProduct = await tx.product.update({
+        where: { id: productId },
+        data: { isPublished: dto.isPublished }
+      });
+
+      // B. If remarks are provided (rejection or feedback), send notification
+      if (dto.remarks) {
+        await tx.sellerNotification.create({
+          data: {
+            userId: product.business.ownerId,
+            title: dto.isPublished ? 'Product Published' : 'Product Action Required',
+            message: `Product: "${product.title}". Admin Feedback: ${dto.remarks}`,
+            type: 'SYSTEM', // or ALERT
+            metadata: { productId: product.id }
+          }
+        });
+      }
+
+      return updatedProduct;
+    });
+  }
 
 }

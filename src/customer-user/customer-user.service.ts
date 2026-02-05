@@ -1,8 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Address, CustomerUser, Prisma } from '@prisma/client';
 import { UpdateAddressDto } from './dto/update-address.dto';
 import { CreateAddressDto } from './dto/create-address.dto';
+import { AddToWaitlistDto } from './dto/add-to-waitlist.dto';
 
 @Injectable()
 export class CustomerUserService {
@@ -128,6 +129,70 @@ export class CustomerUserService {
     }
   }
   
+  async addToWaitlist(userId: string, dto: AddToWaitlistDto) {
+    // 1. Fetch the product to ensure it exists and get the Business ID
+    const product = await this.prisma.product.findUnique({
+      where: { id: dto.productId },
+      select: { id: true, businessId: true, title: true }
+    });
 
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    // 2. Fetch User to get email/phone if needed
+    const user = await this.prisma.customerUser.findUnique({
+      where: { id: userId },
+      select: { email: true, phoneNumber: true }
+    });
+
+    if (!user) throw new NotFoundException('User not found');
+
+    // 3. Check for Duplicate Request (Prevent Spam)
+    const existingEntry = await this.prisma.productWaitlist.findFirst({
+      where: {
+        customerUserId: userId,
+        productId: dto.productId,
+        variantId: dto.variantId || null,
+        status: 'PENDING', // Only check active requests
+      }
+    });
+
+    if (existingEntry) {
+      throw new ConflictException('You are already on the waitlist for this item.');
+    }
+
+    // 4. Create the Waitlist Entry
+    return this.prisma.productWaitlist.create({
+      data: {
+        businessId: product.businessId,
+        productId: dto.productId,
+        variantId: dto.variantId,
+        customerUserId: userId,
+        email: user.email,        // Snapshot contact info
+        phone: user.phoneNumber,  // Snapshot contact info
+        channel: dto.channel || 'EMAIL',
+        status: 'PENDING',
+      }
+    });
+  }
+
+  /**
+   * Get all active waitlist requests for the logged-in user
+   */
+  async getMyWaitlist(userId: string) {
+    return this.prisma.productWaitlist.findMany({
+      where: { customerUserId: userId },
+      include: {
+        product: {
+          select: { title: true, slug: true, images: true }
+        },
+        variant: {
+          select: { sku: true, price: true } // Display variant details if specific
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+  }
   
 }
