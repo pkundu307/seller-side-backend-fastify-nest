@@ -36,6 +36,7 @@ model CustomerUser {
   userInteractions  UserInteraction[]
   preferredLanguage String?                @default("en-US")
   pushSubscriptions PushSubscription[]
+  preOrderRequests PreOrderRequest[]
   deletedAt         DateTime?
 }
 
@@ -180,6 +181,7 @@ model Business {
   debitNotes                DebitNote[]
   warehouses                Warehouse[]
   productWaitlists ProductWaitlist[]
+  preOrderRequests PreOrderRequest[]
   taxEntries                TaxEntry[]
   partyLedgers              PartyLedger[]
   fixedAssets               FixedAsset[] // Add this relation
@@ -319,6 +321,7 @@ model Product {
   productType   ProductType @default(STANDARD)
  modifierGroups ProductModifier[] 
   recipe         BillOfMaterial?   // See below
+  preOrderRequests PreOrderRequest[]
   @@index([title])
   @@index([searchVector], map: "product_search_idx", type: Gin)
   @@index([tags], map: "product_tags_array_idx", type: Gin)
@@ -361,7 +364,7 @@ model Variant {
   productWaitlists ProductWaitlist[]
   bomItems         BomItem[] 
   deletedAt              DateTime?
-
+preOrderRequests PreOrderRequest[]
   @@index([productId])
 }
 
@@ -1722,6 +1725,51 @@ model ProductWaitlist {
   @@index([businessId])
 }
 
+model PreOrderRequest {
+  id              String         @id @default(uuid())
+  businessId      String
+  productId       String
+  variantId       String
+  customerUserId  String
+
+  // --- Financials ---
+  totalAmount     Decimal        // Full price at time of booking
+  tokenAmount     Decimal        // Amount paid now
+  balanceAmount   Decimal        // Amount left to pay (total - token)
+  
+  // --- Payment Tracking ---
+  tokenPaymentId  String?        // Gateway ID for the token payment
+  tokenRefundId   String?        // Gateway ID if refunded
+  balancePaymentId String?       // Gateway ID for the final balance
+  
+  // --- Status & Workflow ---
+  status          PreOrderStatus @default(PRE_BOOKED)
+  sellerRemarks   String?        // Why the seller rejected it
+  
+  // --- Timestamps ---
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  expiresAt       DateTime       // Set to createdAt + 7 days
+  restockedAt     DateTime?      // When stock actually arrived
+
+  // --- Relations ---
+  business        Business       @relation(fields: [businessId], references: [id])
+  product         Product        @relation(fields: [productId], references: [id])
+  variant         Variant        @relation(fields: [variantId], references: [id])
+  customerUser    CustomerUser   @relation(fields: [customerUserId], references: [id])
+
+  @@index([businessId])
+  @@index([customerUserId])
+  @@index([status])
+}
+enum PreOrderStatus {
+  PRE_BOOKED          // Customer paid token, waiting for seller
+  SELLER_APPROVED     // Seller says "Yes, I can get this"
+  SELLER_REJECTED     // Seller says "No, I can't get this" (Triggers Refund)
+  RESTOCKED           // Stock is back, customer notified to pay balance
+  COMPLETED           // Balance paid, turned into a real Order
+  CANCELLED_REFUNDED  // 7-day timeout or manual cancel (Triggers Refund)
+}
 enum WaitlistStatus {
   PENDING
   NOTIFIED
@@ -1935,6 +1983,7 @@ enum IndustryType {
   RESTAURANT_QSR     // Fast Food (No tables, just queue)
   RESTAURANT_DINEIN  // Fine Dine (Tables + Waiters)
   SERVICE_SALON      // Appointments
+  TOUR_AND_TRAVEL      // Bookings
 }
 
 enum TableStatus {

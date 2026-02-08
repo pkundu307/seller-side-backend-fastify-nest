@@ -10,7 +10,7 @@ export class BannersService {
    * Banners are ordered by their 'position' field in ascending order.
    */
   async findAllActive() {
-          console.log("kokoko");
+          
 
     return this.prisma.promotionalBanner.findMany({
       

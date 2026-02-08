@@ -2,11 +2,15 @@ import { Module } from '@nestjs/common';
 import { CustomerUserService } from './customer-user.service';
 import { CustomerUserController } from './customer-user.controller';
 import { PrismaModule } from '../prisma/prisma.module';
+import { S3Service } from '../products/utils/s3Service'; // <--- Import S3Service
 
 @Module({
-  imports: [PrismaModule], // Import PrismaModule
+  imports: [PrismaModule], 
   controllers: [CustomerUserController],
-  providers: [CustomerUserService],
-  exports: [CustomerUserService], // Export the service so other modules can use it
+  providers: [
+    CustomerUserService, 
+    S3Service // <--- Add S3Service as a provider
+  ], 
+  exports: [CustomerUserService], 
 })
 export class CustomerUserModule {}

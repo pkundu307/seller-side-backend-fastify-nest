@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { slugify } from '../utils/slugify'; 
 import { AccountType, Prisma } from '@prisma/client';
+import { IndustryType } from '@prisma/client';
 
 @Injectable()
 export class BusinessService {
@@ -18,33 +19,63 @@ export class BusinessService {
   // ========================================================
   // CREATE BUSINESS
   // ========================================================
-  async createBusiness(dto: CreateBusinessDto, ownerId: string) {
-    // 1. Generate Slug
+ async createBusiness(dto: CreateBusinessDto, ownerId: string) {
+    // 1. Generate and Validate Slug
     let slug = slugify(dto.name);
-
-    // 2. Ensure Slug Uniqueness
     const existingSlug = await this.prisma.business.findUnique({ where: { slug } });
     if (existingSlug) {
       slug = `${slug}-${Math.floor(1000 + Math.random() * 9000)}`;
     }
 
+    // 2. Define Industry-Specific Default Configurations
+    // This allows the UI to know which features to toggle on/off immediately
+    const industryConfigs: Record<IndustryType, any> = {
+      [IndustryType.RETAIL_GENERAL]: { isBarcodeEnabled: true, isStockAlertEnabled: true },
+      [IndustryType.RETAIL_PHARMACY]: { isBatchingEnabled: true, expiryAlertDays: 90, requiresDoctor: true },
+      [IndustryType.RETAIL_FASHION]: { isVariantMatrixEnabled: true, hasFittingRooms: true },
+      [IndustryType.RESTAURANT_QSR]: { autoPrintKOT: true, hasTokenDisplay: true },
+      [IndustryType.RESTAURANT_DINEIN]: { hasTableManagement: true, serviceChargePct: 5, enableKOT: true },
+      [IndustryType.SERVICE_SALON]: { isAppointmentEnabled: true, staffCommissionEnabled: true },
+      [IndustryType.TOUR_AND_TRAVEL]: { isBookingEnabled: true, visaProcessingEnabled: true },
+    };
+
+    const defaultConfig = industryConfigs[dto.industryType] || {};
+
     try {
-      // 3. Create Business AND Cash Drawer in one Atomic Transaction
+      // 3. Atomic Transaction: Create Business + Default Cash Drawer + Default Warehouse
       const business = await this.prisma.business.create({
         data: {
-          ...dto,
+          name: dto.name,
+          gstNumber: dto.gstNumber,
+          address: dto.address,
+          city: dto.city,
+          state: dto.state,
+          country: dto.country,
+          postalCode: dto.postalCode,
+          phone: dto.phone,
+          category: dto.category || 'General',
+          industryType: dto.industryType,
+          businessConfig: defaultConfig, // Set industry defaults
           ownerId,
           slug,
           
-          // --- NEW: Automatically create the Cash Entity ---
+          // Create a Default Cash Drawer for POS
           bankAccounts: {
             create: {
-              accountName: 'Cash Drawer', // Standard Name
-              accountType: AccountType.CASH, // Use the Enum
-              isDefault: true, // Mark as default for POS
+              accountName: 'Cash Drawer',
+              accountType: AccountType.CASH,
+              isDefault: true,
               isEnabled: true,
               openingBalance: 0,
               closingBalance: 0
+            }
+          },
+
+          // Create a Default Warehouse/Store Room
+          warehouses: {
+            create: {
+              name: 'Main Store',
+              isDefault: true,
             }
           }
         },
@@ -53,16 +84,17 @@ export class BusinessService {
       return business;
 
     } catch (error) {
-      // 4. Handle Unique Constraint Violations
+      // 4. Handle Specific DB Errors
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
           const target = error.meta?.target as string[];
-          if (target && target.includes('gstNumber')) {
+          if (target?.includes('gstNumber')) {
             throw new ConflictException('A business with this GST Number already exists.');
           }
         }
       }
-      throw new InternalServerErrorException('Could not create business');
+      // this.logger.error(`Business Creation Failed: ${error.message}`);
+      throw new InternalServerErrorException('Failed to create business profile.');
     }
   }
 

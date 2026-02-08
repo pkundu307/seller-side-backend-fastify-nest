@@ -87,6 +87,8 @@ export class OrdersService {
       });
 
       // B. Create Order Items
+      console.log(cartItems);
+      
       const orderItemsData = cartItems.map((item) => ({
         orderId: newOrder.id,
         productId: item.productId,
@@ -264,6 +266,7 @@ export class OrdersService {
               include: {
                 product: {
                   select: {
+                    id: true,
                     title: true,
                     images: true,
                     slug: true,
@@ -329,6 +332,7 @@ export class OrdersService {
           
           // Product Details
           productName: product?.title || 'Product Unavailable',
+          productId: product?.id,
           productSlug: product?.slug,
           productImage: product?.images?.[0] || null,
           variantSku: item.variant?.sku,

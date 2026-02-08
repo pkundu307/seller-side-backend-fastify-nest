@@ -22,7 +22,6 @@ export class AuthController {
   @HttpCode(HttpStatus.OK) // Set status to 200 OK for login
   @Post('login')
   login(@Body() loginDto: LoginDto) {
-    console.log('okokoko')
     return this.authService.login(loginDto);
   }
 

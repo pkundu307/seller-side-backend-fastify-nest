@@ -756,9 +756,17 @@ async updateProduct(
           orderBy: { createdAt: 'desc' },
           select: {
             id: true,
+            customerUserId: true,
             rating: true,
             comment: true,
             createdAt: true,
+             images: true,
+              customerUser: {
+            select: {
+              name: true,
+              picture: true, // Included picture for the user avatar
+            },
+          },
           },
         },
       },
