@@ -235,7 +235,7 @@ export class CustomerUserService {
         resizedBuffer,
         `review-${userId}-${productId}.jpg`,
         'image/jpeg',
-        'others' // Based on your allowed folders
+        'reviews' // Based on your allowed folders
       );
       imageUrl.push(url);
     }

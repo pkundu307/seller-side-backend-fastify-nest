@@ -6,6 +6,8 @@ import { S3Service } from '../products/utils/s3Service';
 import { UpdateBusinessVerificationDto } from './dto/update-business-verification.dto';
 import { CreateHomepageSectionDto } from './dto/create-homepage-section.dto';
 import { AdminProductFilterDto, UpdateProductPublishStatusDto } from './dto/product-verification.dto';
+import { UpdateBusinessDetailsDto } from './dto/update-business-details.dto';
+import { SettlementStatus } from '@prisma/client';
 interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
   brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
@@ -413,5 +415,115 @@ async getProductsForVerification(query: AdminProductFilterDto) {
       return updatedProduct;
     });
   }
+ async getBusinessOverview(businessId: string) {
+    // A. Fetch Profile & Entity Counts
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      include: {
+        owner: {
+          select: { id: true, name: true, email: true }, // Removed 'phone' as it is not in User model
+        },
+        _count: {
+          select: {
+            products: true,
+            reviews: true,
+            // 'orders' removed because there is no direct relation
+          },
+        },
+      },
+    });
+
+    if (!business) throw new NotFoundException('Business not found');
+
+    // B. Calculate Online Revenue (Using SellerSettlement)
+    // Since 'Order' doesn't have businessId, we use the settlement table which tracks
+    // exactly how much money this specific business made from orders.
+    const settlementStats = await this.prisma.sellerSettlement.aggregate({
+      where: {
+        businessId: businessId,
+      },
+      _sum: {
+        grossAmount: true, // The total value of items sold
+      },
+      _count: {
+        id: true, // Number of settlement records (approx. number of orders)
+      },
+    });
+
+    // C. Calculate POS Revenue (Using Sale)
+    const posStats = await this.prisma.sale.aggregate({
+      where: {
+        businessId: businessId,
+      },
+      _sum: {
+        totalAmount: true,
+      },
+      _count: {
+        id: true,
+      },
+    });
+
+    return {
+      profile: business,
+      statistics: {
+        // Online Stats
+        // FIXED: Using 'settlementStats' variable, not the Enum
+        onlineRevenue: settlementStats._sum.grossAmount || 0, 
+        onlineOrderCount: settlementStats._count.id || 0,
+        
+        // POS Stats
+        posRevenue: posStats._sum.totalAmount || 0,
+        posSaleCount: posStats._count.id || 0,
+        
+        // General Stats
+        totalProducts: business._count.products,
+        totalReviews: business._count.reviews,
+      },
+    };
+  }
+
+  // 2. Fetch All Products of a Business
+  async getBusinessProducts(businessId: string, page: number = 1, limit: number = 10) {
+    const skip = (page - 1) * limit;
+
+    const [products, total] = await this.prisma.$transaction([
+      this.prisma.product.findMany({
+        where: { businessId },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          category: { select: { name: true } },
+          _count: { select: { reviews: true } },
+        },
+      }),
+      this.prisma.product.count({ where: { businessId } }),
+    ]);
+
+    return {
+      data: products,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // 3. Update Business Details
+  async updateBusinessDetails(businessId: string, dto: UpdateBusinessDetailsDto) {
+    const business = await this.prisma.business.findUnique({ where: { id: businessId } });
+    if (!business) throw new NotFoundException('Business not found');
+
+    return this.prisma.business.update({
+      where: { id: businessId },
+      data: {
+        ...dto,
+        kycVerifiedAt: dto.isVerified ? new Date() : undefined,
+      },
+    });
+  }
+
 
 }

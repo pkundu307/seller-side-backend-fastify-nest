@@ -38,6 +38,8 @@ model CustomerUser {
   pushSubscriptions PushSubscription[]
   preOrderRequests PreOrderRequest[]
   deletedAt         DateTime?
+  supportTickets    SupportTicket[]        
+  supportMessages   SupportTicketMessage[]        // <--- Add this (Tickets they own)
 }
 
 model Wishlist {
@@ -64,10 +66,11 @@ model User {
   businesses          Business[]
   notifications       SellerNotification[]
   performedActivities ActivityLog[]          @relation("PerformedUserActivities")
-  sentSupportMessages SupportTicketMessage[]
   preferredLanguage   String?                @default("en-US")
   staffProfile        StaffMember?
   pushSubscriptions   PushSubscription[]
+  supportMessages   SupportTicketMessage[] 
+
 }
 
 model Permission {
@@ -472,6 +475,7 @@ model Order {
   items                 OrderItem[]
   returnRequests        ReturnRequest[] // <-- FIX for the first error
   settlements           SellerSettlement[]
+   supportTickets SupportTicket[] 
 }
 
 model OrderItem {
@@ -929,6 +933,12 @@ model SalaryPayout {
   @@index([staffMemberId])
 }
 
+enum TicketSenderType {
+  CUSTOMER
+  SELLER
+  ADMIN
+}
+
 enum EmploymentType {
   FULL_TIME
   PART_TIME
@@ -1082,29 +1092,61 @@ model UserInteraction {
 // --- 5. SELLER SUPPORT TICKETING SYSTEM ---
 
 model SupportTicket {
-  id          String         @id @default(uuid())
-  businessId  String
-  business    Business       @relation(fields: [businessId], references: [id])
-  title       String
-  description String
-  status      TicketStatus   @default(OPEN)
-  priority    TicketPriority @default(MEDIUM)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id             String           @id @default(uuid())
+  
+  // Link to Business (The Receiver of the complaint)
+  businessId     String
+  business       Business         @relation(fields: [businessId], references: [id])
 
-  messages SupportTicketMessage[]
+  // Link to Customer (The Creator of the ticket)
+  customerUserId String
+  customerUser   CustomerUser     @relation(fields: [customerUserId], references: [id])
+
+  // Context (Optional)
+  orderId        String?          @map("order_id") 
+  order          Order?           @relation(fields: [orderId], references: [id])
+  
+  // Ticket Details
+  title          String
+  description    String           // The initial issue description
+  status         TicketStatus     @default(OPEN)
+  priority       TicketPriority   @default(MEDIUM)
+  
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  
+  // Sorting helper: Update this whenever a new message is added
+  lastMessageAt  DateTime         @default(now()) 
+
+  messages       SupportTicketMessage[]
 
   @@index([businessId])
+  @@index([customerUserId])
+  @@index([orderId])
 }
 
 model SupportTicketMessage {
-  id        String        @id @default(uuid())
-  ticketId  String
-  ticket    SupportTicket @relation(fields: [ticketId], references: [id])
-  senderId  String // The ID of the User (seller or admin) who sent it
-  sender    User          @relation(fields: [senderId], references: [id])
-  message   String
-  createdAt DateTime      @default(now())
+  id              String        @id @default(uuid())
+  
+  ticketId        String
+  ticket          SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  // Who sent this?
+  senderType      TicketSenderType 
+
+  // Option A: Sent by Seller/Admin
+  userId          String?         
+  user            User?           @relation(fields: [userId], references: [id])
+
+  // Option B: Sent by Customer
+  customerUserId  String?
+  customerUser    CustomerUser?   @relation(fields: [customerUserId], references: [id])
+
+  message         String
+  attachmentUrls  String[]      @default([]) // URLs to S3/R2 images/PDFs
+
+  isRead          Boolean       @default(false)
+  createdAt       DateTime      @default(now())
 
   @@index([ticketId])
 }

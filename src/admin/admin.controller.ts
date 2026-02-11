@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, Req, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -279,5 +279,29 @@ private async parseBannerMultipartData(
     @Body() dto: UpdateProductPublishStatusDto
   ) {
     return this.adminService.updateProductPublishStatus(id, dto);
+  }
+
+  @Get('business/:id/overview')
+  @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get full business overview, owner info, and financial stats' })
+  @ApiResponse({ status: 200, description: 'Returns profile + calculated stats.' })
+  getBusinessOverview(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.getBusinessOverview(id);
+  }
+
+  @Get('business/:id/products')
+  @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all products for a specific business with pagination' })
+  getBusinessProducts(
+    @Param('id', ParseUUIDPipe) id: string,
+    // ✅ MOVED INSIDE THE FUNCTION
+    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 20,
+  ) {
+    return this.adminService.getBusinessProducts(id, Number(page), Number(limit));
   }
 }
