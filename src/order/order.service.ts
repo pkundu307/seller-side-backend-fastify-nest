@@ -343,7 +343,7 @@ export class OrdersService {
 
           // SELLER INFO
           sellerName: business?.name || 'Unknown Seller',
-          sellerId: business?.id
+          businessId: business?.id
         };
       })
     };

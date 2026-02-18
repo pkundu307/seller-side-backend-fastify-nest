@@ -10,6 +10,7 @@ import { SalePaginationDto } from './dto/sale-pagination.dto';
 import { GetSalesStatsDto } from './dto/get-sales-stats.dto';
 import { GetPosCustomersDto } from './dto/get-pos-customers.dto';
 import { DashboardFilterDto } from './dto/dashboard-filter.dto';
+import { SellerReplyTicketDto, SellerTicketQueryDto, UpdateTicketStatusDto } from './dto/seller-ticket.dto';
 // Define a type for the address object to cast the JSON to
 interface ShippingAddress {
   street: string;
@@ -1493,4 +1494,184 @@ async getDashboardOverview(businessId: string, query: DashboardFilterDto) {
     return enrichedDemand;
   }
 
+  async getBusinessTickets(businessId: string, query: SellerTicketQueryDto) {
+    const { page = 1, limit = 10, status, priority } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.SupportTicketWhereInput = {
+      businessId,
+      ...(status && { status }),
+      ...(priority && { priority }),
+    };
+
+    const [tickets, total] = await Promise.all([
+      this.prisma.supportTicket.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { lastMessageAt: 'desc' }, // Most recently active first
+        include: {
+          customerUser: {
+            select: { name: true, email: true, phoneNumber: true },
+          },
+          order: {
+            select: { orderNumber: true, totalAmount: true },
+          },
+          _count: {
+            select: { messages: true },
+          },
+        },
+      }),
+      this.prisma.supportTicket.count({ where }),
+    ]);
+
+    return {
+      data: tickets,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Get specific ticket details + chat history
+   */
+  async getTicketDetails(businessId: string, ticketId: string) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      include: {
+        customerUser: {
+          select: { id: true, name: true, email: true, picture: true },
+        },
+        order: {
+          select: { 
+            id: true, 
+            orderNumber: true, 
+            totalAmount: true, 
+            status: true, 
+            createdAt: true 
+          },
+        },
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            user: { select: { name: true } }, // Seller name
+            customerUser: { select: { name: true } }, // Customer name
+          },
+        },
+      },
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (ticket.businessId !== businessId) {
+      throw new ForbiddenException('This ticket does not belong to your business.');
+    }
+
+    return ticket;
+  }
+
+  /**
+   * Seller replies to a customer ticket
+   */
+  async replyToTicket(
+    userId: string, // The Seller ID
+    businessId: string,
+    ticketId: string,
+    dto: SellerReplyTicketDto,
+  ) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+    });
+
+    if (!ticket || ticket.businessId !== businessId) {
+      throw new NotFoundException('Ticket not found or access denied.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Create Message
+      const message = await tx.supportTicketMessage.create({
+        data: {
+          ticketId,
+          senderType: 'SELLER',
+          userId: userId, // Link to the staff/owner who replied
+          message: dto.message,
+          attachmentUrls: dto.attachmentUrls || [],
+        },
+      });
+
+      // 2. Update Ticket (Set status to IN_PROGRESS if it was OPEN)
+      await tx.supportTicket.update({
+        where: { id: ticketId },
+        data: {
+          lastMessageAt: new Date(),
+          status: ticket.status === 'OPEN' ? 'IN_PROGRESS' : undefined,
+        },
+      });
+
+      // 3. Notify Customer
+      await tx.customerNotification.create({
+        data: {
+          customerUserId: ticket.customerUserId,
+          title: `Response on Ticket #${ticket.id.slice(0, 5)}`,
+          message: `Seller replied: ${dto.message.substring(0, 40)}...`,
+          type: 'SYSTEM', // Assuming 'SYSTEM' or 'ORDER' exists in NotificationType
+          metadata: { ticketId: ticket.id },
+        },
+      });
+
+      return message;
+    });
+  }
+
+  /**
+   * Update Status (e.g., Mark as Resolved)
+   */
+  async updateTicketStatus(
+    businessId: string,
+    ticketId: string,
+    dto: UpdateTicketStatusDto,
+  ) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+    });
+
+    if (!ticket || ticket.businessId !== businessId) {
+      throw new NotFoundException('Ticket not found.');
+    }
+
+    return this.prisma.supportTicket.update({
+      where: { id: ticketId },
+      data: { status: dto.status },
+    });
+  }
+
+  /**
+   * Dashboard Stats for Tickets
+   */
+  async getTicketStats(businessId: string) {
+    const stats = await this.prisma.supportTicket.groupBy({
+      by: ['status'],
+      where: { businessId },
+      _count: { id: true },
+    });
+
+    // Format for frontend
+    const result = {
+      OPEN: 0,
+      IN_PROGRESS: 0,
+      RESOLVED: 0,
+      CLOSED: 0,
+      TOTAL: 0,
+    };
+
+    stats.forEach((s) => {
+      result[s.status] = s._count.id;
+      result.TOTAL += s._count.id;
+    });
+
+    return result;
+  }
 }

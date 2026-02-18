@@ -3,10 +3,11 @@ import { CustomerUserService } from './customer-user.service';
 import { CustomerUserController } from './customer-user.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { S3Service } from '../products/utils/s3Service'; // <--- Import S3Service
+import { CustomerTicketController } from './CustomerTicket.controller';
 
 @Module({
   imports: [PrismaModule], 
-  controllers: [CustomerUserController],
+  controllers: [CustomerUserController,CustomerTicketController],
   providers: [
     CustomerUserService, 
     S3Service // <--- Add S3Service as a provider

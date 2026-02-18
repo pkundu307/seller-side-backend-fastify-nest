@@ -1,12 +1,13 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Address, CustomerUser, Prisma } from '@prisma/client';
+import { Address, CustomerUser, Prisma, TicketStatus } from '@prisma/client';
 import { UpdateAddressDto } from './dto/update-address.dto';
 import { CreateAddressDto } from './dto/create-address.dto';
 import { AddToWaitlistDto } from './dto/add-to-waitlist.dto';
 import { S3Service } from 'src/products/utils/s3Service';
 import { CreateReviewDto, UpdateReviewDto } from './dto/review.dto';
 import * as sharp from 'sharp';
+import { CreateTicketDto, ReplyTicketDto } from './dto/ticket.dto';
 
 @Injectable()
 export class CustomerUserService {
@@ -305,4 +306,184 @@ export class CustomerUserService {
     });
   }
 
+
+   async createTicket(userId: string, dto: CreateTicketDto) {
+    // Optional: Verify order ownership if orderId is provided
+    if (dto.orderId) {
+      const order = await this.prisma.order.findUnique({
+        where: { id: dto.orderId },
+      });
+      if (!order || order.customerUserId !== userId) {
+        throw new NotFoundException('Order not found or does not belong to you.');
+      }
+      // Auto-assign businessId from order if not provided (optional logic)
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Create the Ticket
+      const ticket = await tx.supportTicket.create({
+        data: {
+          customerUserId: userId,
+          businessId: dto.businessId,
+          orderId: dto.orderId,
+          title: dto.title,
+          description: dto.description, // Store initial description
+          priority: dto.priority || 'MEDIUM',
+          messages: {
+            create: {
+              senderType: 'CUSTOMER',
+              customerUserId: userId,
+              message: dto.description, // Initial message matches description
+              attachmentUrls: dto.attachmentUrls || [],
+            },
+          },
+        },
+        include: { business: true },
+      });
+
+      // Notify the Seller (Business Owner)
+      if (ticket.business?.ownerId) {
+        await tx.sellerNotification.create({
+          data: {
+            userId: ticket.business.ownerId,
+            title: `New Ticket: ${dto.title}`,
+            message: `Customer opened a ticket for Order #${dto.orderId || 'General'}. Priority: ${ticket.priority}`,
+            type: 'ALERT', // Assuming 'ALERT' is in your NotificationType enum
+            metadata: { ticketId: ticket.id },
+          },
+        });
+      }
+
+      return ticket;
+    });
+  }
+
+  // 2. Get All Tickets for Customer
+  async getMyTickets(userId: string, status?: TicketStatus) {
+    return this.prisma.supportTicket.findMany({
+      where: {
+        customerUserId: userId,
+        ...(status && { status }), // Filter by status if provided
+      },
+      include: {
+        business: { select: { name: true, logoUrl: true } },
+        _count: { select: { messages: true } },
+      },
+      orderBy: { lastMessageAt: 'desc' }, // Show most active tickets first
+    });
+  }
+
+  // 3. Get Specific Ticket Details (Chat History)
+  async getTicketDetails(userId: string, ticketId: string) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      include: {
+        business: { select: { name: true, logoUrl: true } },
+        order: { select: { orderNumber: true, totalAmount: true, status: true } },
+        messages: {
+          orderBy: { createdAt: 'asc' }, // Oldest first (Chat style)
+          include: {
+            user: { select: { name: true, role: true } }, // Seller/Admin details
+            customerUser: { select: { name: true } },     // Customer details
+          }
+        },
+      },
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (ticket.customerUserId !== userId) throw new ForbiddenException('Access denied');
+
+    return ticket;
+  }
+
+  // 4. Reply to a Ticket
+  async replyToTicket(userId: string, ticketId: string, dto: ReplyTicketDto) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      include: { business: true }
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (ticket.customerUserId !== userId) throw new ForbiddenException('Access denied');
+    if (ticket.status === 'CLOSED') throw new BadRequestException('Cannot reply to a closed ticket.');
+
+    return this.prisma.$transaction(async (tx) => {
+      // Add Message
+      const message = await tx.supportTicketMessage.create({
+        data: {
+          ticketId,
+          senderType: 'CUSTOMER',
+          customerUserId: userId,
+          message: dto.message,
+          attachmentUrls: dto.attachmentUrls || [],
+        },
+      });
+
+      // Update Ticket Metadata
+      await tx.supportTicket.update({
+        where: { id: ticketId },
+        data: {
+          lastMessageAt: new Date(),
+          // If ticket was resolved, re-open it because customer replied? 
+          // Optional: status: ticket.status === 'RESOLVED' ? 'OPEN' : ticket.status 
+        },
+      });
+
+      // Notify Seller
+      await tx.sellerNotification.create({
+        data: {
+          userId: ticket.business.ownerId,
+          title: `Reply on Ticket #${ticketId.slice(0, 4)}`,
+          message: `${dto.message.substring(0, 50)}...`,
+          type: 'ALERT',
+          metadata: { ticketId },
+        },
+      });
+
+      return message;
+    });
+  }
+
+  // 5. Update Ticket Status (Resolve/Close)
+  async updateTicketStatus(userId: string, ticketId: string, status: TicketStatus) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    if (ticket.customerUserId !== userId) throw new ForbiddenException('Access denied');
+
+    return this.prisma.supportTicket.update({
+      where: { id: ticketId },
+      data: { status },
+    });
+  }
+// 6. Get Ticket(s) by Order ID
+  async getTicketsByOrderId(userId: string, orderId: string) {
+    // Verify the order belongs to the user first (Optional security check)
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { customerUserId: true }
+    });
+
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.customerUserId !== userId) throw new ForbiddenException('Access denied to this order.');
+
+    return this.prisma.supportTicket.findMany({
+      where: {
+        customerUserId: userId,
+        orderId: orderId,
+      },
+      include: {
+        business: { select: { name: true, logoUrl: true } },
+        _count: { select: { messages: true } },
+        // Optional: Include the latest message to show preview
+        messages: {
+          take: 1,
+          orderBy: { createdAt: 'desc' }
+        }
+      },
+      orderBy: { updatedAt: 'desc' }, // Most recent ticket first
+    });
+  }
 }

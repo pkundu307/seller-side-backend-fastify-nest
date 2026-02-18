@@ -5,9 +5,11 @@ import { CreateBannerDto } from './dto/create-banner.dto';
 import { S3Service } from '../products/utils/s3Service';
 import { UpdateBusinessVerificationDto } from './dto/update-business-verification.dto';
 import { CreateHomepageSectionDto } from './dto/create-homepage-section.dto';
+import { Prisma } from '@prisma/client';
 import { AdminProductFilterDto, UpdateProductPublishStatusDto } from './dto/product-verification.dto';
 import { UpdateBusinessDetailsDto } from './dto/update-business-details.dto';
 import { SettlementStatus } from '@prisma/client';
+import { AdminReplyTicketDto, AdminTicketQueryDto, AdminUpdateTicketStatusDto } from './dto/admin-ticket.dto';
 interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
   brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
@@ -415,6 +417,8 @@ async getProductsForVerification(query: AdminProductFilterDto) {
       return updatedProduct;
     });
   }
+
+  // 1. Fetch business overview with stats
  async getBusinessOverview(businessId: string) {
     // A. Fetch Profile & Entity Counts
     const business = await this.prisma.business.findUnique({
@@ -525,5 +529,186 @@ async getProductsForVerification(query: AdminProductFilterDto) {
     });
   }
 
+  async getAllTickets(query: AdminTicketQueryDto) {
+    const { page = 1, limit = 10, status, priority, businessId, customerUserId } = query;
+    const skip = (page - 1) * limit;
 
+    const where: Prisma.SupportTicketWhereInput = {
+      ...(status && { status }),
+      ...(priority && { priority }),
+      ...(businessId && { businessId }),
+      ...(customerUserId && { customerUserId }),
+    };
+
+    const [tickets, total] = await Promise.all([
+      this.prisma.supportTicket.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { lastMessageAt: 'desc' },
+        include: {
+          // 1. Business Info
+          business: {
+            select: {
+              id: true,
+              name: true,
+              logoUrl: true,
+              owner: { select: { name: true, email: true } }
+            }
+          },
+          // 2. Customer Info
+          customerUser: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phoneNumber: true,
+              picture: true
+            }
+          },
+          // 3. Order & Product Context
+          order: {
+            select: {
+              id: true,
+              orderNumber: true,
+              totalAmount: true,
+              status: true,
+              createdAt: true,
+              items: {
+                take: 1, // Get first item for display context
+                select: {
+                  variant: {
+                    select: {
+                      product: {
+                        select: { title: true, images: true }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          // 4. Activity
+          _count: { select: { messages: true } },
+        },
+      }),
+      this.prisma.supportTicket.count({ where }),
+    ]);
+
+    return {
+      data: tickets,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getTicketStats() {
+    const stats = await this.prisma.supportTicket.groupBy({
+      by: ['status'],
+      _count: { id: true },
+    });
+
+    const result = {
+      OPEN: 0,
+      IN_PROGRESS: 0,
+      RESOLVED: 0,
+      CLOSED: 0,
+      TOTAL: 0,
+    };
+
+    stats.forEach((s) => {
+      result[s.status] = s._count.id;
+      result.TOTAL += s._count.id;
+    });
+
+    return result;
+  }
+
+  async getTicketDetails(ticketId: string) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      include: {
+        business: { select: { id: true, name: true, ownerId: true } },
+        customerUser: { select: { id: true, name: true, email: true } },
+        order: { select: { id: true, orderNumber: true, totalAmount: true } },
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            user: { select: { name: true, role: true } }, 
+            customerUser: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    return ticket;
+  }
+
+  async replyAsAdmin(adminUserId: string, ticketId: string, dto: AdminReplyTicketDto) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      include: { business: true }
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket not found');
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Create Message
+      const message = await tx.supportTicketMessage.create({
+        data: {
+          ticketId,
+          senderType: 'ADMIN',
+          userId: adminUserId,
+          message: dto.message,
+          attachmentUrls: dto.attachmentUrls || [],
+        },
+      });
+
+      // 2. Update Status
+      await tx.supportTicket.update({
+        where: { id: ticketId },
+        data: {
+          lastMessageAt: new Date(),
+          status: 'IN_PROGRESS',
+        },
+      });
+
+      // 3. Notifications (Both sides)
+      if (ticket.customerUserId) {
+         await tx.customerNotification.create({
+          data: {
+            customerUserId: ticket.customerUserId,
+            title: `Support Update`,
+            message: `Admin: ${dto.message.substring(0, 40)}...`,
+            type: 'SYSTEM',
+            metadata: { ticketId: ticket.id },
+          },
+        });
+      }
+      
+      await tx.sellerNotification.create({
+        data: {
+          userId: ticket.business.ownerId,
+          title: `Support Update`,
+          message: `Admin: ${dto.message.substring(0, 40)}...`,
+          type: 'SYSTEM',
+          metadata: { ticketId: ticket.id },
+        },
+      });
+
+      return message;
+    });
+  }
+
+  async updateTicketStatus(ticketId: string, dto: AdminUpdateTicketStatusDto) {
+    return this.prisma.supportTicket.update({
+      where: { id: ticketId },
+      data: { status: dto.status },
+    });
+  }
 }

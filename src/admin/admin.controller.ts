@@ -11,6 +11,8 @@ import { FastifyRequest } from 'fastify'
 import { UpdateBusinessVerificationDto } from './dto/update-business-verification.dto';
 import { CreateHomepageSectionDto } from './dto/create-homepage-section.dto';
 import { AdminProductFilterDto, UpdateProductPublishStatusDto } from './dto/product-verification.dto';
+import { AdminReplyTicketDto, AdminTicketQueryDto, AdminUpdateTicketStatusDto } from './dto/admin-ticket.dto';
+import { UserRequest } from 'src/auth/auth.types';
 
 interface ParsedHomepageFiles {
   itemImages: Map<number, { buffer: Buffer; filename: string; mimetype: string }>;
@@ -303,5 +305,58 @@ private async parseBannerMultipartData(
     @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 20,
   ) {
     return this.adminService.getBusinessProducts(id, Number(page), Number(limit));
+  }
+   @Get('stats') 
+     @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get global support ticket statistics' })
+  getTicketStats() {
+    return this.adminService.getTicketStats();
+  }
+
+  // 2. Get All (List View)
+  @Get() 
+    @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ 
+    summary: 'Global Ticket View', 
+    description: 'Fetch all tickets. Returns Business Name, Customer Name, and Order details.' 
+  })
+  async getAllTickets(@Query() query: AdminTicketQueryDto) {
+    return this.adminService.getAllTickets(query);
+  }
+
+  // 3. Get Details (Chat View)
+  @Get('tickets/:id') 
+    @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get ticket details and chat history' })
+  getTicketDetails(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.getTicketDetails(id);
+  }
+
+  // 4. Reply
+  @Post('tickets/:id/reply') 
+    @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Reply to a ticket as Admin' })
+  replyAsAdmin(
+    @Req() req: UserRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminReplyTicketDto
+  ) {
+    return this.adminService.replyAsAdmin(req.user.id, id, dto);
+  }
+
+  // 5. Update Status
+  @Patch(':id/status') 
+    @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Close or Resolve a ticket' })
+  updateTicketStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminUpdateTicketStatusDto
+  ) {
+    return this.adminService.updateTicketStatus(id, dto);
   }
 }
