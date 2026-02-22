@@ -19,7 +19,7 @@ export class BusinessService {
   // ========================================================
   // CREATE BUSINESS
   // ========================================================
- async createBusiness(dto: CreateBusinessDto, ownerId: string) {
+async createBusiness(dto: CreateBusinessDto, ownerId: string) {
     // 1. Generate and Validate Slug
     let slug = slugify(dto.name);
     const existingSlug = await this.prisma.business.findUnique({ where: { slug } });
@@ -28,7 +28,6 @@ export class BusinessService {
     }
 
     // 2. Define Industry-Specific Default Configurations
-    // This allows the UI to know which features to toggle on/off immediately
     const industryConfigs: Record<IndustryType, any> = {
       [IndustryType.RETAIL_GENERAL]: { isBarcodeEnabled: true, isStockAlertEnabled: true },
       [IndustryType.RETAIL_PHARMACY]: { isBatchingEnabled: true, expiryAlertDays: 90, requiresDoctor: true },
@@ -42,7 +41,7 @@ export class BusinessService {
     const defaultConfig = industryConfigs[dto.industryType] || {};
 
     try {
-      // 3. Atomic Transaction: Create Business + Default Cash Drawer + Default Warehouse
+      // 3. Atomic Transaction: Create Business + Defaults + Agreement Log
       const business = await this.prisma.business.create({
         data: {
           name: dto.name,
@@ -55,9 +54,14 @@ export class BusinessService {
           phone: dto.phone,
           category: dto.category || 'General',
           industryType: dto.industryType,
-          businessConfig: defaultConfig, // Set industry defaults
+          businessConfig: defaultConfig,
           ownerId,
           slug,
+
+          // --- AGREEMENT DATA MAPPING ---
+          sellerAgreementAccepted: dto.sellerAgreementAccepted,
+          sellerAgreementVersion: dto.sellerAgreementVersion,
+          sellerAgreementAcceptedAt: new Date(), // Capture exact timestamp
           
           // Create a Default Cash Drawer for POS
           bankAccounts: {
@@ -76,6 +80,15 @@ export class BusinessService {
             create: {
               name: 'Main Store',
               isDefault: true,
+            }
+          },
+
+          // Optional: Create an initial audit log for agreement acceptance
+          agreementLogs: {
+            create: {
+              version: dto.sellerAgreementVersion,
+              acceptedAt: new Date(),
+              // ipAddress: ... (If you have access to request object here, pass it in)
             }
           }
         },
@@ -97,7 +110,6 @@ export class BusinessService {
       throw new InternalServerErrorException('Failed to create business profile.');
     }
   }
-
   // ========================================================
   // READ OPERATIONS
   // ========================================================

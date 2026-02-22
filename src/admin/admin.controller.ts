@@ -13,6 +13,7 @@ import { CreateHomepageSectionDto } from './dto/create-homepage-section.dto';
 import { AdminProductFilterDto, UpdateProductPublishStatusDto } from './dto/product-verification.dto';
 import { AdminReplyTicketDto, AdminTicketQueryDto, AdminUpdateTicketStatusDto } from './dto/admin-ticket.dto';
 import { UserRequest } from 'src/auth/auth.types';
+import { AdminOrderFilterDto, UpdateOrderAdminDto } from './dto/admin-order.dto';
 
 interface ParsedHomepageFiles {
   itemImages: Map<number, { buffer: Buffer; filename: string; mimetype: string }>;
@@ -358,5 +359,32 @@ private async parseBannerMultipartData(
     @Body() dto: AdminUpdateTicketStatusDto
   ) {
     return this.adminService.updateTicketStatus(id, dto);
+  }
+
+    @Get('orders')
+  @ApiOperation({ 
+    summary: 'List All Orders (Summary)', 
+    description: 'Fetch orders with filters (date, status, payment). Includes settlement status to check if Seller is paid.' 
+  })
+  async getAllOrders(@Query() query: AdminOrderFilterDto) {
+    return this.adminService.getAllOrders(query);
+  }
+
+  @Get('orders/:id')
+  @ApiOperation({ summary: 'Get Order Details (Deep Dive)' })
+  async getOrderDetails(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.getOrderDetails(id);
+  }
+
+  @Patch('orders/:id')
+  @ApiOperation({ 
+    summary: 'Update Order & Settlements', 
+    description: 'Update delivery status (Customer side) and Payout status (Seller side).' 
+  })
+  async updateOrder(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateOrderAdminDto
+  ) {
+    return this.adminService.updateOrderAdmin(id, dto);
   }
 }

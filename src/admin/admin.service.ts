@@ -10,6 +10,7 @@ import { AdminProductFilterDto, UpdateProductPublishStatusDto } from './dto/prod
 import { UpdateBusinessDetailsDto } from './dto/update-business-details.dto';
 import { SettlementStatus } from '@prisma/client';
 import { AdminReplyTicketDto, AdminTicketQueryDto, AdminUpdateTicketStatusDto } from './dto/admin-ticket.dto';
+import { AdminOrderFilterDto, UpdateOrderAdminDto } from './dto/admin-order.dto';
 interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
   brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
@@ -709,6 +710,190 @@ async getProductsForVerification(query: AdminProductFilterDto) {
     return this.prisma.supportTicket.update({
       where: { id: ticketId },
       data: { status: dto.status },
+    });
+  }
+
+    async getAllOrders(query: AdminOrderFilterDto) {
+    const { 
+      page = 1, limit = 10, search, businessId, 
+      status, paymentStatus, settlementStatus, 
+      startDate, endDate 
+    } = query;
+    
+    const skip = (page - 1) * limit;
+
+    // Build Dynamic Where Clause
+    const where: Prisma.OrderWhereInput = {
+      ...(status && { status }),
+      ...(paymentStatus && { paymentStatus }),
+      ...(search && { orderNumber: { contains: search, mode: 'insensitive' } }),
+      
+      // Date Range Filter
+      ...((startDate || endDate) && {
+        createdAt: {
+          ...(startDate && { gte: new Date(startDate) }),
+          ...(endDate && { lte: new Date(new Date(endDate).setHours(23, 59, 59)) }),
+        },
+      }),
+
+      // Complex Filter: Filter by Business ID or Settlement Status
+      // Since Order doesn't have businessId, we check items or settlements
+      ...(businessId && {
+        items: { some: { variant: { product: { businessId } } } }
+      }),
+      ...(settlementStatus && {
+        settlements: { some: { status: settlementStatus } }
+      })
+    };
+
+    const [orders, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          orderNumber: true,
+          createdAt: true,
+          totalAmount: true,
+          status: true,
+          paymentStatus: true, // Customer Payment
+          customerUser: {
+            select: { name: true, phoneNumber: true }
+          },
+          // Fetch Settlement Status (Seller Payment)
+          settlements: {
+            select: {
+              status: true,
+              netPayable: true,
+              business: { select: { id: true, name: true } }
+            }
+          },
+          // Minimal Product Details
+          items: {
+            take: 2, // Limit to 2 items for list view
+            select: {
+              quantity: true,
+              priceAtTimeOfOrder: true,
+              variant: {
+                select: {
+                  mrp: true,
+                  product: {
+                    select: { id: true, title: true }
+                  }
+                }
+              }
+            }
+          },
+          _count: { select: { items: true } }
+        }
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    // Transform Data for easier Frontend consumption
+    const formattedOrders = orders.map(order => ({
+      ...order,
+      // Helper to show if ALL sellers involved in this order are paid
+      platformSettlementStatus: order.settlements.every(s => s.status === 'PAID') && order.settlements.length > 0 
+        ? 'PAID' 
+        : 'PENDING',
+    }));
+
+    return {
+      data: formattedOrders,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * 2. Get Order Details (Deep View)
+   */
+  async getOrderDetails(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        customerUser: {
+          select: { id: true, name: true, email: true, phoneNumber: true, picture: true }
+        },
+        items: {
+          include: {
+            variant: {
+              include: {
+                product: {
+                  select: { id: true, title: true, images: true, businessId: true, business: { select: { name: true } } }
+                }
+              }
+            }
+          }
+        },
+        settlements: {
+          include: {
+            business: { select: { id: true, name: true, bankDetails: true } }
+          }
+        },
+        returnRequests: true,
+      }
+    });
+
+    if (!order) throw new NotFoundException('Order not found');
+    return order;
+  }
+
+  /**
+   * 3. Update Order (Status or Settlement)
+   */
+async updateOrderAdmin(orderId: string, dto: UpdateOrderAdminDto) {
+    const order = await this.prisma.order.findUnique({ 
+        where: { id: orderId },
+        include: { settlements: true }
+    });
+    
+    if (!order) throw new NotFoundException('Order not found');
+
+    return this.prisma.$transaction(async (tx) => {
+      let updatedOrder = order;
+
+      // A. Update Main Order Status (if provided)
+      if (dto.status || dto.trackingNumber) {
+        updatedOrder = await tx.order.update({
+          where: { id: orderId },
+          data: {
+            status: dto.status,
+            trackingNumber: dto.trackingNumber,
+            ...(dto.status === 'delivered' && { deliveredAt: new Date() }),
+            ...(dto.status === 'shipped' && { shippedAt: new Date() }),
+          },
+          // ✅ FIX: Include settlements so the return type matches 'updatedOrder'
+          include: { settlements: true } 
+        });
+      }
+
+      // B. Update Seller Settlement Status (Payout)
+      if (dto.settlementStatus) {
+        await tx.sellerSettlement.updateMany({
+          where: { orderId: orderId },
+          data: {
+            status: dto.settlementStatus,
+            referenceId: dto.payoutReferenceId, 
+            payoutDate: dto.settlementStatus === 'PAID' ? new Date() : undefined
+          }
+        });
+
+        // Optional: Refetch to ensure the return value shows the new settlement status
+        updatedOrder = await tx.order.findUnique({
+          where: { id: orderId },
+          include: { settlements: true }
+        }) as any; 
+      }
+
+      return updatedOrder;
     });
   }
 }

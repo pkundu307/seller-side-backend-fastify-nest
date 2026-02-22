@@ -1,5 +1,5 @@
 // src/business/dto/create-business.dto.ts
-import { IsString, IsEnum, IsOptional, IsNotEmpty } from 'class-validator';
+import { IsString, IsEnum, IsOptional, IsNotEmpty, IsBoolean, Equals } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IndustryType } from '@prisma/client';
 
@@ -52,4 +52,22 @@ export class CreateBusinessDto {
   @IsOptional()
   @IsString()
   category?: string;
+
+  // --- NEW FIELDS FOR AGREEMENT ---
+
+  @ApiProperty({ 
+    example: true, 
+    description: 'User must accept terms to proceed' 
+  })
+  @IsBoolean()
+  @Equals(true, { message: 'You must accept the Seller Services Agreement to continue.' })
+  sellerAgreementAccepted: boolean;
+
+  @ApiProperty({ 
+    example: 'v1.0', 
+    description: 'The version of the agreement displayed to the user' 
+  })
+  @IsString()
+  @IsNotEmpty()
+  sellerAgreementVersion: string;
 }
