@@ -11,11 +11,12 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Delete,
 } from '@nestjs/common';
 import { CategoryService } from './category.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CreateCategoryDto } from './dto/create-category.dto';
-import { AddAttributesBatchDto } from './dto/create-attribute.dto';
+import { AddAttributesBatchDto, CreateAttributeOptionDto } from './dto/create-attribute.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard'; // Adjust path if needed
 
 @ApiTags('Categories')
@@ -88,5 +89,50 @@ export class CategoryController { // Renamed for consistency
   getAllCategoriesAsTree() {
     // This endpoint is public and cached, so no auth guard is needed.
     return this.categoriesService.getAllCategoriesAsTree();
+  }
+
+  @Get('admin/tree')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Admin: Fetch full category tree with attributes and GST rates' })
+  getAdminTree() {
+    return this.categoriesService.getAdminCategoryTree();
+  }
+
+  @Post('attributes/:attributeId/options')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Admin: Add a new value/option to an existing attribute' })
+  addAttributeOption(
+    @Param('attributeId', ParseIntPipe) attributeId: number,
+    @Body() dto: CreateAttributeOptionDto
+  ) {
+    return this.categoriesService.addAttributeOption(attributeId, dto);
+  }
+
+  @Delete('attributes/options/:optionId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Admin: Delete a specific attribute option' })
+  deleteAttributeOption(@Param('optionId', ParseIntPipe) optionId: number) {
+    return this.categoriesService.deleteAttributeOption(optionId);
+  }
+
+  @Delete('attributes/:attributeId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Admin: Delete an entire attribute and its options' })
+  deleteAttribute(@Param('attributeId', ParseIntPipe) attributeId: number) {
+    return this.categoriesService.deleteAttribute(attributeId);
+  }
+
+  @Delete(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Admin: Delete Category (Recursively deletes subcategories and attributes)' })
+  @ApiResponse({ status: 200, description: 'Category tree deleted successfully' })
+  @ApiResponse({ status: 400, description: 'Cannot delete if products are attached' })
+  deleteCategory(@Param('id', ParseIntPipe) id: number) {
+    return this.categoriesService.deleteCategory(id);
   }
 }

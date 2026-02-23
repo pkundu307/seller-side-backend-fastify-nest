@@ -1,3 +1,4 @@
+//src/products/utils/s3Service.ts
 import {
   S3Client,
   PutObjectCommand,
@@ -14,7 +15,7 @@ export class S3Service {
   private readonly accountId: string;
 
   // Allowed folders (Security + validation)
-  private readonly allowedFolders = ['products', 'banners', 'avatars', 'categories', 'others','cart','assets','homepage-items'];
+  private readonly allowedFolders = ['products', 'banners', 'avatars', 'categories', 'others','cart','assets','homepage-items','reviews'];
 
   constructor() {
     const secretAccessKey = process.env.R2_SECRET_KEY;

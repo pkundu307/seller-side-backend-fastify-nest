@@ -49,8 +49,15 @@ export class AddAttributesBatchDto {
   attributes: AttributeInputDto[];
 
   //gst rate
-  @ApiProperty({ example: 18, description: 'The GST rate for the category' })
-  @IsNumber()
+  // @ApiProperty({ example: 18, description: 'The GST rate for the category' })
+  // @IsNumber()
+  // @IsNotEmpty()
+  // gstRate: number;
+}
+
+export class CreateAttributeOptionDto {
+  @ApiProperty({ example: 'XL', description: 'The value of the option (e.g., Red, XL)' })
+  @IsString()
   @IsNotEmpty()
-  gstRate: number;
+  value: string;
 }

@@ -1,83 +1,42 @@
-version: '3.8'
-
 services:
-  db:
-    image: postgres:15-alpine
-    container_name: jottosop-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: jottosop_user
-      POSTGRES_PASSWORD: jottosop_password
-      POSTGRES_DB: jottosop_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U jottosop_user -d jottosop_db"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: jottosop-rabbitmq
-    restart: unless-stopped
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    environment:
-      RABBITMQ_DEFAULT_USER: jottosop
-      RABBITMQ_DEFAULT_PASS: jottosop_password
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-
   main-api:
     build:
       context: ./main-api
       dockerfile: Dockerfile
-    container_name: jottosop-main-api
-    restart: unless-stopped
-    ports:
-      - "3001:3001"
-    depends_on:
-      db:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_started
+    container_name: jottosop_api
+    restart: always
+    
+    # ⚠️ COMMENTED OUT for isolation testing. 
+    # Uncomment these when you add the postgres/redis services back.
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
+    #   redis:
+    #     condition: service_started
+    #   rabbitmq:
+    #     condition: service_healthy
+    
     env_file:
-      - ./main-api/.env
+      - ./main-api/.env 
+    
+    # ✅ FIX: Either remove this key completely or add variables like below.
+    # I added connection string overrides here because typically
+    # your .env has 'localhost', but Docker needs service names (e.g. 'postgres').
     environment:
-      DATABASE_URL: "postgresql://jottosop_user:jottosop_password@db:5432/jottosop_db?schema=public"
-      RABBITMQ_URL: "amqp://jottosop:jottosop_password@rabbitmq:5672"
-      NODE_ENV: production
-    command: >
-      sh -c "
-      echo '--- Applying database migrations ---' &&
-      npx prisma migrate deploy &&
-      echo '--- Starting production server ---' &&
-      node dist/src/main.js
-      "
+      - NODE_ENV=production
+      # - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}?schema=public
+      # - REDIS_HOST=redis
+      # - REDIS_PORT=6379
 
-  prisma-studio:
-    image: node:18-alpine
-    container_name: jottosop-prisma-studio
-    working_dir: /app
-    volumes:
-      - ./main-api:/app
     ports:
-      - "5555:5555"
-    depends_on:
-      - db
-    environment:
-      DATABASE_URL: "postgresql://jottosop_user:jottosop_password@db:5432/jottosop_db?schema=public"
-    command: >
-      sh -c "
-      npm install &&
-      npx prisma generate &&
-      npx prisma studio
-      "
+      - "3001:3001" 
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    networks:
+      - jottosop_net
 
-volumes:
-  postgres_data:
-  rabbitmq_data:
+networks:
+  jottosop_net:
+    driver: bridge

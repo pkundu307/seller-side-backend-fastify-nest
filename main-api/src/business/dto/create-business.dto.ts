@@ -1,36 +1,73 @@
-import { IsString } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+// src/business/dto/create-business.dto.ts
+import { IsString, IsEnum, IsOptional, IsNotEmpty, IsBoolean, Equals } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IndustryType } from '@prisma/client';
 
 export class CreateBusinessDto {
-  @ApiProperty({ description: 'Name of the business' })
+  @ApiProperty({ example: 'My Awesome Shop' })
   @IsString()
+  @IsNotEmpty()
   name: string;
 
-  @ApiProperty({ description: 'GST number of the business' })
+  @ApiProperty({ enum: IndustryType, default: IndustryType.RETAIL_GENERAL })
+  @IsEnum(IndustryType)
+  industryType: IndustryType;
+
+  @ApiProperty({ example: '22AAAAA0000A1Z5' })
   @IsString()
+  @IsNotEmpty()
   gstNumber: string;
 
-  @ApiProperty({ description: 'Street address of the business' })
+  @ApiProperty({ example: '123 Business Street' })
   @IsString()
+  @IsNotEmpty()
   address: string;
 
-  @ApiProperty({ description: 'City where the business is located' })
+  @ApiProperty({ example: 'Mumbai' })
   @IsString()
+  @IsNotEmpty()
   city: string;
 
-  @ApiProperty({ description: 'State where the business is located' })
+  @ApiProperty({ example: 'Maharashtra' })
   @IsString()
+  @IsNotEmpty()
   state: string;
 
-  @ApiProperty({ description: 'Country where the business is located' })
+  @ApiProperty({ example: 'India' })
   @IsString()
+  @IsNotEmpty()
   country: string;
 
-  @ApiProperty({ description: 'Postal code for the business address' })
+  @ApiProperty({ example: '400001' })
   @IsString()
+  @IsNotEmpty()
   postalCode: string;
 
-  @ApiProperty({ description: 'Contact phone number for the business' })
+  @ApiProperty({ example: '9876543210' })
   @IsString()
+  @IsNotEmpty()
   phone: string;
+
+  @ApiPropertyOptional({ example: 'Fashion & Retail' })
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  // --- NEW FIELDS FOR AGREEMENT ---
+
+  @ApiProperty({ 
+    example: true, 
+    description: 'User must accept terms to proceed' 
+  })
+  @IsBoolean()
+  @Equals(true, { message: 'You must accept the Seller Services Agreement to continue.' })
+  sellerAgreementAccepted: boolean;
+
+  @ApiProperty({ 
+    example: 'v1.0', 
+    description: 'The version of the agreement displayed to the user' 
+  })
+  @IsString()
+  @IsNotEmpty()
+  sellerAgreementVersion: string;
 }

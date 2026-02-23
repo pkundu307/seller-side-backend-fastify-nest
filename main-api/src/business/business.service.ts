@@ -9,7 +9,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { slugify } from '../utils/slugify'; 
-import { Prisma } from '@prisma/client';
+import { AccountType, Prisma } from '@prisma/client';
+import { IndustryType } from '@prisma/client';
 
 @Injectable()
 export class BusinessService {
@@ -18,44 +19,97 @@ export class BusinessService {
   // ========================================================
   // CREATE BUSINESS
   // ========================================================
-  async createBusiness(dto: CreateBusinessDto, ownerId: string) {
-    // 1. Generate Slug from Name
+async createBusiness(dto: CreateBusinessDto, ownerId: string) {
+    // 1. Generate and Validate Slug
     let slug = slugify(dto.name);
-
-    // 2. Ensure Slug Uniqueness
-    // If "My Store" exists, we don't want to crash. We change it to "my-store-1234"
     const existingSlug = await this.prisma.business.findUnique({ where: { slug } });
     if (existingSlug) {
       slug = `${slug}-${Math.floor(1000 + Math.random() * 9000)}`;
     }
 
+    // 2. Define Industry-Specific Default Configurations
+    const industryConfigs: Record<IndustryType, any> = {
+      [IndustryType.RETAIL_GENERAL]: { isBarcodeEnabled: true, isStockAlertEnabled: true },
+      [IndustryType.RETAIL_PHARMACY]: { isBatchingEnabled: true, expiryAlertDays: 90, requiresDoctor: true },
+      [IndustryType.RETAIL_FASHION]: { isVariantMatrixEnabled: true, hasFittingRooms: true },
+      [IndustryType.RESTAURANT_QSR]: { autoPrintKOT: true, hasTokenDisplay: true },
+      [IndustryType.RESTAURANT_DINEIN]: { hasTableManagement: true, serviceChargePct: 5, enableKOT: true },
+      [IndustryType.SERVICE_SALON]: { isAppointmentEnabled: true, staffCommissionEnabled: true },
+      [IndustryType.TOUR_AND_TRAVEL]: { isBookingEnabled: true, visaProcessingEnabled: true },
+    };
+
+    const defaultConfig = industryConfigs[dto.industryType] || {};
+
     try {
-      // 3. Create Record
+      // 3. Atomic Transaction: Create Business + Defaults + Agreement Log
       const business = await this.prisma.business.create({
         data: {
-          ...dto,
+          name: dto.name,
+          gstNumber: dto.gstNumber,
+          address: dto.address,
+          city: dto.city,
+          state: dto.state,
+          country: dto.country,
+          postalCode: dto.postalCode,
+          phone: dto.phone,
+          category: dto.category || 'General',
+          industryType: dto.industryType,
+          businessConfig: defaultConfig,
           ownerId,
-          slug, // Save the generated slug
-          // id: ... (Removed: Let Prisma/DB generate the UUID automatically)
+          slug,
+
+          // --- AGREEMENT DATA MAPPING ---
+          sellerAgreementAccepted: dto.sellerAgreementAccepted,
+          sellerAgreementVersion: dto.sellerAgreementVersion,
+          sellerAgreementAcceptedAt: new Date(), // Capture exact timestamp
+          
+          // Create a Default Cash Drawer for POS
+          bankAccounts: {
+            create: {
+              accountName: 'Cash Drawer',
+              accountType: AccountType.CASH,
+              isDefault: true,
+              isEnabled: true,
+              openingBalance: 0,
+              closingBalance: 0
+            }
+          },
+
+          // Create a Default Warehouse/Store Room
+          warehouses: {
+            create: {
+              name: 'Main Store',
+              isDefault: true,
+            }
+          },
+
+          // Optional: Create an initial audit log for agreement acceptance
+          agreementLogs: {
+            create: {
+              version: dto.sellerAgreementVersion,
+              acceptedAt: new Date(),
+              // ipAddress: ... (If you have access to request object here, pass it in)
+            }
+          }
         },
       });
 
       return business;
 
     } catch (error) {
-      // 4. Handle Unique Constraint Violations (e.g., GST Number)
+      // 4. Handle Specific DB Errors
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
           const target = error.meta?.target as string[];
-          if (target && target.includes('gstNumber')) {
+          if (target?.includes('gstNumber')) {
             throw new ConflictException('A business with this GST Number already exists.');
           }
         }
       }
-      throw new InternalServerErrorException('Could not create business');
+      // this.logger.error(`Business Creation Failed: ${error.message}`);
+      throw new InternalServerErrorException('Failed to create business profile.');
     }
   }
-
   // ========================================================
   // READ OPERATIONS
   // ========================================================

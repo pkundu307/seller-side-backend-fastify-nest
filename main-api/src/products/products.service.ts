@@ -172,9 +172,17 @@ export class ProductsService {
 
     // FIXED: The entire method logic is now correctly structured.
 async createProduct(businessId: string, formData: any) {
-  console.log(`[CREATE_PRODUCT] Service triggered for business ID: ${businessId}`);
-  console.log('[CREATE_PRODUCT] Received Raw FormData:', JSON.stringify(formData, null, 2));
+  const categoryId = parseInt(formData.categoryId, 10);
+    const category = await this.prisma.category.findUnique({
+      where: { id: categoryId },
+      select: { gstRate: true },
+    });
 
+    if (!category) {
+      throw new BadRequestException(`Category with ID ${categoryId} not found.`);
+    }
+    const gstRate = category.gstRate || new Prisma.Decimal(0);
+console.log(gstRate,'opopo')
   const uploadedImageUrlsForRollback: string[] = [];
 
   try {
@@ -217,14 +225,12 @@ async createProduct(businessId: string, formData: any) {
     console.log(`[CREATE_PRODUCT] 🔄 Step 3: Processing ${formData.variants.length} variant(s)...`);
     const variantsToCreate = await Promise.all(
       formData.variants.map(async (variant: any, index: number) => {
-        console.log(`[VARIANT_LOOP | Index ${index}] --- Start processing variant with SKU: ${variant.sku} ---`);
 
         // 3a. Attribute validation
         if (!variant.attributes || !Array.isArray(variant.attributes) || variant.attributes.length === 0) {
           throw new BadRequestException(`Variant with SKU ${variant.sku} must have at least one attribute.`);
         }
         const attributeOptionIds = variant.attributes.map((attr: any) => parseInt(attr.attributeOptionId, 10));
-        console.log(`[VARIANT_LOOP | Index ${index}] Validating Attribute Option IDs:`, attributeOptionIds);
 
         const chosenOptions = await this.prisma.attributeOption.findMany({
           where: { id: { in: attributeOptionIds } },
@@ -268,6 +274,7 @@ async createProduct(businessId: string, formData: any) {
         const variantDataForPrisma = {
           sku: variant.sku,
           price: new Prisma.Decimal(variant.price),
+          tax: gstRate+'',
           stock: parseInt(variant.stock, 10),
           mrp: variant.mrp ? new Prisma.Decimal(variant.mrp) : undefined,
           hsnCode: variant.hsnCode,
@@ -363,6 +370,7 @@ async createProduct(businessId: string, formData: any) {
           slug: true,
           images: true,
           isPublished: true,
+          category: { select: { id: true, name: true } },
           variants: { where: { isDefault: true }, select: { price: true, stock: true }, take: 1 },
         },
         skip,
@@ -371,6 +379,8 @@ async createProduct(businessId: string, formData: any) {
       }),
       this.prisma.product.count({ where: whereClause }),
     ]);
+  
+    
 
     const formattedProducts = products.map(p => ({
       id: p.id,
@@ -378,6 +388,7 @@ async createProduct(businessId: string, formData: any) {
       slug: p.slug,
       images: p.images,
       isPublished: p.isPublished,
+      category:p.category,
       price: p.variants.length > 0 ? p.variants[0].price : null,
       stock: p.variants.length > 0 ? p.variants[0].stock : null,
     }));
@@ -389,31 +400,55 @@ async createProduct(businessId: string, formData: any) {
   /**
    * Fetches a single product with all its detailed variant and attribute information.
    */
-  async getProductByIdForBusiness(businessId: string, productId: string, userId: string) {
-    const product = await this.prisma.product.findFirst({
-      where: { id: productId, businessId: businessId, business: { ownerId: userId } },
-      include: {
-        category: { select: { id: true, name: true } },
-        variants: {
-          orderBy: { createdAt: 'asc' },
-          include: {
-            attributeValues: {
-              include: {
-                attribute: { select: { id: true, name: true } },
-                attributeOption: { select: { id: true, value: true } },
-              },
+// src/products/products.service.ts
+
+async getProductByIdForBusiness(businessId: string, productId: string, userId: string) {
+  const product = await this.prisma.product.findFirst({
+    where: {
+      id: productId,
+      businessId: businessId,
+      business: { ownerId: userId }, // Triple-check for security
+    },
+    include: {
+      category: { select: { id: true, name: true } },
+      variants: {
+        orderBy: { createdAt: 'asc' },
+        // --- THIS IS THE FIX ---
+        // Start with a 'select' block to specify all desired fields and relations.
+        select: {
+          // 1. List all the SCALAR fields from the Variant model you need.
+          id: true,
+          sku: true,
+          price: true,
+          stock: true,
+          mrp: true,
+          hsnCode: true,
+          images: true,
+          tax: true, // This now works correctly.
+          isDefault: true,
+          status: true,
+          // ... add any other variant fields you need, like 'weightInGrams'
+
+          // 2. Now, include the RELATION inside the same 'select' block.
+          attributeValues: {
+            include: {
+              attribute: { select: { id: true, name: true } },
+              attributeOption: { select: { id: true, value: true } },
             },
           },
         },
+        // --- END OF FIX ---
       },
-    });
+      reviews: { take: 5, orderBy: { createdAt: 'desc' } },
+    },
+  });
 
-    if (!product) {
-      throw new NotFoundException(`Product with ID "${productId}" not found or you do not have permission to access it.`);
-    }
-
-    return product;
+  if (!product) {
+    throw new NotFoundException(`Product with ID "${productId}" not found or you do not have permission to access it.`);
   }
+
+  return product;
+}
 
   /**
    * A helper method to generate a URL-friendly slug from a string.
@@ -427,6 +462,8 @@ async createProduct(businessId: string, formData: any) {
       .trim();
   }
 
+// src/products/products.service.ts
+
 async updateProduct(
   productId: string,
   userId: string,
@@ -436,69 +473,84 @@ async updateProduct(
   newModel3dFile?: any,
   newSlicenseDocumentFile?: any,
 ) {
-  // --- STEP 1: PREPARATION (Outside the transaction) ---
-  // This part of your code is excellent and remains unchanged.
+  console.log(`[UPDATE_PRODUCT] Service triggered for Product ID: ${productId} by User ID: ${userId}`);
+  console.log('[UPDATE_PRODUCT] Received DTO:', JSON.stringify(dto, null, 2));
+  console.log(`[UPDATE_PRODUCT] Received ${newProductImages.length} new product image files.`);
+  console.log(`[UPDATE_PRODUCT] Received new variant images for ${newVariantImagesMap.size} variants.`);
+
+  // --- STEP 1: PREPARATION & VALIDATION (Outside Transaction) ---
+  console.log('[UPDATE_PRODUCT] 🔄 Step 1: Fetching and validating existing product...');
   const product = await this.prisma.product.findUnique({
     where: { id: productId },
     include: { business: true, variants: true },
   });
 
   if (!product) {
+    console.error(`[UPDATE_PRODUCT] ❌ ERROR: Product with ID "${productId}" not found.`);
     throw new NotFoundException(`Product with ID "${productId}" not found.`);
   }
   if (product.business.ownerId !== userId) {
-    throw new ForbiddenException(
-      'You do not have permission to modify this product.',
-    );
+    console.error(`[UPDATE_PRODUCT] ❌ FORBIDDEN: User ${userId} does not own business ${product.businessId}.`);
+    throw new ForbiddenException('You do not have permission to modify this product.');
   }
+  console.log('[UPDATE_PRODUCT] ✅ Product and ownership validated successfully.');
 
+  // --- File Deletion Logic ---
   const filesToDeleteFromS3: string[] = dto.imagesToDelete || [];
-  if (dto.deleteModel3d && product.model3dUrl) {
-    filesToDeleteFromS3.push(product.model3dUrl);
-  }
-  if (dto.deleteSlicenseDocument && product.licenseDocumentUrl) {
-    filesToDeleteFromS3.push(product.licenseDocumentUrl);
-  }
+  if (dto.deleteModel3d && product.model3dUrl) filesToDeleteFromS3.push(product.model3dUrl);
+  if (dto.deleteSlicenseDocument && product.licenseDocumentUrl) filesToDeleteFromS3.push(product.licenseDocumentUrl);
   
   if (filesToDeleteFromS3.length > 0) {
+    console.log('[UPDATE_PRODUCT] Deleting files from S3:', filesToDeleteFromS3);
     await this.s3Service.deleteImages(filesToDeleteFromS3);
+    console.log('[UPDATE_PRODUCT] ✅ S3 deletion successful.');
   }
 
+  // --- File Upload Logic ---
   const newUploadedUrls: string[] = [];
-  const uploadAndTrack = async (file: any): Promise<string> => {
-    const url = await this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype,"products");
+  const uploadAndTrack = async (file: any, type: string): Promise<string> => {
+    console.log(`[UPLOAD] Uploading file: ${file.filename} for type: ${type}`);
+    const url = await this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype, "products");
     newUploadedUrls.push(url);
+    console.log(`[UPLOAD] ✅ Uploaded successfully to: ${url}`);
     return url;
   };
 
   try {
-    const newProductImageUrls = await Promise.all(newProductImages.map(uploadAndTrack));
-    const newModel3dUrl = newModel3dFile ? await uploadAndTrack(newModel3dFile) : undefined;
-    const newlicenseDocumentUrl = newSlicenseDocumentFile ? await uploadAndTrack(newSlicenseDocumentFile) : undefined;
+    console.log('[UPDATE_PRODUCT] 🔄 Step 1b: Uploading all new files...');
+    const newProductImageUrls = await Promise.all(newProductImages.map(file => uploadAndTrack(file, 'product')));
+    const newModel3dUrl = newModel3dFile ? await uploadAndTrack(newModel3dFile, 'model3d') : undefined;
+    const newlicenseDocumentUrl = newSlicenseDocumentFile ? await uploadAndTrack(newSlicenseDocumentFile, 'licenseDocument') : undefined;
+    console.log('[UPDATE_PRODUCT] ✅ All primary files uploaded.');
 
-    const finalProductImages = [
-      ...product.images.filter((url) => !dto.imagesToDelete?.includes(url)),
-      ...newProductImageUrls,
-    ];
+    // Prepare final image arrays
+    const finalProductImages = [...product.images.filter((url) => !dto.imagesToDelete?.includes(url)), ...newProductImageUrls];
     const finalModel3dUrl = newModel3dUrl ?? (dto.deleteModel3d ? null : product.model3dUrl);
     const finallicenseDocumentUrl = newlicenseDocumentUrl ?? (dto.deleteSlicenseDocument ? null : product.licenseDocumentUrl);
-    
+
+    console.log('[UPDATE_PRODUCT] Preparing variant data...');
     const preparedVariantsData = await Promise.all(
       dto.variants.map(async (variantDto, index) => {
         const newVariantImages = newVariantImagesMap.get(index.toString()) || [];
-        const newVariantImageUrls = await Promise.all(newVariantImages.map(uploadAndTrack));
+        const newVariantImageUrls = await Promise.all(newVariantImages.map(file => uploadAndTrack(file, `variant_${index}`)));
         const finalVariantImages = [
           ...(variantDto.images || []).filter(url => !dto.imagesToDelete?.includes(url)),
           ...newVariantImageUrls,
         ];
+        console.log(`[PREPARE_VARIANT] Final images for variant ${index}:`, finalVariantImages);
         return { dto: variantDto, finalImages: finalVariantImages };
       }),
     );
+    console.log('[UPDATE_PRODUCT] ✅ All variant data prepared.');
 
-    // --- STEP 2: EXECUTION (Inside the transaction) ---
+
+    // --- STEP 2: DATABASE TRANSACTION ---
+    console.log('[UPDATE_PRODUCT] 🔄 Step 2: Starting database transaction...');
     return await this.prisma.$transaction(
       async (tx) => {
+        console.log('[TX] Inside transaction.');
         // 2a. Update the Product itself
+        console.log('[TX] 🔄 Updating main product record...');
         await tx.product.update({
           where: { id: productId },
           data: {
@@ -513,16 +565,20 @@ async updateProduct(
             customizationConfig: dto.customizationConfig ? JSON.parse(dto.customizationConfig) : undefined,
           },
         });
+        console.log('[TX] ✅ Main product record updated.');
 
-        // 2b. Process Variants - Deletions
+        // 2b. Process Variant Deletions
         const existingVariantIds = product.variants.map((v) => v.id);
         const incomingVariantIds = dto.variants.map((v) => v.id).filter(Boolean);
         const variantsToDelete = existingVariantIds.filter((id) => !incomingVariantIds.includes(id));
         if (variantsToDelete.length > 0) {
+          console.log('[TX] 🔄 Deleting variants with IDs:', variantsToDelete);
           await tx.variant.deleteMany({ where: { id: { in: variantsToDelete } } });
+          console.log('[TX] ✅ Variants deleted.');
         }
 
-        // 2c. Process Variants - Updates and Creates (THE FIX IS HERE)
+        // 2c. Process Variant Updates and Creates
+        console.log('[TX] 🔄 Processing variant updates and creates...');
         for (const preparedVariant of preparedVariantsData) {
           const variantDto = preparedVariant.dto;
           const finalImages = preparedVariant.finalImages;
@@ -532,39 +588,33 @@ async updateProduct(
             attributeOption: { connect: { id: attr.attributeOptionId } },
           }));
 
-          if (variantDto.id) {
-            // UPDATE EXISTING VARIANT
+          if (variantDto.id) { // UPDATE
+            console.log(`[TX] Updating variant with ID: ${variantDto.id}`);
             await tx.variantAttributeValue.deleteMany({ where: { variantId: variantDto.id } });
             await tx.variant.update({
               where: { id: variantDto.id },
               data: {
-                sku: variantDto.sku,
-                price: variantDto.price,
-                mrp: variantDto.mrp,
-                stock: variantDto.stock,
-                status: variantDto.status,
-                images: finalImages,
+                sku: variantDto.sku, price: variantDto.price, mrp: variantDto.mrp, stock: variantDto.stock,
+                status: variantDto.status, images: finalImages,
                 attributeValues: { create: attributeValuesToCreate },
               },
             });
-          } else {
-            // CREATE NEW VARIANT
+          } else { // CREATE
+            console.log(`[TX] Creating new variant with SKU: ${variantDto.sku}`);
             await tx.variant.create({
               data: {
-                sku: variantDto.sku,
-                price: variantDto.price,
-                mrp: variantDto.mrp,
-                stock: variantDto.stock,
-                status: variantDto.status,
-                images: finalImages,
+                sku: variantDto.sku, price: variantDto.price, mrp: variantDto.mrp, stock: variantDto.stock,
+                status: variantDto.status, images: finalImages,
                 product: { connect: { id: productId } },
                 attributeValues: { create: attributeValuesToCreate },
               },
             });
           }
         }
+        console.log('[TX] ✅ Variants processed.');
 
         // 2d. Return the fully updated product
+        console.log('[TX] 🔄 Fetching final, updated product data...');
         return tx.product.findUnique({
           where: { id: productId },
           include: {
@@ -576,9 +626,10 @@ async updateProduct(
       { maxWait: 15000, timeout: 30000 },
     );
   } catch (error) {
+    console.error('[UPDATE_PRODUCT] ❌ ERROR caught in main try/catch block:', error);
     if (newUploadedUrls.length > 0) {
-      console.error('An error occurred. Rolling back S3 uploads:', newUploadedUrls);
-      // await this.s3Service.deleteImages(newUploadedUrls);
+      console.warn('[UPDATE_PRODUCT] Rolling back S3 uploads:', newUploadedUrls);
+      // await this.s3Service.deleteImages(newUploadedUrls); // Uncomment for production
     }
     throw error;
   }
@@ -635,7 +686,7 @@ async updateProduct(
  async getProductDetailsForCustomer(productId: string) {
     const product = await this.prisma.product.findUnique({
       where: {
-        id: productId,
+        slug: productId,
         isPublished: true, // Only return published products to customers
       },
       include: {
@@ -705,9 +756,17 @@ async updateProduct(
           orderBy: { createdAt: 'desc' },
           select: {
             id: true,
+            customerUserId: true,
             rating: true,
             comment: true,
             createdAt: true,
+             images: true,
+              customerUser: {
+            select: {
+              name: true,
+              picture: true, // Included picture for the user avatar
+            },
+          },
           },
         },
       },

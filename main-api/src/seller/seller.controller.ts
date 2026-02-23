@@ -9,6 +9,12 @@ import { UpdateSellerOrderDto } from './dto/update-order.dtp';
 import { FastifyReply } from 'fastify';
 import { CreatePosSaleDto } from './dto/create-pos-sale.dto';
 import { SalePaginationDto } from './dto/sale-pagination.dto';
+import { GetSalesStatsDto } from './dto/get-sales-stats.dto';
+import { GetPosCustomersDto } from './dto/get-pos-customers.dto';
+import { UpdatePosSaleDto } from './dto/update-pos-sale.dto';
+import { PdfService } from './pdf.service';
+import { DashboardFilterDto } from './dto/dashboard-filter.dto';
+import { SellerReplyTicketDto, SellerTicketQueryDto, UpdateTicketStatusDto } from './dto/seller-ticket.dto';
 
 @ApiTags('Seller Dashboard')
 @ApiBearerAuth()
@@ -18,6 +24,7 @@ export class SellerController {
   constructor(
     private readonly sellerService: SellerService,
     private readonly prisma: PrismaService, // Inject Prisma for ownership check
+    private readonly pdfService: PdfService
   ) {}
 
   // Middleware-like function to verify ownership
@@ -145,5 +152,151 @@ async createPosSale(
   ) {
     await this.verifyBusinessOwnership(req.user.id, businessId);
     return this.sellerService.getBusinessSaleById(businessId, saleId);
+  }
+  
+ @Get(':businessId/sales/stats')
+  @ApiOperation({ summary: 'Get sales statistics and timeline for a dashboard' })
+  @ApiResponse({ status: 200, description: 'Returns aggregated sales data.' })
+  async getStats(
+    @Param('businessId') businessId: string,
+    @Query() query: GetSalesStatsDto,
+  ) {
+    return this.sellerService.getSalesStats(businessId, query);
+  }
+  @Get(':businessId/pos/products')
+@ApiOperation({ summary: 'Minified product search for POS dropdown' })
+async getPosProducts(
+  @Param('businessId', ParseUUIDPipe) businessId: string,
+  @Query('search') search?: string, // <--- marked as optional
+) {
+  return this.sellerService.getPosProducts(businessId, search);
+}
+
+@Get(':businessId/customers')
+@ApiOperation({ summary: 'Get all POS customers linked to this business' })
+async getBusinessCustomers(
+  @Param('businessId', ParseUUIDPipe) businessId: string,
+  @Query() query: GetPosCustomersDto,
+) {
+  return this.sellerService.getPosCustomers(businessId, query);
+}
+ @Patch(':businessId/sales/:saleId')
+  @ApiOperation({ summary: 'Update an existing sale (Reverts and Re-applies)' })
+  async updatePosSale(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Param('saleId', ParseUUIDPipe) saleId: string,
+    @Body() dto: UpdatePosSaleDto,
+  ) {
+    await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.updatePosSale(businessId, saleId, dto);
+  }
+
+  // 2. Download Invoice PDF (Fastify Version)
+   @Get(':businessId/sales/:saleId/pdf')
+  @ApiOperation({ summary: 'Generate PDF Invoice for a Sale' })
+  async generateSalePdf(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Param('saleId', ParseUUIDPipe) saleId: string,
+    @Res() res: FastifyReply,
+  ) {
+    // 1. Security Check
+    await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
+
+    // 2. Fetch Data (Includes Business Info now)
+    const sale = await this.sellerService.getBusinessSaleById(businessId, saleId);
+
+    // 3. Generate PDF
+    // Cast sale to 'any' if TypeScript complains about strict type matching 
+    // or ensure getBusinessSaleById return type matches FullSale
+    const buffer = await this.pdfService.generateSaleInvoicePdf(sale as any);
+
+    // 4. Send Response
+    res.header('Content-Type', 'application/pdf');
+    res.header(
+      'Content-Disposition',
+      `attachment; filename=Invoice-${sale.invoicePrefix}-${sale.invoiceNo}.pdf`,
+    );
+    res.header('Content-Length', buffer.length.toString());
+
+    res.send(buffer);
+  }
+
+    @Get(':businessId/dashboard/overview')
+  @ApiOperation({ summary: 'Get main dashboard stats (Sales, Purchases, Graph, Recent Activity)' })
+  async getDashboardOverview(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Query() query: DashboardFilterDto,
+  ) {
+    await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.getDashboardOverview(businessId, query);
+  }
+
+    @Get(':businessId/waitlist/summary')
+  @ApiOperation({ summary: 'Seller Analytics: See which products have the most people waiting' })
+  async getWaitlistSummary(
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Req() req: UserRequest,
+  ) {
+    await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.getWaitlistAnalytics(businessId);
+  }
+
+    @Get(':businessId/tickets/stats')
+  @ApiOperation({ summary: 'Get counts of tickets by status' })
+  async getTicketStats(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+  ) {
+    await this.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.getTicketStats(businessId);
+  }
+
+  @Get(':businessId/tickets')
+  @ApiOperation({ summary: 'Get all tickets for the business with pagination' })
+  async getBusinessTickets(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Query() query: SellerTicketQueryDto,
+  ) {
+    await this.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.getBusinessTickets(businessId, query);
+  }
+
+  @Get(':businessId/tickets/:ticketId')
+  @ApiOperation({ summary: 'Get details and chat history of a specific ticket' })
+  async getTicketDetails(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Param('ticketId', ParseUUIDPipe) ticketId: string,
+  ) {
+    await this.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.getTicketDetails(businessId, ticketId);
+  }
+
+  @Post(':businessId/tickets/:ticketId/reply')
+  @ApiOperation({ summary: 'Reply to a customer ticket' })
+  async replyToTicket(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Param('ticketId', ParseUUIDPipe) ticketId: string,
+    @Body() dto: SellerReplyTicketDto,
+  ) {
+    await this.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.replyToTicket(req.user.id, businessId, ticketId, dto);
+  }
+
+  @Patch(':businessId/tickets/:ticketId/status')
+  @ApiOperation({ summary: 'Update ticket status (e.g. RESOLVED)' })
+  async updateTicketStatus(
+    @Req() req: UserRequest,
+    @Param('businessId', ParseUUIDPipe) businessId: string,
+    @Param('ticketId', ParseUUIDPipe) ticketId: string,
+    @Body() dto: UpdateTicketStatusDto,
+  ) {
+    await this.verifyBusinessOwnership(req.user.id, businessId);
+    return this.sellerService.updateTicketStatus(businessId, ticketId, dto);
   }
 }

@@ -10,7 +10,10 @@ export class BannersService {
    * Banners are ordered by their 'position' field in ascending order.
    */
   async findAllActive() {
+          
+
     return this.prisma.promotionalBanner.findMany({
+      
       where: {
         // Only return banners that are marked as active
         isActive: true,

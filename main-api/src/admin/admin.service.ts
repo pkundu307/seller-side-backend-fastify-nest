@@ -5,6 +5,12 @@ import { CreateBannerDto } from './dto/create-banner.dto';
 import { S3Service } from '../products/utils/s3Service';
 import { UpdateBusinessVerificationDto } from './dto/update-business-verification.dto';
 import { CreateHomepageSectionDto } from './dto/create-homepage-section.dto';
+import { Prisma } from '@prisma/client';
+import { AdminProductFilterDto, UpdateProductPublishStatusDto } from './dto/product-verification.dto';
+import { UpdateBusinessDetailsDto } from './dto/update-business-details.dto';
+import { SettlementStatus } from '@prisma/client';
+import { AdminReplyTicketDto, AdminTicketQueryDto, AdminUpdateTicketStatusDto } from './dto/admin-ticket.dto';
+import { AdminOrderFilterDto, UpdateOrderAdminDto } from './dto/admin-order.dto';
 interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
   brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
@@ -317,5 +323,577 @@ export class AdminService {
     });
   }
 
+async getProductsForVerification(query: AdminProductFilterDto) {
+    // FIX: Provide explicit defaults here to satisfy TypeScript
+    console.log(AdminProductFilterDto);
+    
+    const page = query.page || 1;
+    const limit = query.limit || 10;
+    const { businessId, isPublished, needsVerification } = query;
+    
+    const skip = (page - 1) * limit;
 
+    const where: any = { deletedAt: null };
+
+    if (businessId) where.businessId = businessId;
+    if (isPublished !== undefined) where.isPublished = isPublished;
+    
+    if (needsVerification) {
+      where.isFeatured = true;
+      where.isPublished = false;
+    }
+
+    const [products, total] = await this.prisma.$transaction([
+      this.prisma.product.findMany({
+        where,
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          title: true,
+          isPublished: true,
+          isFeatured: true,
+          updatedAt: true,
+          business: { select: { name: true } },
+          _count: { select: { variants: true } }
+        },
+        orderBy: { updatedAt: 'desc' }
+      }),
+      this.prisma.product.count({ where })
+    ]);
+
+    return {
+      data: products,
+      meta: {
+        total,
+        page,
+        lastPage: Math.ceil(total / limit) // Now 'limit' is guaranteed to be a number
+      }
+    };
+  }
+  // 2. Fetch full details including variants for deep verification
+  async getProductDetailForAdmin(productId: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      include: {
+        business: { select: { name: true, ownerId: true } },
+        category: { select: { name: true } },
+        variants: true, // Includes all prices, stock, and attributes
+      }
+    });
+
+    if (!product) throw new NotFoundException('Product not found');
+    return product;
+  }
+
+  // 3. Update publish status and notify seller
+  async updateProductPublishStatus(productId: string, dto: UpdateProductPublishStatusDto) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      include: { business: true }
+    });
+
+    if (!product) throw new NotFoundException('Product not found');
+
+    return this.prisma.$transaction(async (tx) => {
+      // A. Update the product
+      const updatedProduct = await tx.product.update({
+        where: { id: productId },
+        data: { isPublished: dto.isPublished }
+      });
+
+      // B. If remarks are provided (rejection or feedback), send notification
+      if (dto.remarks) {
+        await tx.sellerNotification.create({
+          data: {
+            userId: product.business.ownerId,
+            title: dto.isPublished ? 'Product Published' : 'Product Action Required',
+            message: `Product: "${product.title}". Admin Feedback: ${dto.remarks}`,
+            type: 'SYSTEM', // or ALERT
+            metadata: { productId: product.id }
+          }
+        });
+      }
+
+      return updatedProduct;
+    });
+  }
+
+  // 1. Fetch business overview with stats
+ async getBusinessOverview(businessId: string) {
+    // A. Fetch Profile & Entity Counts
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      include: {
+        owner: {
+          select: { id: true, name: true, email: true }, // Removed 'phone' as it is not in User model
+        },
+        _count: {
+          select: {
+            products: true,
+            reviews: true,
+            // 'orders' removed because there is no direct relation
+          },
+        },
+      },
+    });
+
+    if (!business) throw new NotFoundException('Business not found');
+
+    // B. Calculate Online Revenue (Using SellerSettlement)
+    // Since 'Order' doesn't have businessId, we use the settlement table which tracks
+    // exactly how much money this specific business made from orders.
+    const settlementStats = await this.prisma.sellerSettlement.aggregate({
+      where: {
+        businessId: businessId,
+      },
+      _sum: {
+        grossAmount: true, // The total value of items sold
+      },
+      _count: {
+        id: true, // Number of settlement records (approx. number of orders)
+      },
+    });
+
+    // C. Calculate POS Revenue (Using Sale)
+    const posStats = await this.prisma.sale.aggregate({
+      where: {
+        businessId: businessId,
+      },
+      _sum: {
+        totalAmount: true,
+      },
+      _count: {
+        id: true,
+      },
+    });
+
+    return {
+      profile: business,
+      statistics: {
+        // Online Stats
+        // FIXED: Using 'settlementStats' variable, not the Enum
+        onlineRevenue: settlementStats._sum.grossAmount || 0, 
+        onlineOrderCount: settlementStats._count.id || 0,
+        
+        // POS Stats
+        posRevenue: posStats._sum.totalAmount || 0,
+        posSaleCount: posStats._count.id || 0,
+        
+        // General Stats
+        totalProducts: business._count.products,
+        totalReviews: business._count.reviews,
+      },
+    };
+  }
+
+  // 2. Fetch All Products of a Business
+  async getBusinessProducts(businessId: string, page: number = 1, limit: number = 10) {
+    const skip = (page - 1) * limit;
+
+    const [products, total] = await this.prisma.$transaction([
+      this.prisma.product.findMany({
+        where: { businessId },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          category: { select: { name: true } },
+          _count: { select: { reviews: true } },
+        },
+      }),
+      this.prisma.product.count({ where: { businessId } }),
+    ]);
+
+    return {
+      data: products,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // 3. Update Business Details
+  async updateBusinessDetails(businessId: string, dto: UpdateBusinessDetailsDto) {
+    const business = await this.prisma.business.findUnique({ where: { id: businessId } });
+    if (!business) throw new NotFoundException('Business not found');
+
+    return this.prisma.business.update({
+      where: { id: businessId },
+      data: {
+        ...dto,
+        kycVerifiedAt: dto.isVerified ? new Date() : undefined,
+      },
+    });
+  }
+
+  async getAllTickets(query: AdminTicketQueryDto) {
+    const { page = 1, limit = 10, status, priority, businessId, customerUserId } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.SupportTicketWhereInput = {
+      ...(status && { status }),
+      ...(priority && { priority }),
+      ...(businessId && { businessId }),
+      ...(customerUserId && { customerUserId }),
+    };
+
+    const [tickets, total] = await Promise.all([
+      this.prisma.supportTicket.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { lastMessageAt: 'desc' },
+        include: {
+          // 1. Business Info
+          business: {
+            select: {
+              id: true,
+              name: true,
+              logoUrl: true,
+              owner: { select: { name: true, email: true } }
+            }
+          },
+          // 2. Customer Info
+          customerUser: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phoneNumber: true,
+              picture: true
+            }
+          },
+          // 3. Order & Product Context
+          order: {
+            select: {
+              id: true,
+              orderNumber: true,
+              totalAmount: true,
+              status: true,
+              createdAt: true,
+              items: {
+                take: 1, // Get first item for display context
+                select: {
+                  variant: {
+                    select: {
+                      product: {
+                        select: { title: true, images: true }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          // 4. Activity
+          _count: { select: { messages: true } },
+        },
+      }),
+      this.prisma.supportTicket.count({ where }),
+    ]);
+
+    return {
+      data: tickets,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getTicketStats() {
+    const stats = await this.prisma.supportTicket.groupBy({
+      by: ['status'],
+      _count: { id: true },
+    });
+
+    const result = {
+      OPEN: 0,
+      IN_PROGRESS: 0,
+      RESOLVED: 0,
+      CLOSED: 0,
+      TOTAL: 0,
+    };
+
+    stats.forEach((s) => {
+      result[s.status] = s._count.id;
+      result.TOTAL += s._count.id;
+    });
+
+    return result;
+  }
+
+  async getTicketDetails(ticketId: string) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      include: {
+        business: { select: { id: true, name: true, ownerId: true } },
+        customerUser: { select: { id: true, name: true, email: true } },
+        order: { select: { id: true, orderNumber: true, totalAmount: true } },
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            user: { select: { name: true, role: true } }, 
+            customerUser: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket not found');
+    return ticket;
+  }
+
+  async replyAsAdmin(adminUserId: string, ticketId: string, dto: AdminReplyTicketDto) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      include: { business: true }
+    });
+
+    if (!ticket) throw new NotFoundException('Ticket not found');
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Create Message
+      const message = await tx.supportTicketMessage.create({
+        data: {
+          ticketId,
+          senderType: 'ADMIN',
+          userId: adminUserId,
+          message: dto.message,
+          attachmentUrls: dto.attachmentUrls || [],
+        },
+      });
+
+      // 2. Update Status
+      await tx.supportTicket.update({
+        where: { id: ticketId },
+        data: {
+          lastMessageAt: new Date(),
+          status: 'IN_PROGRESS',
+        },
+      });
+
+      // 3. Notifications (Both sides)
+      if (ticket.customerUserId) {
+         await tx.customerNotification.create({
+          data: {
+            customerUserId: ticket.customerUserId,
+            title: `Support Update`,
+            message: `Admin: ${dto.message.substring(0, 40)}...`,
+            type: 'SYSTEM',
+            metadata: { ticketId: ticket.id },
+          },
+        });
+      }
+      
+      await tx.sellerNotification.create({
+        data: {
+          userId: ticket.business.ownerId,
+          title: `Support Update`,
+          message: `Admin: ${dto.message.substring(0, 40)}...`,
+          type: 'SYSTEM',
+          metadata: { ticketId: ticket.id },
+        },
+      });
+
+      return message;
+    });
+  }
+
+  async updateTicketStatus(ticketId: string, dto: AdminUpdateTicketStatusDto) {
+    return this.prisma.supportTicket.update({
+      where: { id: ticketId },
+      data: { status: dto.status },
+    });
+  }
+
+    async getAllOrders(query: AdminOrderFilterDto) {
+    const { 
+      page = 1, limit = 10, search, businessId, 
+      status, paymentStatus, settlementStatus, 
+      startDate, endDate 
+    } = query;
+    
+    const skip = (page - 1) * limit;
+
+    // Build Dynamic Where Clause
+    const where: Prisma.OrderWhereInput = {
+      ...(status && { status }),
+      ...(paymentStatus && { paymentStatus }),
+      ...(search && { orderNumber: { contains: search, mode: 'insensitive' } }),
+      
+      // Date Range Filter
+      ...((startDate || endDate) && {
+        createdAt: {
+          ...(startDate && { gte: new Date(startDate) }),
+          ...(endDate && { lte: new Date(new Date(endDate).setHours(23, 59, 59)) }),
+        },
+      }),
+
+      // Complex Filter: Filter by Business ID or Settlement Status
+      // Since Order doesn't have businessId, we check items or settlements
+      ...(businessId && {
+        items: { some: { variant: { product: { businessId } } } }
+      }),
+      ...(settlementStatus && {
+        settlements: { some: { status: settlementStatus } }
+      })
+    };
+
+    const [orders, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          orderNumber: true,
+          createdAt: true,
+          totalAmount: true,
+          status: true,
+          paymentStatus: true, // Customer Payment
+          customerUser: {
+            select: { name: true, phoneNumber: true }
+          },
+          // Fetch Settlement Status (Seller Payment)
+          settlements: {
+            select: {
+              status: true,
+              netPayable: true,
+              business: { select: { id: true, name: true } }
+            }
+          },
+          // Minimal Product Details
+          items: {
+            take: 2, // Limit to 2 items for list view
+            select: {
+              quantity: true,
+              priceAtTimeOfOrder: true,
+              variant: {
+                select: {
+                  mrp: true,
+                  product: {
+                    select: { id: true, title: true }
+                  }
+                }
+              }
+            }
+          },
+          _count: { select: { items: true } }
+        }
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    // Transform Data for easier Frontend consumption
+    const formattedOrders = orders.map(order => ({
+      ...order,
+      // Helper to show if ALL sellers involved in this order are paid
+      platformSettlementStatus: order.settlements.every(s => s.status === 'PAID') && order.settlements.length > 0 
+        ? 'PAID' 
+        : 'PENDING',
+    }));
+
+    return {
+      data: formattedOrders,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * 2. Get Order Details (Deep View)
+   */
+  async getOrderDetails(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        customerUser: {
+          select: { id: true, name: true, email: true, phoneNumber: true, picture: true }
+        },
+        items: {
+          include: {
+            variant: {
+              include: {
+                product: {
+                  select: { id: true, title: true, images: true, businessId: true, business: { select: { name: true } } }
+                }
+              }
+            }
+          }
+        },
+        settlements: {
+          include: {
+            business: { select: { id: true, name: true, bankDetails: true } }
+          }
+        },
+        returnRequests: true,
+      }
+    });
+
+    if (!order) throw new NotFoundException('Order not found');
+    return order;
+  }
+
+  /**
+   * 3. Update Order (Status or Settlement)
+   */
+async updateOrderAdmin(orderId: string, dto: UpdateOrderAdminDto) {
+    const order = await this.prisma.order.findUnique({ 
+        where: { id: orderId },
+        include: { settlements: true }
+    });
+    
+    if (!order) throw new NotFoundException('Order not found');
+
+    return this.prisma.$transaction(async (tx) => {
+      let updatedOrder = order;
+
+      // A. Update Main Order Status (if provided)
+      if (dto.status || dto.trackingNumber) {
+        updatedOrder = await tx.order.update({
+          where: { id: orderId },
+          data: {
+            status: dto.status,
+            trackingNumber: dto.trackingNumber,
+            ...(dto.status === 'delivered' && { deliveredAt: new Date() }),
+            ...(dto.status === 'shipped' && { shippedAt: new Date() }),
+          },
+          // ✅ FIX: Include settlements so the return type matches 'updatedOrder'
+          include: { settlements: true } 
+        });
+      }
+
+      // B. Update Seller Settlement Status (Payout)
+      if (dto.settlementStatus) {
+        await tx.sellerSettlement.updateMany({
+          where: { orderId: orderId },
+          data: {
+            status: dto.settlementStatus,
+            referenceId: dto.payoutReferenceId, 
+            payoutDate: dto.settlementStatus === 'PAID' ? new Date() : undefined
+          }
+        });
+
+        // Optional: Refetch to ensure the return value shows the new settlement status
+        updatedOrder = await tx.order.findUnique({
+          where: { id: orderId },
+          include: { settlements: true }
+        }) as any; 
+      }
+
+      return updatedOrder;
+    });
+  }
 }

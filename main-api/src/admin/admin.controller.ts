@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Req, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Query, Req, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -10,6 +10,10 @@ import { MultipartFile } from 'fastify-multipart';
 import { FastifyRequest } from 'fastify'
 import { UpdateBusinessVerificationDto } from './dto/update-business-verification.dto';
 import { CreateHomepageSectionDto } from './dto/create-homepage-section.dto';
+import { AdminProductFilterDto, UpdateProductPublishStatusDto } from './dto/product-verification.dto';
+import { AdminReplyTicketDto, AdminTicketQueryDto, AdminUpdateTicketStatusDto } from './dto/admin-ticket.dto';
+import { UserRequest } from 'src/auth/auth.types';
+import { AdminOrderFilterDto, UpdateOrderAdminDto } from './dto/admin-order.dto';
 
 interface ParsedHomepageFiles {
   itemImages: Map<number, { buffer: Buffer; filename: string; mimetype: string }>;
@@ -256,4 +260,131 @@ private async parseBannerMultipartData(
 
 
   
+
+
+
+  @Get('/products')
+  @ApiOperation({ summary: 'List products for verification (Paginated)' })
+  async listProducts(@Query() query: AdminProductFilterDto) {
+    return this.adminService.getProductsForVerification(query);
+  }
+
+  @Get('products/:id')
+  @ApiOperation({ summary: 'Get full product details for verification' })
+  async getDetail(@Param('id') id: string) {
+    return this.adminService.getProductDetailForAdmin(id);
+  }
+
+  @Patch('/products/:id/publish-status')
+  @ApiOperation({ summary: 'Publish/Unpublish product and send remarks to seller' })
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateProductPublishStatusDto
+  ) {
+    return this.adminService.updateProductPublishStatus(id, dto);
+  }
+
+  @Get('business/:id/overview')
+  @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get full business overview, owner info, and financial stats' })
+  @ApiResponse({ status: 200, description: 'Returns profile + calculated stats.' })
+  getBusinessOverview(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.getBusinessOverview(id);
+  }
+
+  @Get('business/:id/products')
+  @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all products for a specific business with pagination' })
+  getBusinessProducts(
+    @Param('id', ParseUUIDPipe) id: string,
+    // ✅ MOVED INSIDE THE FUNCTION
+    @Query('page', new ParseIntPipe({ optional: true })) page: number = 1,
+    @Query('limit', new ParseIntPipe({ optional: true })) limit: number = 20,
+  ) {
+    return this.adminService.getBusinessProducts(id, Number(page), Number(limit));
+  }
+   @Get('stats') 
+     @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get global support ticket statistics' })
+  getTicketStats() {
+    return this.adminService.getTicketStats();
+  }
+
+  // 2. Get All (List View)
+  @Get() 
+    @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ 
+    summary: 'Global Ticket View', 
+    description: 'Fetch all tickets. Returns Business Name, Customer Name, and Order details.' 
+  })
+  async getAllTickets(@Query() query: AdminTicketQueryDto) {
+    return this.adminService.getAllTickets(query);
+  }
+
+  // 3. Get Details (Chat View)
+  @Get('tickets/:id') 
+    @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Get ticket details and chat history' })
+  getTicketDetails(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.getTicketDetails(id);
+  }
+
+  // 4. Reply
+  @Post('tickets/:id/reply') 
+    @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Reply to a ticket as Admin' })
+  replyAsAdmin(
+    @Req() req: UserRequest,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminReplyTicketDto
+  ) {
+    return this.adminService.replyAsAdmin(req.user.id, id, dto);
+  }
+
+  // 5. Update Status
+  @Patch(':id/status') 
+    @Roles('admin')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiOperation({ summary: 'Close or Resolve a ticket' })
+  updateTicketStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminUpdateTicketStatusDto
+  ) {
+    return this.adminService.updateTicketStatus(id, dto);
+  }
+
+    @Get('orders')
+  @ApiOperation({ 
+    summary: 'List All Orders (Summary)', 
+    description: 'Fetch orders with filters (date, status, payment). Includes settlement status to check if Seller is paid.' 
+  })
+  async getAllOrders(@Query() query: AdminOrderFilterDto) {
+    return this.adminService.getAllOrders(query);
+  }
+
+  @Get('orders/:id')
+  @ApiOperation({ summary: 'Get Order Details (Deep Dive)' })
+  async getOrderDetails(@Param('id', ParseUUIDPipe) id: string) {
+    return this.adminService.getOrderDetails(id);
+  }
+
+  @Patch('orders/:id')
+  @ApiOperation({ 
+    summary: 'Update Order & Settlements', 
+    description: 'Update delivery status (Customer side) and Payout status (Seller side).' 
+  })
+  async updateOrder(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateOrderAdminDto
+  ) {
+    return this.adminService.updateOrderAdmin(id, dto);
+  }
 }
