@@ -12,10 +12,11 @@ export const RABBITMQ_SERVICE = 'RABBITMQ_SERVICE';
         useFactory: (configService: ConfigService) => ({
           transport: Transport.RMQ,
           options: {
-            urls: [configService.get<string>('RABBITMQ_URL')||'amqp://localhost:5672'],
-            queue: 'notifications_queue', // A default queue, can be overridden
+            // ✅ FIX: Use getOrThrow to guarantee a string (eliminates undefined type)
+            urls: [configService.getOrThrow<string>('RABBITMQ_URI')],
+            queue: 'notifications_queue',
             queueOptions: {
-              durable: true, // Queue will survive broker restarts
+              durable: true,
             },
           },
         }),
@@ -23,6 +24,6 @@ export const RABBITMQ_SERVICE = 'RABBITMQ_SERVICE';
       },
     ]),
   ],
-  exports: [ClientsModule], // Export the ClientsModule to make the client available for injection
+  exports: [ClientsModule],
 })
 export class RabbitMQModule {}

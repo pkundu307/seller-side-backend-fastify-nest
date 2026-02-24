@@ -4,30 +4,37 @@ import {
   Injectable, 
   ConflictException, 
   InternalServerErrorException, 
-  NotFoundException 
+  NotFoundException, 
+  Inject
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { slugify } from '../utils/slugify'; 
 import { AccountType, Prisma } from '@prisma/client';
 import { IndustryType } from '@prisma/client';
+import { RABBITMQ_SERVICE } from '../rabbitmq/rabbitmq.module'; // <--- Import Token
+import { ClientProxy } from '@nestjs/microservices';
 
 @Injectable()
 export class BusinessService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService,
+    @Inject(RABBITMQ_SERVICE) private readonly rmqClient: ClientProxy,
+
+    
+  ) {}
 
   // ========================================================
   // CREATE BUSINESS
   // ========================================================
 async createBusiness(dto: CreateBusinessDto, ownerId: string) {
-    // 1. Generate and Validate Slug
+    // 1. Generate Slug
     let slug = slugify(dto.name);
     const existingSlug = await this.prisma.business.findUnique({ where: { slug } });
     if (existingSlug) {
       slug = `${slug}-${Math.floor(1000 + Math.random() * 9000)}`;
     }
 
-    // 2. Define Industry-Specific Default Configurations
+    // 2. Default Configs
     const industryConfigs: Record<IndustryType, any> = {
       [IndustryType.RETAIL_GENERAL]: { isBarcodeEnabled: true, isStockAlertEnabled: true },
       [IndustryType.RETAIL_PHARMACY]: { isBatchingEnabled: true, expiryAlertDays: 90, requiresDoctor: true },
@@ -41,7 +48,7 @@ async createBusiness(dto: CreateBusinessDto, ownerId: string) {
     const defaultConfig = industryConfigs[dto.industryType] || {};
 
     try {
-      // 3. Atomic Transaction: Create Business + Defaults + Agreement Log
+      // 3. Create Business (Atomic Transaction)
       const business = await this.prisma.business.create({
         data: {
           name: dto.name,
@@ -57,13 +64,10 @@ async createBusiness(dto: CreateBusinessDto, ownerId: string) {
           businessConfig: defaultConfig,
           ownerId,
           slug,
-
-          // --- AGREEMENT DATA MAPPING ---
           sellerAgreementAccepted: dto.sellerAgreementAccepted,
           sellerAgreementVersion: dto.sellerAgreementVersion,
-          sellerAgreementAcceptedAt: new Date(), // Capture exact timestamp
+          sellerAgreementAcceptedAt: new Date(),
           
-          // Create a Default Cash Drawer for POS
           bankAccounts: {
             create: {
               accountName: 'Cash Drawer',
@@ -74,30 +78,49 @@ async createBusiness(dto: CreateBusinessDto, ownerId: string) {
               closingBalance: 0
             }
           },
-
-          // Create a Default Warehouse/Store Room
           warehouses: {
             create: {
               name: 'Main Store',
               isDefault: true,
             }
           },
-
-          // Optional: Create an initial audit log for agreement acceptance
           agreementLogs: {
             create: {
               version: dto.sellerAgreementVersion,
               acceptedAt: new Date(),
-              // ipAddress: ... (If you have access to request object here, pass it in)
             }
           }
         },
+        // ✅ INCLUDE OWNER TO GET EMAIL
+        include: {
+          owner: {
+            select: { email: true, name: true }
+          }
+        }
       });
+
+      // 4. ✅ SEND WELCOME EMAIL VIA RABBITMQ
+      // This matches the struct expected by your Go service
+      const notificationPayload = {
+        recipientId: ownerId,
+        recipientEmail: business.owner.email,
+        recipientType: 'SELLER',
+        notificationId: `WELCOME_${business.id}`,
+        title: 'Welcome to Jottosop Business!',
+        message: `Congratulations! Your business "${business.name}" has been successfully registered on Jottosop. You can now start adding products and managing sales.`,
+        type: 'SYSTEM',
+        metadata: {
+          businessId: business.id,
+          slug: business.slug
+        }
+      };
+
+      // Emit sends the message to the queue asynchronously
+      this.rmqClient.emit('send_notification', notificationPayload);
 
       return business;
 
     } catch (error) {
-      // 4. Handle Specific DB Errors
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         if (error.code === 'P2002') {
           const target = error.meta?.target as string[];
@@ -106,10 +129,10 @@ async createBusiness(dto: CreateBusinessDto, ownerId: string) {
           }
         }
       }
-      // this.logger.error(`Business Creation Failed: ${error.message}`);
       throw new InternalServerErrorException('Failed to create business profile.');
     }
   }
+
   // ========================================================
   // READ OPERATIONS
   // ========================================================
