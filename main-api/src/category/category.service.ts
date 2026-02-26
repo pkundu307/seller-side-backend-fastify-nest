@@ -12,6 +12,7 @@ import { error } from 'console';import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { } from '@prisma/client';
+import { UpdateCategoryDto } from './dto/update-category.dto';
 
 export interface CategoryTreeNode extends Category {
   children: CategoryTreeNode[];
@@ -548,6 +549,51 @@ async getAllCategoriesAsTree(): Promise<SimplifiedCategoryNode[]> {
     });
   }
 
- 
+async updateCategory(id: number, dto: UpdateCategoryDto) {
+    // 1. Check if category exists
+    const category = await this.prisma.category.findUnique({ where: { id } });
+    if (!category) throw new NotFoundException(`Category with ID ${id} not found`);
+  console.log(category);
+  
+    // ✅ FIX 1: Explicitly define type as string | undefined
+    let newSlug: string | undefined;
 
+    // 2. If name is changing, regenerate slug
+    if (dto.name && dto.name !== category.name) {
+      newSlug = slugify(dto.name);
+      
+      // Check for collision (excluding current category)
+      const existing = await this.prisma.category.findFirst({
+        where: { 
+          slug: newSlug,
+          id: { not: id } 
+        }
+      });
+
+      if (existing) {
+        newSlug = `${newSlug}-${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+    }
+
+    try {
+      // 3. Perform Update
+      const updatedCategory = await this.prisma.category.update({
+        where: { id },
+        data: {
+          ...dto,
+          // ✅ FIX 2: Use ternary to ensure we spread an object, never undefined
+          ...(newSlug ? { slug: newSlug } : {}),
+        },
+      });
+
+      return updatedCategory;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        if (error.code === 'P2002') {
+          throw new BadRequestException('Unique constraint violation (probably slug).');
+        }
+      }
+      throw error;
+    }
+  }
 }

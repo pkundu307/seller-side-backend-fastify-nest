@@ -12,12 +12,14 @@ import {
   HttpCode,
   HttpStatus,
   Delete,
+  Patch,
 } from '@nestjs/common';
 import { CategoryService } from './category.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { AddAttributesBatchDto, CreateAttributeOptionDto } from './dto/create-attribute.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard'; // Adjust path if needed
+import { UpdateCategoryDto } from './dto/update-category.dto';
 
 @ApiTags('Categories')
 @Controller('categories')
@@ -134,5 +136,18 @@ export class CategoryController { // Renamed for consistency
   @ApiResponse({ status: 400, description: 'Cannot delete if products are attached' })
   deleteCategory(@Param('id', ParseIntPipe) id: number) {
     return this.categoriesService.deleteCategory(id);
+  }
+
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard) // Assuming only admins can update
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update category details (Name, GST, Parent, etc.)' })
+  @ApiResponse({ status: 200, description: 'Category updated successfully.' })
+  @ApiResponse({ status: 404, description: 'Category not found.' })
+  async updateCategory(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCategoryDto,
+  ) {
+    return this.categoriesService.updateCategory(id, dto);
   }
 }

@@ -70,6 +70,7 @@ model User {
   staffProfile        StaffMember?
   pushSubscriptions   PushSubscription[]
   supportMessages   SupportTicketMessage[] 
+ businessAccess      BusinessUser[] 
 
 }
 
@@ -93,12 +94,33 @@ model Role {
   description String?
   isDefault   Boolean  @default(false) // For default roles like "Owner"
 
-  permissions Permission[]  @relation("RolePermissions") // Many-to-many with Permission
-  staff       StaffMember[]
+  permissions   Permission[]   @relation("RolePermissions") // Many-to-many with Permission
+  staff         StaffMember[]
+  businessUsers BusinessUser[] // NEW: Users currently holding this role
 
   @@unique([businessId, name])
 }
+// --- SOFTWARE ACCESS (RBAC) ---
+model BusinessUser {
+  id         String   @id @default(uuid())
+  
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  businessId String
+  business   Business @relation(fields: [businessId], references:[id], onDelete: Cascade)
+  
+  roleId     Int
+  role       Role     @relation(fields: [roleId], references: [id])
+  
+  isActive   Boolean  @default(true) // Owner can temporarily suspend access
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
+  @@unique([userId, businessId]) // A user has exactly ONE role per business
+  @@index([businessId])
+  @@index([userId])
+}
 model Address {
   id                     String       @id @default(uuid())
   street                 String
@@ -190,7 +212,7 @@ model Business {
   fixedAssets               FixedAsset[] // Add this relation
   industryType IndustryType @default(RETAIL_GENERAL)
   businessConfig Json?  @default("{}")
-
+authorizedUsers           BusinessUser[]   
   // 3. Operational Details
   currency      String   @default("INR")
   timezone      String   @default("Asia/Kolkata")
@@ -873,23 +895,30 @@ model CategoryOrSubcategoryImage {
 model StaffMember {
   id         String   @id @default(uuid())
   businessId String
-  business   Business @relation(fields: [businessId], references: [id])
+  business   Business @relation(fields: [businessId], references:[id])
 
   name   String
   phone  String? @unique
   email  String? @unique
   roleId Int?
-  role   Role?   @relation(fields: [roleId], references: [id])
+  role   Role?   @relation(fields: [roleId], references:[id])
 
   address        String?
-  roleTitle      String // e.g., "Warehouse Manager", "Packer", "Sales Associate"
+  roleTitle      String 
+  department     String?        // NEW: e.g., "Kitchen", "Sales", "Accounts"
   employmentType EmploymentType @default(FULL_TIME)
   joiningDate    DateTime
-  isActive       Boolean        @default(true) // To mark former employees
+  isActive       Boolean        @default(true) 
 
   // Wage & Salary Information
-  wageType   String // e.g., "MONTHLY_SALARY", "HOURLY_WAGE"
+  wageType   String 
   wageAmount Decimal
+
+  // --- NEW: STAFF LOGIN CAPABILITIES ---
+  pin             String?   // NEW: 4 or 6 digit PIN for quick POS/Tablet login
+  password        String?   // NEW: Standard password if they use a staff web portal
+  lastOtp         String?   // NEW: Store OTP for login/verification
+  otpExpiry       DateTime? // NEW: Ensure OTP expires after 5-10 mins
 
   // Link to a User account for platform access (optional)
   userId String? @unique
@@ -897,7 +926,7 @@ model StaffMember {
 
   attendance    Attendance[]
   salaryPayouts SalaryPayout[]
-appointments Appointment[]
+  appointments  Appointment[]
 
   @@index([businessId])
 }
