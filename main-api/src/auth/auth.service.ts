@@ -72,35 +72,102 @@ export class AuthService {
       'We are excited to have you. Explore our amazing collection and enjoy your shopping experience.',
       NotificationType.SYSTEM,
     );
+    const tokens = await this.getTokens(user.id, user.email, user.type, 'CUSTOMER');
+    await this.updateRefreshToken(user.id, tokens.refreshToken, 'CUSTOMER');
     
-    return this.createToken(user, 'CUSTOMER');
+    return {
+      ...tokens,
+      user: { 
+        name: user.name, 
+        role: user.type, 
+        type: 'CUSTOMER' 
+      }
+    };
   }
 
-  async login(loginDto: LoginDto) {
-    const { email, password } = loginDto;
-    console.log(email,password);
-    
-    // 1. Try Customer Login
-    const customer = await this.customerUserService.findByEmail(email);
-    if (customer && customer.password) {
-      const isMatch = await bcrypt.compare(password, customer.password);
-      if (isMatch) return this.createToken(customer, 'CUSTOMER');
-    }
+  
+async login(loginDto: LoginDto) {
+  const { email, password } = loginDto;
+  
+  let user: any = null;
+  let type: 'CUSTOMER' | 'SELLER' | null = null; // Initialize as null
 
-    // 2. Try Seller/Admin Login (If customer not found or pass mismatch)
-    // Note: If you want strictly separate login forms, remove this fallback.
+  // 1. Try Customer Login
+  const customer = await this.customerUserService.findByEmail(email);
+  if (customer && customer.password && await bcrypt.compare(password, customer.password)) {
+    user = customer;
+    type = 'CUSTOMER';
+  } 
+
+  // 2. If not a customer, try Seller/Admin Login
+  if (!user) {
     const seller = await this.prisma.user.findUnique({ where: { email } });
-    if (seller && seller.password) {
-      // Assuming seller passwords are also bcrypt hashed
-      // If you haven't implemented Seller password hashing yet, ensure you do.
-      const isMatch = await bcrypt.compare(password, seller.password);
-      if (isMatch) return this.createToken(seller, 'SELLER');
+    if (seller && seller.password && await bcrypt.compare(password, seller.password)) {
+      user = seller;
+      type = 'SELLER';
     }
+  }
 
+  // 3. Strict Check: If neither found, throw exception immediately
+  // This satisfies TypeScript that 'user' and 'type' are NOT null after this line
+  if (!user || !type) {
     throw new UnauthorizedException('Invalid credentials');
   }
 
-  async googleLogin(googleLoginDto: GoogleLoginDto) {
+  // 4. Now generate tokens (TypeScript now knows 'type' is either 'CUSTOMER' or 'SELLER')
+  const tokens = await this.getTokens(
+    user.id, 
+    user.email, 
+    type === 'CUSTOMER' ? user.type : user.role, 
+    type
+  );
+
+  await this.updateRefreshToken(user.id, tokens.refreshToken, type);
+
+  return {
+    ...tokens,
+    user: { 
+      name: user.name, 
+      role: type === 'CUSTOMER' ? user.type : user.role, 
+      type 
+    }
+  };
+}
+
+  private async getTokens(userId: string, email: string, role: string, userType: 'CUSTOMER' | 'SELLER') {
+    const payload = { sub: userId, email, role, userType };
+
+    const [accessToken, refreshToken] = await Promise.all([
+      this.jwtService.signAsync(payload, {
+        secret: this.configService.get('JWT_SECRET'),
+        expiresIn: '1h', // Access token is short-lived
+      }),
+      this.jwtService.signAsync(payload, {
+        secret: this.configService.get('JWT_REFRESH_SECRET') || 'refresh_secret_key',
+        expiresIn: '7d', // Refresh token is long-lived
+      }),
+    ]);
+
+    return { accessToken, refreshToken };
+  }
+
+  // 2. New Helper to hash and save Refresh Token to DB
+  private async updateRefreshToken(userId: string, refreshToken: string, userType: 'CUSTOMER' | 'SELLER') {
+    const hashedToken = await bcrypt.hash(refreshToken, 10);
+    if (userType === 'CUSTOMER') {
+      await this.prisma.customerUser.update({
+        where: { id: userId },
+        data: { refreshToken: hashedToken },
+      });
+    } else {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { refreshToken: hashedToken },
+      });
+    }
+  }
+
+async googleLogin(googleLoginDto: GoogleLoginDto) {
     try {
       const ticket = await this.googleClient.verifyIdToken({
         idToken: googleLoginDto.googleToken,
@@ -114,7 +181,7 @@ export class AuthService {
 
       let user = await this.customerUserService.findByEmail(payload.email);
 
-      // If user doesn't exist, create a new Customer
+      // 1. If user doesn't exist, create a new Customer
       if (!user) {
         user = await this.customerUserService.create({
           email: payload.email,
@@ -123,6 +190,7 @@ export class AuthService {
           authSource: AuthSource.google,
           type: CustomerType.user,
         });
+
         await this.notificationService.createForCustomer(
           user,
           'Welcome to Jottosop!',
@@ -130,14 +198,34 @@ export class AuthService {
           NotificationType.SYSTEM,
         );
       }
-  
-      return this.createToken(user, 'CUSTOMER');
+
+      // 2. Generate BOTH Tokens (Access + Refresh)
+      // Since Google Login currently only supports CUSTOMER type in your code:
+      const tokens = await this.getTokens(
+        user.id, 
+        user.email, 
+        user.type, // Customer role
+        'CUSTOMER'
+      );
+
+      // 3. Save the hashed Refresh Token to the database
+      await this.updateRefreshToken(user.id, tokens.refreshToken, 'CUSTOMER');
+
+      // 4. Return unified response
+      return {
+        ...tokens,
+        user: { 
+          name: user.name, 
+          role: user.type, 
+          type: 'CUSTOMER' 
+        }
+      };
+
     } catch (error) {
       console.error('Google Login Error:', error);
       throw new InternalServerErrorException('Google authentication failed');
     }
   }
-
   // --- NEW INTROSPECT METHOD ---
   async introspect(userPayload: any) {
     // 1. Safe Extraction: Check for 'sub', 'id', or 'userId' to be safe
@@ -198,4 +286,26 @@ export class AuthService {
     // 4. If neither found
     throw new UnauthorizedException('User no longer exists or account is disabled.');
   }
+
+    async refreshTokens(userId: string, refreshToken: string, userType: 'CUSTOMER' | 'SELLER') {
+    let user: any;
+    if (userType === 'CUSTOMER') {
+      user = await this.prisma.customerUser.findUnique({ where: { id: userId } });
+    } else {
+      user = await this.prisma.user.findUnique({ where: { id: userId } });
+    }
+
+    if (!user || !user.refreshToken) throw new UnauthorizedException('Access Denied');
+
+    // Compare the provided refresh token with the hashed one in DB
+    const refreshTokenMatches = await bcrypt.compare(refreshToken, user.refreshToken);
+    if (!refreshTokenMatches) throw new UnauthorizedException('Access Denied');
+
+    // Generate new tokens
+    const tokens = await this.getTokens(user.id, user.email, userType === 'CUSTOMER' ? user.type : user.role, userType);
+    await this.updateRefreshToken(user.id, tokens.refreshToken, userType);
+
+    return tokens;
+  }
+
 }

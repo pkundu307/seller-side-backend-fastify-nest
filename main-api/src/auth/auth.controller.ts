@@ -1,5 +1,5 @@
 // src/auth/auth.controller.ts
-import { Body, Controller, Post, Get, UseGuards, Request, HttpCode, HttpStatus, Req } from '@nestjs/common';
+import { Body, Controller, Post, Get, UseGuards, Request, HttpCode, HttpStatus, Req, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register-user.dto';
 import { LoginDto } from './dto/login-user.dto';
@@ -7,6 +7,7 @@ import { GoogleLoginDto } from './dto/google-login.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { auth } from 'google-auth-library';
 import { ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -49,5 +50,20 @@ export class AuthController {
   introspect(@Req() req) {
     // req.user is populated by JwtAuthGuard (the decoded JWT payload)
     return this.authService.introspect(req.user);
+  }
+   @Post('refresh')
+  @ApiOperation({ summary: 'Renew access token using refresh token' })
+  async refresh(@Body() dto: RefreshTokenDto) {
+    try {
+      // We manually decode the refresh token to get the user ID and type
+      // Alternatively, you can create a second JwtStrategy specifically for refresh tokens
+      const decoded = await this.authService['jwtService'].verifyAsync(dto.refreshToken, {
+        secret: this.authService['configService'].get('JWT_REFRESH_SECRET') || 'refresh_secret_key',
+      });
+      
+      return this.authService.refreshTokens(decoded.sub, dto.refreshToken, decoded.userType);
+    } catch (e) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
   }
 }

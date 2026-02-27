@@ -39,7 +39,9 @@ model CustomerUser {
   preOrderRequests PreOrderRequest[]
   deletedAt         DateTime?
   supportTickets    SupportTicket[]        
-  supportMessages   SupportTicketMessage[]        // <--- Add this (Tickets they own)
+  supportMessages   SupportTicketMessage[]    
+    refreshToken String? // Add this
+    // <--- Add this (Tickets they own)
 }
 
 model Wishlist {
@@ -71,6 +73,7 @@ model User {
   pushSubscriptions   PushSubscription[]
   supportMessages   SupportTicketMessage[] 
  businessAccess      BusinessUser[] 
+  refreshToken String? // Add this
 
 }
 
