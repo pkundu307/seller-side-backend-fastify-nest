@@ -45,17 +45,19 @@ app.useGlobalPipes(
 );
 
   // 4. Swagger Configuration (Your setup is perfect)
-  const config = new DocumentBuilder()
-    .setTitle('My API')
-    .setDescription('NestJS Fastify API with Prisma and PostgreSQL')
-    .setVersion('1.0')
-    .addTag('products')
-    .addTag('users')
-    .addBearerAuth()
-    .build();
-
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document);
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('Jottosop APIs')
+      .setDescription('NestJS Fastify API with Prisma and PostgreSQL')
+      .setVersion('1.1')
+      .addTag('products')
+      .addTag('users')
+      .addBearerAuth()
+      .build();
+      
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api', app, document);
+  }
 
   // 5. Passport (Your commented-out lines are correct for JWT)
   // With a JWT strategy, you do not need to register passport as middleware here.
