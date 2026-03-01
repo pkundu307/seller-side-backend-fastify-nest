@@ -215,7 +215,10 @@ model Business {
   fixedAssets               FixedAsset[] // Add this relation
   industryType IndustryType @default(RETAIL_GENERAL)
   businessConfig Json?  @default("{}")
-authorizedUsers           BusinessUser[]   
+   authorizedSignatoryName          String? 
+  authorizedSignatoryDesignation   String?
+  authorizedSignatorySignatureUrl  String?
+  authorizedUsers           BusinessUser[]   
   // 3. Operational Details
   currency      String   @default("INR")
   timezone      String   @default("Asia/Kolkata")

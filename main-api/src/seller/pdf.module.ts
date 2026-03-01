@@ -6,9 +6,12 @@ import { SalesReturnModule } from './sales-return/sales-return.module';
 import { ReportsModule } from './reports/reports.module';
 import { ProformaInvoiceModule } from './proforma-invoice/proforma-invoice.module';
 import { ExpensesModule } from './expenses/expenses.module';
+import { PurchasesModule } from './purchases/purchases.module';
+import { PaymentOutModule } from './payment-out/payment-out.module';
+import { DebitNoteModule } from './debit-note/debit-note.module';
 
 @Module({
-  imports: [PrismaModule, PaymentInModule, SalesReturnModule, ReportsModule, ProformaInvoiceModule, ExpensesModule],
+  imports: [PrismaModule, PaymentInModule, SalesReturnModule, ReportsModule, ProformaInvoiceModule, ExpensesModule, PurchasesModule, PaymentOutModule, DebitNoteModule],
   providers: [PdfService],
   exports: [PdfService], // Export the service so other modules can use it
 })

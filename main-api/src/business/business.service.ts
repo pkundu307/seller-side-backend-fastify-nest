@@ -5,7 +5,8 @@ import {
   ConflictException, 
   InternalServerErrorException, 
   NotFoundException, 
-  Inject
+  Inject,
+  ForbiddenException
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
@@ -14,11 +15,14 @@ import { AccountType, Prisma } from '@prisma/client';
 import { IndustryType } from '@prisma/client';
 import { RABBITMQ_SERVICE } from '../rabbitmq/rabbitmq.module'; // <--- Import Token
 import { ClientProxy } from '@nestjs/microservices';
+import { S3Service } from 'src/products/utils/s3Service';
+import { UpdateBusinessDto } from './dto/update-business.dto';
 
 @Injectable()
 export class BusinessService {
   constructor(private readonly prisma: PrismaService,
     @Inject(RABBITMQ_SERVICE) private readonly rmqClient: ClientProxy,
+    private readonly s3Service: S3Service, // Inject S3 Service
 
     
   ) {}
@@ -181,32 +185,112 @@ async createBusiness(dto: CreateBusinessDto, ownerId: string) {
   // UPDATE OPERATIONS
   // ========================================================
   
-  async updateBusiness(businessId: string, ownerId: string, data: Partial<CreateBusinessDto>) {
-    // Check if business exists and belongs to user
-    const business = await this.prisma.business.findFirst({
-      where: { id: businessId, ownerId }
+  async updateBusiness(
+    businessId: string, 
+    userId: string, 
+    dto: UpdateBusinessDto,
+    files?: {
+      logo?: Buffer; 
+      banner?: Buffer; 
+      signature?: Buffer;
+    }
+  ) {
+    // 1. Verify Ownership & Existence
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+    });
+
+    if (!business) throw new NotFoundException('Business not found');
+    if (business.ownerId !== userId) {
+      // Also allow authorized users if they have permission (Future scope)
+      throw new ForbiddenException('You do not have permission to update this business');
+    }
+
+    const updates: any = { ...dto };
+
+    // 2. Handle Logo Upload (Delete old if exists)
+    if (files?.logo) {
+      if (business.logoUrl) {
+        await this.s3Service.deleteImages([business.logoUrl]).catch(err => console.error("Failed to delete old logo", err));
+      }
+      updates.logoUrl = await this.s3Service.uploadImage(
+        files.logo, 
+        `logo-${business.slug}.png`, 
+        'image/png', 
+        'business'
+      );
+    }
+
+    // 3. Handle Banner Upload
+    if (files?.banner) {
+      if (business.bannerUrl) {
+        await this.s3Service.deleteImages([business.bannerUrl]).catch(err => console.error("Failed to delete old banner", err));
+      }
+      updates.bannerUrl = await this.s3Service.uploadImage(
+        files.banner, 
+        `banner-${business.slug}.png`, 
+        'image/png', 
+        'business'
+      );
+    }
+
+    // 4. Handle Authorized Signatory Signature Upload
+    // Note: Assuming you added 'authorizedSignatorySignatureUrl' to schema
+    if (files?.signature) {
+      if (business['authorizedSignatorySignatureUrl']) {
+        await this.s3Service.deleteImages([business['authorizedSignatorySignatureUrl']]).catch(err => console.error("Failed to delete old signature", err));
+      }
+      updates.authorizedSignatorySignatureUrl = await this.s3Service.uploadImage(
+        files.signature, 
+        `signature-${business.slug}.png`, 
+        'image/png', 
+        'business'
+      );
+    }
+
+    // 5. Perform Update
+    const updatedBusiness = await this.prisma.business.update({
+      where: { id: businessId },
+      data: updates,
+    });
+
+    return updatedBusiness;
+  }
+
+   async getBusinessForSettingById(businessId: string, userId: string) {
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+      include: {
+        owner: {
+          select: { name: true, email: true } // Return basic owner info
+        },
+        // Optional: Include operational details if needed for settings
+        warehouses: true, 
+        bankAccounts: true
+      }
     });
 
     if (!business) {
-      throw new NotFoundException('Business not found or you do not have permission');
+      throw new NotFoundException('Business not found');
     }
 
-    // Logic: If name changes, do we update slug? 
-    // Usually NO (to preserve SEO), but if you want to, uncomment below:
-    /*
-    let newSlug = undefined;
-    if (data.name && data.name !== business.name) {
-       newSlug = slugify(data.name);
-       // ... add uniqueness check here like in create ...
-    }
-    */
+    // Security Check: Is this the Owner?
+    if (business.ownerId !== userId) {
+      // If not owner, check if they are an Authorized User (RBAC)
+      const isAuthorized = await this.prisma.businessUser.findUnique({
+        where: {
+          userId_businessId: {
+            userId: userId,
+            businessId: businessId,
+          },
+        },
+      });
 
-    return this.prisma.business.update({
-      where: { id: businessId },
-      data: {
-        ...data,
-        // slug: newSlug // Update if you enabled logic above
+      if (!isAuthorized) {
+        throw new ForbiddenException('You do not have access to this business.');
       }
-    });
+    }
+
+    return business;
   }
 }
