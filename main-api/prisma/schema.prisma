@@ -5,7 +5,7 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL") // It is still safe to use this here as long as it draws from the .env
+  // directUrl = env("DIRECT_URL") // It is still safe to use this here as long as it draws from the .env
 }
 model CustomerUser {
   id                String                 @id @default(uuid())
@@ -1291,6 +1291,11 @@ model Purchase {
 
   items      PurchaseItem[]
   debitNotes DebitNote[]
+additionalCharges Decimal @default(0)
+tcsRate    Decimal?
+tcsAmount  Decimal @default(0)
+depositAccountId String?
+depositAccount   BankCashCheque? @relation(fields: [depositAccountId], references: [id])
 
   @@unique([businessId, purchaseOrderNo])
 }
@@ -1395,7 +1400,7 @@ model BankCashCheque {
   bankIfscCode      String? @db.VarChar(128)
   bankAccountHolder String? @db.VarChar(256)
   upiId             String? @db.VarChar(128)
-
+ purchases Purchase[] // ADD THIS
   isDefault Boolean @default(false)
   isEnabled Boolean @default(true)
 
