@@ -20,8 +20,13 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ProductsService } from './products.service';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
 import { CreateProductDto } from './dto/create-product.dto';
-import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
-import { UpdateProductDto } from './dto/update-product.dto';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+} from '@nestjs/swagger';
+import { UpdateProductDto, UpdateVariantDto } from './dto/update-product.dto';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { ProductPaginationDto } from './dto/product-pagination.dto';
@@ -53,17 +58,22 @@ export class ProductsController {
       console.log('[CONTROLLER] Business check passed:', business.name);
 
       const formData = await this.parseMultipartData(req);
-      console.log('[CONTROLLER] Parsed formData:', JSON.stringify(formData, null, 2));
+      console.log(
+        '[CONTROLLER] Parsed formData:',
+        JSON.stringify(formData, null, 2),
+      );
 
       console.log('[CONTROLLER] Running validation...');
       this.validateProductData(formData);
       console.log('[CONTROLLER] Validation passed.');
 
       console.log('[CONTROLLER] Calling productsService.createProduct...');
-      const result = await this.productsService.createProduct(businessId, formData);
+      const result = await this.productsService.createProduct(
+        businessId,
+        formData,
+      );
       console.log('[CONTROLLER] productsService.createProduct SUCCEEDED.');
       return result;
-
     } catch (error) {
       console.error('[CONTROLLER] An error occurred in addProduct:', error);
       throw error;
@@ -71,49 +81,67 @@ export class ProductsController {
   }
 
   // --- ENHANCED PARSER: Supports BOTH file uploads AND URL arrays ---
-private async parseMultipartData(req: FastifyRequest): Promise<any> {
-  if (!req.isMultipart()) {
-    throw new BadRequestException('Request is not multipart/form-data.');
-  }
+  private async parseMultipartData(req: FastifyRequest): Promise<any> {
+    if (!req.isMultipart()) {
+      throw new BadRequestException('Request is not multipart/form-data.');
+    }
 
-  const formData: any = { variants: [] };
-  const imageFiles: Array<{ buffer: Buffer; filename: string; mimetype: string }> = [];
-  const variantImageFilesMap = new Map<string, Array<{ buffer: Buffer; filename: string; mimetype: string }>>();
-  let productImageUrls: string[] = [];
-
+    const formData: any = { variants: [] };
+    const imageFiles: Array<{
+      buffer: Buffer;
+      filename: string;
+      mimetype: string;
+    }> = [];
+    const variantImageFilesMap = new Map<
+      string,
+      Array<{ buffer: Buffer; filename: string; mimetype: string }>
+    >();
+    let productImageUrls: string[] = [];
 
     for await (const part of req.parts()) {
-      if ('value' in part) { // It's a field
+      if ('value' in part) {
+        // It's a field
         try {
           if (part.fieldname === 'variants') {
             formData.variants = JSON.parse(part.value as string);
-          } else if (part.fieldname === 'productImageUrls') { // <-- Match the frontend form data key
+          } else if (part.fieldname === 'productImageUrls') {
+            // <-- Match the frontend form data key
             productImageUrls = JSON.parse(part.value as string);
-            if (!Array.isArray(productImageUrls)) throw new Error('productImageUrls must be an array.');
+            if (!Array.isArray(productImageUrls))
+              throw new Error('productImageUrls must be an array.');
           } else {
             formData[part.fieldname] = part.value;
           }
         } catch (e) {
-          throw new BadRequestException(`Invalid JSON format for field "${part.fieldname}": ${e.message}`);
+          throw new BadRequestException(
+            `Invalid JSON format for field "${part.fieldname}": ${e.message}`,
+          );
         }
-      } else { // It's a file
+      } else {
+        // It's a file
         const buffer = await part.toBuffer();
         if (part.fieldname === 'images') {
-          imageFiles.push({ buffer, filename: part.filename, mimetype: part.mimetype });
+          imageFiles.push({
+            buffer,
+            filename: part.filename,
+            mimetype: part.mimetype,
+          });
         } else if (part.fieldname.startsWith('variantImages_')) {
           const identifier = part.fieldname.replace('variantImages_', '');
           if (!variantImageFilesMap.has(identifier)) {
             variantImageFilesMap.set(identifier, []);
           }
-          variantImageFilesMap.get(identifier)!.push({ buffer, filename: part.filename, mimetype: part.mimetype });
+          variantImageFilesMap
+            .get(identifier)!
+            .push({ buffer, filename: part.filename, mimetype: part.mimetype });
         }
       }
     }
 
     // Attach all parsed data to the final object with consistent naming
-   formData.imageFiles = imageFiles;
-  formData.productImageUrls = productImageUrls;
-  formData.variantImageFilesMap = variantImageFilesMap;
+    formData.imageFiles = imageFiles;
+    formData.productImageUrls = productImageUrls;
+    formData.variantImageFilesMap = variantImageFilesMap;
     return formData;
   }
 
@@ -121,41 +149,92 @@ private async parseMultipartData(req: FastifyRequest): Promise<any> {
    * Corrected validation logic.
    */
   private validateProductData(formData: any): void {
-    const { title, categoryId, variants, imageFiles, productImageUrls } = formData;
-    
-    if (!title) throw new BadRequestException('Product title is required.');
-    if (!categoryId || isNaN(parseInt(categoryId, 10))) throw new BadRequestException('A valid categoryId is required.');
-    
-    // --- CORRECTED VALIDATION LOGIC ---
-    const hasImageFiles = imageFiles && imageFiles.length > 0;
-    const hasImageUrls = productImageUrls && Array.isArray(productImageUrls) && productImageUrls.length > 0;
-    if (!hasImageFiles && !hasImageUrls) {
-      throw new BadRequestException('Either product image files OR product image URLs must be provided.');
+    const {
+      title,
+      categoryId,
+      description,
+      variants,
+      imageFiles,
+      productImageUrls,
+    } = formData;
+
+    // ── Hard requirements ──────────────────────────────────────────────────────
+    if (!title?.trim())
+      throw new BadRequestException('Product title is required.');
+
+    if (!categoryId || isNaN(parseInt(categoryId, 10)))
+      throw new BadRequestException('A valid categoryId is required.');
+
+    if (!description?.trim())
+      throw new BadRequestException('Product description is required.');
+
+    if (!Array.isArray(variants) || variants.length === 0)
+      throw new BadRequestException('At least one variant is required.');
+
+    // ── Image requirement: product-level OR variant-level, file OR URL ─────────
+    // At least one image must exist somewhere across the whole product
+    const hasProductImageFiles = imageFiles?.length > 0;
+    const hasProductImageUrls =
+      Array.isArray(productImageUrls) && productImageUrls.length > 0;
+
+    const hasAnyVariantImageFile = variants.some(
+      (_, i) =>
+        (formData.variantImageFilesMap.get(i.toString())?.length ?? 0) > 0 ||
+        (formData.variantImageFilesMap.get(variants[i]?.sku)?.length ?? 0) > 0,
+    );
+    const hasAnyVariantImageUrl = variants.some(
+      (v) => Array.isArray(v.imageUrls) && v.imageUrls.length > 0,
+    );
+
+    if (
+      !hasProductImageFiles &&
+      !hasProductImageUrls &&
+      !hasAnyVariantImageFile &&
+      !hasAnyVariantImageUrl
+    ) {
+      throw new BadRequestException(
+        'At least one image is required — provide a product image file, a product image URL, or a variant image.',
+      );
     }
-    // --- END OF CORRECTION ---
-    
-    if (!Array.isArray(variants) || variants.length === 0) throw new BadRequestException('At least one variant is required.');
+
+    // ── Per-variant requirements ───────────────────────────────────────────────
     for (const [index, variant] of variants.entries()) {
+      const label = variant.sku || `variant #${index + 1}`;
+
+      if (!variant.sku?.trim())
+        throw new BadRequestException(`SKU is required for ${label}.`);
+
+      if (!variant.price || isNaN(parseFloat(variant.price)))
+        throw new BadRequestException(
+          `A valid price is required for variant "${label}".`,
+        );
+
+      if (
+        variant.stock === undefined ||
+        variant.stock === null ||
+        isNaN(parseInt(variant.stock, 10))
+      )
+        throw new BadRequestException(
+          `Stock is required for variant "${label}".`,
+        );
+
+      if (!Array.isArray(variant.attributes) || variant.attributes.length === 0)
+        throw new BadRequestException(
+          `At least one attribute is required for variant "${label}".`,
+        );
+
       for (const attr of variant.attributes) {
-        if (!attr.attributeOptionId || isNaN(parseInt(attr.attributeOptionId, 10))) {
+        if (
+          !attr.attributeOptionId ||
+          isNaN(parseInt(attr.attributeOptionId, 10))
+        ) {
           throw new BadRequestException(
-            `Each attribute for variant ${variant.sku || index + 1} must have a valid attributeOptionId.`,
+            `Each attribute for variant "${label}" must have a valid attributeOptionId.`,
           );
         }
       }
-
-      // Variant images validation (files OR URLs)
-      const variantKey = variant.sku;
-      const hasVariantFiles = formData.variantImagesMap && formData.variantImagesMap[variantKey] && formData.variantImagesMap[variantKey].length > 0;
-      const hasVariantUrls = variant.imageUrls && Array.isArray(variant.imageUrls) && variant.imageUrls.length > 0;
-      
-      // Variants don't require images (optional)
-      // if (!hasVariantFiles && !hasVariantUrls) {
-      //   console.warn(`Variant ${variantKey} has no images or URLs`);
-      // }
     }
   }
-
 
   @UseGuards(JwtAuthGuard)
   @Get('business/:businessId')
@@ -204,7 +283,13 @@ private async parseMultipartData(req: FastifyRequest): Promise<any> {
     }
 
     const user = req.user as any;
+
+    // Admins can set isPublished; sellers cannot
+    const callerRole: 'admin' | 'seller' =
+      user.role === 'admin' ? 'admin' : 'seller';
+
     const formData = await this.parseMultipartUpdateData(req);
+
     const validationErrors = await validate(formData.dto);
     if (validationErrors.length > 0) {
       throw new BadRequestException(validationErrors);
@@ -218,11 +303,16 @@ private async parseMultipartData(req: FastifyRequest): Promise<any> {
       formData.newVariantImagesMap,
       formData.newModel3dFile,
       formData.newSlicenseDocumentFile,
+      callerRole,
     );
   }
 
+
   // --- REVISED & TYPE-SAFE PARSER ---
   // Applying the same `in` operator type guard for consistency and safety.
+
+
+
   private async parseMultipartUpdateData(req: FastifyRequest): Promise<{
     dto: UpdateProductDto;
     newProductImages: any[];
@@ -230,50 +320,103 @@ private async parseMultipartData(req: FastifyRequest): Promise<any> {
     newModel3dFile?: any;
     newSlicenseDocumentFile?: any;
   }> {
-    const fields: any = {};
     const newProductImages: any[] = [];
     const newVariantImagesMap = new Map<string, any[]>();
-    let newModel3dFile: any | undefined;
-    let newSlicenseDocumentFile: any | undefined;
+    let newModel3dFile: any;
+    let newSlicenseDocumentFile: any;
+    const fields: Record<string, any> = {};
 
-    for await (const part of req.parts()) {
+    const parts = req.parts();
+    for await (const part of parts) {
       if ('value' in part) {
         // It's a field
         fields[part.fieldname] = part.value;
       } else {
         // It's a file
         const buffer = await part.toBuffer();
-        const fileData = { buffer, filename: part.filename, mimetype: part.mimetype };
+        const file = {
+          buffer,
+          filename: part.filename,
+          mimetype: part.mimetype,
+        };
 
         if (part.fieldname === 'images') {
-          newProductImages.push(fileData);
-        } else if (part.fieldname.startsWith('variantImages_')) {
-          const variantIndex = part.fieldname.replace('variantImages_', '');
-          if (!newVariantImagesMap.has(variantIndex)) {
-            newVariantImagesMap.set(variantIndex, []);
-          }
-          newVariantImagesMap.get(variantIndex)!.push(fileData);
+          newProductImages.push(file);
         } else if (part.fieldname === 'model3d') {
-          newModel3dFile = fileData;
+          newModel3dFile = file;
         } else if (part.fieldname === 'slicenseDocument') {
-          newSlicenseDocumentFile = fileData;
+          newSlicenseDocumentFile = file;
+        } else if (part.fieldname.startsWith('variantImages_')) {
+          const index = part.fieldname.replace('variantImages_', '');
+          if (!newVariantImagesMap.has(index)) newVariantImagesMap.set(index, []);
+          newVariantImagesMap.get(index)!.push(file);
         }
       }
     }
 
-    const dtoData: any = {
-      title: fields.title,
-      description: fields.description,
-      isFeatured: fields.isFeatured === 'true',
-      isCustomizable: fields.isCustomizable === 'true',
-      variants: fields.variants ? JSON.parse(fields.variants) : [],
-      imagesToDelete: fields.imagesToDelete ? JSON.parse(fields.imagesToDelete) : [],
-      customizationConfig: fields.customizationConfig,
-      deleteModel3d: fields.deleteModel3d === 'true',
-      deleteSlicenseDocument: fields.deleteSlicenseDocument === 'true',
-    };
+    // ── Parse variants JSON ────────────────────────────────────────────────
+    let variants: UpdateVariantDto[] = [];
+    if (fields['variants']) {
+      try {
+        const parsed = JSON.parse(fields['variants']);
+        variants = parsed.map((v: any) => plainToInstance(UpdateVariantDto, v));
+      } catch {
+        throw new BadRequestException('Invalid variants JSON.');
+      }
+    }
 
-    const dto = plainToInstance(UpdateProductDto, dtoData);
+    // ── Parse newProductImageUrls ──────────────────────────────────────────
+    let newProductImageUrls: string[] = [];
+    if (fields['newProductImageUrls']) {
+      try {
+        newProductImageUrls = JSON.parse(fields['newProductImageUrls']);
+      } catch {
+        newProductImageUrls = [];
+      }
+    }
+
+    // ── Parse imagesToDelete ───────────────────────────────────────────────
+    let imagesToDelete: string[] = [];
+    if (fields['imagesToDelete']) {
+      try {
+        imagesToDelete = JSON.parse(fields['imagesToDelete']);
+      } catch {
+        imagesToDelete = [];
+      }
+    }
+
+    // ── Parse tags ─────────────────────────────────────────────────────────
+    let tags: string[] | undefined;
+    if (fields['tags']) {
+      try {
+        tags = JSON.parse(fields['tags']);
+      } catch {
+        tags = undefined;
+      }
+    }
+
+    // ── Build DTO ──────────────────────────────────────────────────────────
+    const dto = plainToInstance(UpdateProductDto, {
+      title:                  fields['title'],
+      description:            fields['description'],
+      isCustomizable:         fields['isCustomizable'] === 'true',
+      isFeatured:             fields['isFeatured'] === 'true',
+      // isPublished parsed but service ignores it for sellers
+      isPublished:            fields['isPublished'] !== undefined
+                                ? fields['isPublished'] === 'true'
+                                : undefined,
+      publishDate:            fields['publishDate'],
+      brand:                  fields['brand'],
+      tags,
+      metaTitle:              fields['metaTitle'],
+      metaDescription:        fields['metaDescription'],
+      customizationConfig:    fields['customizationConfig'],
+      imagesToDelete,
+      newProductImageUrls,    // ✅ direct URL uploads for product
+      deleteModel3d:          fields['deleteModel3d'] === 'true',
+      deleteSlicenseDocument: fields['deleteSlicenseDocument'] === 'true',
+      variants,
+    });
 
     return {
       dto,
@@ -283,6 +426,8 @@ private async parseMultipartData(req: FastifyRequest): Promise<any> {
       newSlicenseDocumentFile,
     };
   }
+
+
 
   @UseGuards(JwtAuthGuard)
   @Get('stats/:businessId')
@@ -304,7 +449,8 @@ private async parseMultipartData(req: FastifyRequest): Promise<any> {
 
   @Get('featured/category/:categoryId')
   @ApiOperation({
-    summary: 'Get all featured products by category with reduced details (Customer-facing)',
+    summary:
+      'Get all featured products by category with reduced details (Customer-facing)',
   })
   @ApiResponse({
     status: 200,
@@ -330,22 +476,33 @@ private async parseMultipartData(req: FastifyRequest): Promise<any> {
   }
 
   @Get('public/:productId')
-  @ApiOperation({ summary: 'Customer: Get comprehensive details of a single product by ID' })
-  @ApiResponse({ status: 200, description: 'Returns full details of a published product.' })
-  @ApiResponse({ status: 404, description: 'Product not found or not published.' })
-  async getProductDetailsForCustomer(
-    @Param('productId') productId: string,
-  ) {
+  @ApiOperation({
+    summary: 'Customer: Get comprehensive details of a single product by ID',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns full details of a published product.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found or not published.',
+  })
+  async getProductDetailsForCustomer(@Param('productId') productId: string) {
     return this.productsService.getProductDetailsForCustomer(productId);
   }
 
-@Get('category-page/:slug')
-@ApiOperation({ summary: 'Get data for a category page (handles parent/child logic)' })
-@ApiParam({ name: 'slug', description: 'The unique slug of the category' })
-async getCategoryPageData(
-  @Param('slug') slug: string,
-  @Query() paginationQuery: PaginationQueryDto,
-) {
-  return this.productsService.getCategoryPageDataBySlug(slug, paginationQuery);
-}
+  @Get('category-page/:slug')
+  @ApiOperation({
+    summary: 'Get data for a category page (handles parent/child logic)',
+  })
+  @ApiParam({ name: 'slug', description: 'The unique slug of the category' })
+  async getCategoryPageData(
+    @Param('slug') slug: string,
+    @Query() paginationQuery: PaginationQueryDto,
+  ) {
+    return this.productsService.getCategoryPageDataBySlug(
+      slug,
+      paginationQuery,
+    );
+  }
 }

@@ -223,7 +223,6 @@ export class QuotationService {
           saleItems: { create: saleItemsData },
           
           // --- REQUIRED LEGACY FIELDS (Must be provided as per schema) ---
-          party: '', 
           placeOfSupply: '', 
           businessName: '', 
           billingAddress: '',

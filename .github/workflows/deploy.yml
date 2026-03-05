@@ -33,6 +33,8 @@ jobs:
 
             # 4. Run database migrations/sync
             docker exec jottosop_api npx prisma db push
+            docker exec jottosop_api npx prisma generate
+
 
             # 5. Cleanup: Remove old/unused images to save VPS disk space (50GB limit)
             docker image prune -f

@@ -314,7 +314,9 @@ async updateOrderStatus(businessId: string, orderId: string, dto: UpdateSellerOr
         saleType: '', paymentTerm: 0, partyType: '', taxId: '', panNo: '',
         isDiscountAfterTaxEnabled: false, discountPercent: 0, isAutoRoundoffEnabled: false,
         roundoffType: '', roundoffAmount: 0, termCondition: '', isScanItemEnabled: false,
-        isConverted: false, party: '', isDueDateEnabled: false, dueDate: new Date()
+       isConverted: false, 
+isDueDateEnabled: false, 
+dueDate: new Date()
       },
     });
   }
@@ -500,7 +502,6 @@ async createPosSale(businessId: string, dto: CreatePosSaleDto) {
           phoneNo: customerPhone,
           partyId: customerUserId || '',
           partyType: customerUserId ? 'Registered' : 'Unregistered',
-          party: '',
           placeOfSupply: '',
           invoicePrefix: 'POS',
           invoiceNo: nextInvoiceNo,

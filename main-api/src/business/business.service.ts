@@ -185,112 +185,202 @@ async createBusiness(dto: CreateBusinessDto, ownerId: string) {
   // UPDATE OPERATIONS
   // ========================================================
   
-  async updateBusiness(
-    businessId: string, 
-    userId: string, 
-    dto: UpdateBusinessDto,
-    files?: {
-      logo?: Buffer; 
-      banner?: Buffer; 
-      signature?: Buffer;
+async updateBusiness(
+  businessId: string,
+  userId: string,
+  dto: UpdateBusinessDto,
+  files?: {
+    logo?:      Buffer;
+    banner?:    Buffer;
+    signature?: Buffer;
+  }
+) {
+  // 1. Verify Ownership & Existence
+  const business = await this.prisma.business.findUnique({
+    where: { id: businessId },
+  });
+
+  if (!business)                   throw new NotFoundException('Business not found');
+  if (business.ownerId !== userId) throw new ForbiddenException('You do not have permission to update this business');
+
+  const uploadedUrlsForRollback: string[] = [];
+  const updates: any = { ...dto };
+
+  try {
+    // 2. Flatten invoiceConfig into top-level DB columns
+    if (dto.invoiceConfig) {
+      const {
+        invoicePrefix, purchaseInvoicePrefix,
+        invoiceStartNumber, purchaseStartNumber,
+        fiscalYearStart, invoiceNotes, invoiceTerms,
+      } = dto.invoiceConfig;
+
+      if (invoicePrefix         !== undefined) updates.invoicePrefix         = invoicePrefix;
+      if (purchaseInvoicePrefix !== undefined) updates.purchaseInvoicePrefix = purchaseInvoicePrefix;
+      if (invoiceStartNumber    !== undefined) updates.invoiceStartNumber    = invoiceStartNumber;
+      if (purchaseStartNumber   !== undefined) updates.purchaseStartNumber   = purchaseStartNumber;
+      if (fiscalYearStart       !== undefined) updates.fiscalYearStart       = fiscalYearStart;
+      if (invoiceNotes          !== undefined) updates.invoiceNotes          = invoiceNotes;
+      if (invoiceTerms          !== undefined) updates.invoiceTerms          = invoiceTerms;
+
+      delete updates.invoiceConfig;
     }
-  ) {
-    // 1. Verify Ownership & Existence
-    const business = await this.prisma.business.findUnique({
-      where: { id: businessId },
-    });
 
-    if (!business) throw new NotFoundException('Business not found');
-    if (business.ownerId !== userId) {
-      // Also allow authorized users if they have permission (Future scope)
-      throw new ForbiddenException('You do not have permission to update this business');
+    // 3. Remove deprecated / non-Prisma fields
+    delete updates.bankDetails;
+
+    // 4. Strip empty strings from unique fields — prevents constraint errors
+    const UNIQUE_FIELDS = ['panNumber', 'gstNumber', 'email', 'slug'];
+    for (const field of UNIQUE_FIELDS) {
+      if (updates[field] === '' || updates[field] === null) {
+        delete updates[field];
+      }
     }
 
-    const updates: any = { ...dto };
+    // 5. Strip ALL remaining empty strings — don't overwrite DB values with ""
+    for (const key of Object.keys(updates)) {
+      if (updates[key] === '') {
+        delete updates[key];
+      }
+    }
 
-    // 2. Handle Logo Upload (Delete old if exists)
+    // 6. Handle Logo Upload
     if (files?.logo) {
+      console.log('[UPDATE_BUSINESS] 🔄 Uploading logo...');
       if (business.logoUrl) {
-        await this.s3Service.deleteImages([business.logoUrl]).catch(err => console.error("Failed to delete old logo", err));
+        await this.s3Service
+          .deleteImages([business.logoUrl])
+          .catch((err) => console.error('[UPDATE_BUSINESS] Failed to delete old logo:', err));
       }
       updates.logoUrl = await this.s3Service.uploadImage(
-        files.logo, 
-        `logo-${business.slug}.png`, 
-        'image/png', 
-        'business'
+        files.logo,
+        `logo-${business.slug}.png`,
+        'image/png',
+        'business',
       );
+      uploadedUrlsForRollback.push(updates.logoUrl);
+      console.log('[UPDATE_BUSINESS] ✅ Logo uploaded:', updates.logoUrl);
     }
 
-    // 3. Handle Banner Upload
+    // 7. Handle Banner Upload
     if (files?.banner) {
+      console.log('[UPDATE_BUSINESS] 🔄 Uploading banner...');
       if (business.bannerUrl) {
-        await this.s3Service.deleteImages([business.bannerUrl]).catch(err => console.error("Failed to delete old banner", err));
+        await this.s3Service
+          .deleteImages([business.bannerUrl])
+          .catch((err) => console.error('[UPDATE_BUSINESS] Failed to delete old banner:', err));
       }
       updates.bannerUrl = await this.s3Service.uploadImage(
-        files.banner, 
-        `banner-${business.slug}.png`, 
-        'image/png', 
-        'business'
+        files.banner,
+        `banner-${business.slug}.png`,
+        'image/png',
+        'business',
       );
+      uploadedUrlsForRollback.push(updates.bannerUrl);
+      console.log('[UPDATE_BUSINESS] ✅ Banner uploaded:', updates.bannerUrl);
     }
 
-    // 4. Handle Authorized Signatory Signature Upload
-    // Note: Assuming you added 'authorizedSignatorySignatureUrl' to schema
+    // 8. Handle Signature Upload
     if (files?.signature) {
-      if (business['authorizedSignatorySignatureUrl']) {
-        await this.s3Service.deleteImages([business['authorizedSignatorySignatureUrl']]).catch(err => console.error("Failed to delete old signature", err));
+      console.log('[UPDATE_BUSINESS] 🔄 Uploading signature...');
+      if (business.authorizedSignatorySignatureUrl) {
+        await this.s3Service
+          .deleteImages([business.authorizedSignatorySignatureUrl])
+          .catch((err) => console.error('[UPDATE_BUSINESS] Failed to delete old signature:', err));
       }
       updates.authorizedSignatorySignatureUrl = await this.s3Service.uploadImage(
-        files.signature, 
-        `signature-${business.slug}.png`, 
-        'image/png', 
-        'business'
+        files.signature,
+        `signature-${business.slug}.png`,
+        'image/png',
+        'business',
       );
+      uploadedUrlsForRollback.push(updates.authorizedSignatorySignatureUrl);
+      console.log('[UPDATE_BUSINESS] ✅ Signature uploaded:', updates.authorizedSignatorySignatureUrl);
     }
 
-    // 5. Perform Update
+    // 9. Perform DB Update
+    console.log('[UPDATE_BUSINESS] 🔄 Saving to database...');
     const updatedBusiness = await this.prisma.business.update({
       where: { id: businessId },
-      data: updates,
+      data:  updates,
     });
+    console.log('[UPDATE_BUSINESS] ✅ Business updated successfully:', updatedBusiness.id);
 
     return updatedBusiness;
-  }
 
-   async getBusinessForSettingById(businessId: string, userId: string) {
-    const business = await this.prisma.business.findUnique({
-      where: { id: businessId },
-      include: {
-        owner: {
-          select: { name: true, email: true } // Return basic owner info
+  } catch (error) {
+    console.error('[UPDATE_BUSINESS] ❌ Error:', error);
+
+    // Rollback any newly uploaded S3 files on failure
+    if (uploadedUrlsForRollback.length > 0) {
+      console.warn('[UPDATE_BUSINESS] Rolling back S3 uploads...');
+      await this.s3Service
+        .deleteImages(uploadedUrlsForRollback)
+        .catch((err) => console.error('[UPDATE_BUSINESS] S3 rollback failed:', err));
+      console.warn('[UPDATE_BUSINESS] ✅ S3 rollback complete.');
+    }
+
+    throw error;
+  }
+}
+
+
+// ─────────────────────────────────────────────
+
+async getBusinessForSettingById(businessId: string, userId: string) {
+  const business = await this.prisma.business.findUnique({
+    where: { id: businessId },
+    include: {
+      owner: {
+        select: { id: true, name: true, email: true },
+      },
+      bankAccounts: {
+        where:   { isEnabled: true },
+        orderBy: { isDefault: 'desc' },
+        select: {
+          id:             true,
+          accountName:    true,
+          accountType:    true,
+          bankName:       true,
+          bankAccountNo:  true,
+          bankIfscCode:   true,
+          upiId:          true,
+          closingBalance: true,
+          isDefault:      true,
+          isEnabled:      true,
         },
-        // Optional: Include operational details if needed for settings
-        warehouses: true, 
-        bankAccounts: true
-      }
+      },
+      warehouses: {
+        select: {
+          id:        true,
+          name:      true,
+          isDefault: true,
+        },
+      },
+    },
+  });
+
+  if (!business) throw new NotFoundException('Business not found');
+
+  // Security: Owner OR authorized BusinessUser
+  if (business.ownerId !== userId) {
+    const isAuthorized = await this.prisma.businessUser.findUnique({
+      where: {
+        userId_businessId: { userId, businessId },
+      },
     });
-
-    if (!business) {
-      throw new NotFoundException('Business not found');
+    if (!isAuthorized) {
+      throw new ForbiddenException('You do not have access to this business.');
     }
-
-    // Security Check: Is this the Owner?
-    if (business.ownerId !== userId) {
-      // If not owner, check if they are an Authorized User (RBAC)
-      const isAuthorized = await this.prisma.businessUser.findUnique({
-        where: {
-          userId_businessId: {
-            userId: userId,
-            businessId: businessId,
-          },
-        },
-      });
-
-      if (!isAuthorized) {
-        throw new ForbiddenException('You do not have access to this business.');
-      }
-    }
-
-    return business;
   }
+
+  // Strip sensitive fields before returning
+  const { stripeCustomerId, bankDetails, ...safeData } = business as any;
+
+  return safeData;
+}
+
+
+
+
 }

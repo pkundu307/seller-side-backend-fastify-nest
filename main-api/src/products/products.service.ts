@@ -3,9 +3,10 @@ import { Injectable, BadRequestException, NotFoundException, ForbiddenException 
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from './utils/s3Service';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
-import { Prisma } from '@prisma/client'; // <-- IMPORT PRISMA FOR TYPES
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductPaginationDto } from './dto/product-pagination.dto';
+import { Prisma, VariantStatus } from '@prisma/client';
+import {  StockMethod } from '@prisma/client';
 
 @Injectable()
 export class ProductsService {
@@ -173,136 +174,187 @@ export class ProductsService {
     // FIXED: The entire method logic is now correctly structured.
 async createProduct(businessId: string, formData: any) {
   const categoryId = parseInt(formData.categoryId, 10);
-    const category = await this.prisma.category.findUnique({
-      where: { id: categoryId },
-      select: { gstRate: true },
-    });
 
-    if (!category) {
-      throw new BadRequestException(`Category with ID ${categoryId} not found.`);
-    }
-    const gstRate = category.gstRate || new Prisma.Decimal(0);
-console.log(gstRate,'opopo')
-  const uploadedImageUrlsForRollback: string[] = [];
+  // ── Validate category ────────────────────────────────────────────────────
+  const category = await this.prisma.category.findUnique({
+    where: { id: categoryId },
+    select: { gstRate: true },
+  });
+  if (!category) throw new BadRequestException(`Category with ID ${categoryId} not found.`);
+  const gstRate = category.gstRate ?? new Prisma.Decimal(0);
+
+  // ── Fetch default warehouse (optional — gracefully skipped if none exists) ─
+  const defaultWarehouse = await this.prisma.warehouse.findFirst({
+    where: { businessId, isDefault: true },
+    select: { id: true },
+  });
+
+  const uploadedUrlsForRollback: string[] = [];
 
   try {
-    // --- 1. PROCESS MAIN PRODUCT IMAGES ---
-    console.log('[CREATE_PRODUCT] 🔄 Step 1: Processing main product images...');
+    // ── Process product-level images ─────────────────────────────────────────
     const finalProductImages: string[] = [];
 
-    // A. Handle file uploads
-    if (formData.imageFiles && formData.imageFiles.length > 0) {
-      console.log(`[CREATE_PRODUCT] Found ${formData.imageFiles.length} product image file(s) to upload.`);
-      for (const image of formData.imageFiles) {
-        const imageUrl = await this.s3Service.uploadImage(image.buffer, image.filename, image.mimetype, "products");
-        finalProductImages.push(imageUrl);
-        uploadedImageUrlsForRollback.push(imageUrl);
+    if (formData.imageFiles?.length > 0) {
+      for (const img of formData.imageFiles) {
+        const url = await this.s3Service.uploadImage(img.buffer, img.filename, img.mimetype, 'products');
+        finalProductImages.push(url);
+        uploadedUrlsForRollback.push(url);
       }
-    } else {
-      console.log('[CREATE_PRODUCT] No product image files to upload.');
     }
-
-    // B. Handle direct URLs
-    if (formData.productImageUrls && Array.isArray(formData.productImageUrls)) {
-      console.log(`[CREATE_PRODUCT] Found ${formData.productImageUrls.length} direct product image URL(s).`);
+    if (Array.isArray(formData.productImageUrls)) {
       finalProductImages.push(...formData.productImageUrls);
-    } else {
-      console.log('[CREATE_PRODUCT] No direct product image URLs provided.');
     }
-    console.log('[CREATE_PRODUCT] ✅ Final combined product images:', finalProductImages);
-    
-    // --- 2. GENERATE AND VALIDATE SLUG ---
-    console.log(`[CREATE_PRODUCT] 🔄 Step 2: Generating and validating slug for title: "${formData.title}"`);
+
+    // ── Generate & validate slug ──────────────────────────────────────────────
     const slug = this.generateSlug(formData.title);
-    const existingProductWithSlug = await this.prisma.product.findUnique({ where: { slug } });
-    if (existingProductWithSlug) {
-      console.error(`[CREATE_PRODUCT] ❌ Slug conflict found for slug: "${slug}"`);
-      throw new BadRequestException('A product with this title already exists, resulting in a duplicate slug.');
+    const slugExists = await this.prisma.product.findUnique({ where: { slug } });
+    if (slugExists) throw new BadRequestException('A product with this title already exists.');
+
+    // ── Enforce isDefault on variants ─────────────────────────────────────────
+    const variants: any[] = formData.variants;
+    const hasDefault = variants.some((v) => v.isDefault === true || v.isDefault === 'true');
+    if (!hasDefault) variants[0].isDefault = true;
+    let defaultSet = false;
+    for (const v of variants) {
+      if ((v.isDefault === true || v.isDefault === 'true') && !defaultSet) {
+        v.isDefault = true; defaultSet = true;
+      } else {
+        v.isDefault = false;
+      }
     }
-    console.log(`[CREATE_PRODUCT] ✅ Slug is unique: ${slug}`);
 
-    // --- 3. PROCESS VARIANTS ---
-    console.log(`[CREATE_PRODUCT] 🔄 Step 3: Processing ${formData.variants.length} variant(s)...`);
+    // ── Process variants ──────────────────────────────────────────────────────
     const variantsToCreate = await Promise.all(
-      formData.variants.map(async (variant: any, index: number) => {
+      variants.map(async (variant: any, index: number) => {
 
-        // 3a. Attribute validation
-        if (!variant.attributes || !Array.isArray(variant.attributes) || variant.attributes.length === 0) {
-          throw new BadRequestException(`Variant with SKU ${variant.sku} must have at least one attribute.`);
+        // Attribute validation
+        if (!variant.attributes?.length) {
+          throw new BadRequestException(`Variant SKU "${variant.sku}" must have at least one attribute.`);
         }
-        const attributeOptionIds = variant.attributes.map((attr: any) => parseInt(attr.attributeOptionId, 10));
-
+        const optionIds = variant.attributes.map((a: any) => parseInt(a.attributeOptionId, 10));
         const chosenOptions = await this.prisma.attributeOption.findMany({
-          where: { id: { in: attributeOptionIds } },
+          where: { id: { in: optionIds } },
           select: { id: true, attributeId: true },
         });
-
-        if (chosenOptions.length !== attributeOptionIds.length) {
-          throw new BadRequestException(`One or more attribute options for variant SKU ${variant.sku} are invalid.`);
+        if (chosenOptions.length !== optionIds.length) {
+          throw new BadRequestException(`Invalid attribute options for variant "${variant.sku}".`);
         }
-        const parentAttributeIds = chosenOptions.map((opt) => opt.attributeId);
-        if (new Set(parentAttributeIds).size !== parentAttributeIds.length) {
-          throw new BadRequestException(`Variant with SKU ${variant.sku} cannot have multiple values for the same attribute type.`);
+        const attrIds = chosenOptions.map((o) => o.attributeId);
+        if (new Set(attrIds).size !== attrIds.length) {
+          throw new BadRequestException(`Variant "${variant.sku}" has duplicate attribute types.`);
         }
-        console.log(`[VARIANT_LOOP | Index ${index}] ✅ Attribute options validated successfully.`);
-        
-        const attributeValuesToCreate = chosenOptions.map((option) => ({
-          attribute: { connect: { id: option.attributeId } },
-          attributeOption: { connect: { id: option.id } },
+        const attributeValuesToCreate = chosenOptions.map((opt) => ({
+          attribute: { connect: { id: opt.attributeId } },
+          attributeOption: { connect: { id: opt.id } },
         }));
 
-        // 3b. Handle variant images
+        // Variant images — file uploads + direct URLs
         const finalVariantImages: string[] = [];
-        const variantImageFiles = formData.variantImageFilesMap.get(index.toString()) || 
-                                 formData.variantImageFilesMap.get(variant.sku) || [];
-
-        if (variantImageFiles.length > 0) {
-          console.log(`[VARIANT_LOOP | Index ${index}] Found ${variantImageFiles.length} image file(s) for this variant.`);
-          for (const imageData of variantImageFiles) {
-            const imageUrl = await this.s3Service.uploadImage(imageData.buffer, imageData.filename, imageData.mimetype, "products");
-            finalVariantImages.push(imageUrl);
-            uploadedImageUrlsForRollback.push(imageUrl);
-          }
+        const variantFiles =
+          formData.variantImageFilesMap.get(index.toString()) ||
+          formData.variantImageFilesMap.get(variant.sku) || [];
+        for (const img of variantFiles) {
+          const url = await this.s3Service.uploadImage(img.buffer, img.filename, img.mimetype, 'products');
+          finalVariantImages.push(url);
+          uploadedUrlsForRollback.push(url);
         }
-        
-        if (variant.imageUrls && Array.isArray(variant.imageUrls) && variant.imageUrls.length > 0) {
-          console.log(`[VARIANT_LOOP | Index ${index}] Found ${variant.imageUrls.length} direct image URL(s) for this variant.`);
-          finalVariantImages.push(...variant.imageUrls);
-        }
-        console.log(`[VARIANT_LOOP | Index ${index}] ✅ Final combined images for this variant:`, finalVariantImages);
+        if (Array.isArray(variant.imageUrls)) finalVariantImages.push(...variant.imageUrls);
 
-        const variantDataForPrisma = {
-          sku: variant.sku,
-          price: new Prisma.Decimal(variant.price),
-          tax: gstRate+'',
-          stock: parseInt(variant.stock, 10),
-          mrp: variant.mrp ? new Prisma.Decimal(variant.mrp) : undefined,
-          hsnCode: variant.hsnCode,
-          images: finalVariantImages,
-          attributeValues: { create: attributeValuesToCreate },
+        // Build full variant data with safe defaults for ALL optional fields
+        return {
+          sku:                    variant.sku,
+          price:                  new Prisma.Decimal(variant.price),
+          stock:                  parseInt(variant.stock, 10),
+          mrp:                    variant.mrp ? new Prisma.Decimal(variant.mrp) : undefined,
+          purchasePrice:          variant.purchasePrice ? new Prisma.Decimal(variant.purchasePrice) : undefined,
+          hsnCode:                variant.hsnCode ?? undefined,
+          sacCode:                variant.sacCode ?? undefined,
+          tax:                    gstRate.toString(),
+          weightInGrams:          variant.weightInGrams ? parseInt(variant.weightInGrams, 10) : undefined,
+          height:                 variant.height ? new Prisma.Decimal(variant.height) : undefined,
+          width:                  variant.width ? new Prisma.Decimal(variant.width) : undefined,
+          length:                 variant.length ? new Prisma.Decimal(variant.length) : undefined,
+          dimensionUnit:          variant.dimensionUnit ?? 'CM',
+          minStockCount:          variant.minStockCount ? new Prisma.Decimal(variant.minStockCount) : undefined,
+          isMinStockAlertEnabled: variant.isMinStockAlertEnabled ?? false,
+          // Advanced features — all OFF by default
+          isBatchingEnabled:      variant.isBatchingEnabled ?? false,
+          isExpiryTracked:        variant.isExpiryTracked ?? false,
+          isSerialTracked:        variant.isSerialTracked ?? false,
+          expiryAlertDays:        variant.expiryAlertDays ?? undefined,
+          stockDeductionMethod:   variant.stockDeductionMethod ?? 'FIFO',
+          isDefault:              variant.isDefault ?? false,
+          status:                 VariantStatus.ACTIVE,
+          description:            variant.description ?? undefined,
+          images:                 finalVariantImages,
+          attributeValues:        { create: attributeValuesToCreate },
         };
-
-        console.log(`[VARIANT_LOOP | Index ${index}] --- Finished processing variant. ---`);
-        return variantDataForPrisma;
       }),
     );
-    console.log('[CREATE_PRODUCT] ✅ All variants processed successfully.');
-    console.log('[CREATE_PRODUCT] Final `variantsToCreate` object:', JSON.stringify(variantsToCreate, null, 2));
 
-    // --- 4. CREATE PRODUCT IN DATABASE ---
-    console.log('[CREATE_PRODUCT] 🔄 Step 4: Calling prisma.product.create with all data...');
-    const product = await this.prisma.product.create({
+    // ── DB Transaction ────────────────────────────────────────────────────────
+const product = await this.prisma.$transaction(
+  async (tx) => {
+    // Step 1: Create product WITH variants but WITHOUT include
+    const created = await tx.product.create({
       data: {
-        title: formData.title,
-        description: formData.description,
-        slug: slug,
-        images: finalProductImages,
-        business: { connect: { id: businessId } },
-        category: { connect: { id: parseInt(formData.categoryId, 10) } },
-        variants: {
-          create: variantsToCreate,
-        },
+        title:               formData.title,
+        description:         formData.description,
+        slug,
+        images:              finalProductImages,
+        productType:         formData.productType ?? 'STANDARD',
+        brand:               formData.brand ?? undefined,
+        tags:                Array.isArray(formData.tags) ? formData.tags : [],
+        metaTitle:           formData.metaTitle ?? undefined,
+        metaDescription:     formData.metaDescription ?? undefined,
+        isCustomizable:      formData.isCustomizable ?? false,
+        customizationConfig: formData.customizationConfig
+                               ? JSON.parse(formData.customizationConfig) : undefined,
+        isFeatured:          formData.isFeatured ?? false,
+        publishDate:         formData.publishDate ? new Date(formData.publishDate) : undefined,
+        isPublished:         false,
+        business:            { connect: { id: businessId } },
+        category:            { connect: { id: categoryId } },
+        variants:            { create: variantsToCreate },
       },
+    });
+
+    // Step 2: Fetch created variants separately for WarehouseStock seeding
+    if (defaultWarehouse) {
+      const createdVariants = await tx.variant.findMany({
+        where: { productId: created.id },
+        select: { id: true, stock: true },
+      });
+
+      for (const variant of createdVariants) {
+        if (variant.stock > 0) {
+          await tx.warehouseStock.create({
+            data: {
+              warehouseId: defaultWarehouse.id,
+              variantId:   variant.id,
+              quantity:    variant.stock,
+            },
+          });
+          await tx.stockActivity.create({
+            data: {
+              businessId,
+              itemId:        created.id,
+              variantId:     variant.id,
+              activityType:  'OPENING',
+              invoicePrefix: 'PROD',
+              invoiceNo:     0,
+              quantity:      new Prisma.Decimal(variant.stock),
+              closingStock:  new Prisma.Decimal(variant.stock),
+            },
+          });
+        }
+      }
+    }
+
+    // Step 3: Return fully populated product
+    return tx.product.findUnique({
+      where: { id: created.id },
       include: {
         category: true,
         variants: {
@@ -317,28 +369,24 @@ console.log(gstRate,'opopo')
         },
       },
     });
-    console.log(`[CREATE_PRODUCT] ✅ Prisma successfully created product with ID: ${product.id}`);
+  },
+  { maxWait: 15000, timeout: 30000 },
+);
+
 
     return { success: true, message: 'Product created successfully', data: product };
+
   } catch (error) {
-    console.error(`[CREATE_PRODUCT] ❌ ERROR caught in createProduct service:`, error);
-    if (uploadedImageUrlsForRollback.length > 0) {
-      console.warn('[CREATE_PRODUCT] Rolling back S3 uploads...');
-      await this.s3Service.deleteImages(uploadedImageUrlsForRollback);
-      console.warn('[CREATE_PRODUCT] ✅ S3 rollback complete.');
+    if (uploadedUrlsForRollback.length > 0) {
+      await this.s3Service.deleteImages(uploadedUrlsForRollback);
     }
-    
-    // Specific Prisma error handling
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === 'P2002') {
         const target = (error.meta?.target as string[]) || [];
-        if (target.includes('sku')) {
-          throw new BadRequestException('One of the provided SKU values is already in use.');
-        }
+        if (target.includes('sku'))  throw new BadRequestException('A provided SKU is already in use.');
+        if (target.includes('slug')) throw new BadRequestException('A product with this title already exists.');
       }
-      if (error.code === 'P2025') {
-        throw new BadRequestException('The provided categoryId or an attributeOptionId does not exist.');
-      }
+      if (error.code === 'P2025') throw new BadRequestException('A referenced category or attribute option does not exist.');
     }
     throw error;
   }
@@ -472,168 +520,354 @@ async updateProduct(
   newVariantImagesMap: Map<string, any[]>,
   newModel3dFile?: any,
   newSlicenseDocumentFile?: any,
+  callerRole: 'admin' | 'seller' = 'seller',
 ) {
-  console.log(`[UPDATE_PRODUCT] Service triggered for Product ID: ${productId} by User ID: ${userId}`);
-  console.log('[UPDATE_PRODUCT] Received DTO:', JSON.stringify(dto, null, 2));
-  console.log(`[UPDATE_PRODUCT] Received ${newProductImages.length} new product image files.`);
-  console.log(`[UPDATE_PRODUCT] Received new variant images for ${newVariantImagesMap.size} variants.`);
+  console.log(`[UPDATE_PRODUCT] Service triggered for Product ID: ${productId}`);
 
-  // --- STEP 1: PREPARATION & VALIDATION (Outside Transaction) ---
-  console.log('[UPDATE_PRODUCT] 🔄 Step 1: Fetching and validating existing product...');
+  // --- STEP 1: Fetch & Validate ---
   const product = await this.prisma.product.findUnique({
     where: { id: productId },
     include: { business: true, variants: true },
   });
-
-  if (!product) {
-    console.error(`[UPDATE_PRODUCT] ❌ ERROR: Product with ID "${productId}" not found.`);
-    throw new NotFoundException(`Product with ID "${productId}" not found.`);
-  }
-  if (product.business.ownerId !== userId) {
-    console.error(`[UPDATE_PRODUCT] ❌ FORBIDDEN: User ${userId} does not own business ${product.businessId}.`);
+  if (!product) throw new NotFoundException(`Product with ID "${productId}" not found.`);
+  if (product.business.ownerId !== userId)
     throw new ForbiddenException('You do not have permission to modify this product.');
-  }
-  console.log('[UPDATE_PRODUCT] ✅ Product and ownership validated successfully.');
 
-  // --- File Deletion Logic ---
-  const filesToDeleteFromS3: string[] = dto.imagesToDelete || [];
-  if (dto.deleteModel3d && product.model3dUrl) filesToDeleteFromS3.push(product.model3dUrl);
-  if (dto.deleteSlicenseDocument && product.licenseDocumentUrl) filesToDeleteFromS3.push(product.licenseDocumentUrl);
-  
-  if (filesToDeleteFromS3.length > 0) {
-    console.log('[UPDATE_PRODUCT] Deleting files from S3:', filesToDeleteFromS3);
-    await this.s3Service.deleteImages(filesToDeleteFromS3);
-    console.log('[UPDATE_PRODUCT] ✅ S3 deletion successful.');
+  // --- STEP 2: Validate attribute options ---
+  for (const variantDto of dto.variants) {
+    if (!variantDto.attributeValues?.length) {
+      throw new BadRequestException(`Variant SKU "${variantDto.sku}" must have at least one attribute.`);
+    }
+    const optionIds = variantDto.attributeValues.map((a) => a.attributeOptionId);
+    const options = await this.prisma.attributeOption.findMany({
+      where: { id: { in: optionIds } },
+      select: { id: true, attributeId: true },
+    });
+    if (options.length !== optionIds.length)
+      throw new BadRequestException(`Invalid attribute options for variant SKU "${variantDto.sku}".`);
+    const attrIds = options.map((o) => o.attributeId);
+    if (new Set(attrIds).size !== attrIds.length)
+      throw new BadRequestException(`Variant "${variantDto.sku}" has duplicate attribute types.`);
   }
 
-  // --- File Upload Logic ---
+  // --- STEP 3: Enforce exactly one isDefault variant ---
+  const explicitDefaultCount = dto.variants.filter((v) => v.isDefault).length;
+  if (explicitDefaultCount === 0) {
+    dto.variants[0].isDefault = true;
+  } else if (explicitDefaultCount > 1) {
+    let found = false;
+    for (const v of dto.variants) {
+      if (v.isDefault && !found) { found = true; }
+      else { v.isDefault = false; }
+    }
+  }
+
+  // --- STEP 4: S3 Deletions ---
+  const filesToDelete: string[] = dto.imagesToDelete ?? [];
+  if (dto.deleteModel3d && product.model3dUrl) filesToDelete.push(product.model3dUrl);
+  if (dto.deleteSlicenseDocument && product.licenseDocumentUrl) filesToDelete.push(product.licenseDocumentUrl);
+  if (filesToDelete.length > 0) {
+    console.log('[UPDATE_PRODUCT] Deleting from S3:', filesToDelete);
+    await this.s3Service.deleteImages(filesToDelete);
+  }
+
+  // --- STEP 5: S3 Uploads ---
   const newUploadedUrls: string[] = [];
+
   const uploadAndTrack = async (file: any, type: string): Promise<string> => {
-    console.log(`[UPLOAD] Uploading file: ${file.filename} for type: ${type}`);
-    const url = await this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype, "products");
+    const url = await this.s3Service.uploadImage(
+      file.buffer,
+      file.filename,
+      file.mimetype,
+      'products',
+    );
     newUploadedUrls.push(url);
-    console.log(`[UPLOAD] ✅ Uploaded successfully to: ${url}`);
+    console.log(`[UPLOAD] ${type} → ${url}`);
     return url;
   };
 
   try {
-    console.log('[UPDATE_PRODUCT] 🔄 Step 1b: Uploading all new files...');
-    const newProductImageUrls = await Promise.all(newProductImages.map(file => uploadAndTrack(file, 'product')));
-    const newModel3dUrl = newModel3dFile ? await uploadAndTrack(newModel3dFile, 'model3d') : undefined;
-    const newlicenseDocumentUrl = newSlicenseDocumentFile ? await uploadAndTrack(newSlicenseDocumentFile, 'licenseDocument') : undefined;
-    console.log('[UPDATE_PRODUCT] ✅ All primary files uploaded.');
+    const newProductImageUrls = await Promise.all(
+      newProductImages.map((f) => uploadAndTrack(f, 'product')),
+    );
+    const newModel3dUrl = newModel3dFile
+      ? await uploadAndTrack(newModel3dFile, 'model3d')
+      : undefined;
+    const newLicenseDocUrl = newSlicenseDocumentFile
+      ? await uploadAndTrack(newSlicenseDocumentFile, 'licenseDocument')
+      : undefined;
 
-    // Prepare final image arrays
-    const finalProductImages = [...product.images.filter((url) => !dto.imagesToDelete?.includes(url)), ...newProductImageUrls];
+    // Merge existing + newly uploaded + newly provided URLs for product images
+    const incomingProductUrlsFromDto: string[] = dto.newProductImageUrls ?? [];
+    const finalProductImages = [
+      ...product.images.filter((url) => !dto.imagesToDelete?.includes(url)),
+      ...newProductImageUrls,         // S3 uploaded files
+      ...incomingProductUrlsFromDto,  // direct URLs from frontend
+    ];
+
     const finalModel3dUrl = newModel3dUrl ?? (dto.deleteModel3d ? null : product.model3dUrl);
-    const finallicenseDocumentUrl = newlicenseDocumentUrl ?? (dto.deleteSlicenseDocument ? null : product.licenseDocumentUrl);
+    const finalLicenseDocUrl = newLicenseDocUrl ?? (dto.deleteSlicenseDocument ? null : product.licenseDocumentUrl);
 
-    console.log('[UPDATE_PRODUCT] Preparing variant data...');
-    const preparedVariantsData = await Promise.all(
+    // Prepare variant image data outside transaction
+    const preparedVariants = await Promise.all(
       dto.variants.map(async (variantDto, index) => {
-        const newVariantImages = newVariantImagesMap.get(index.toString()) || [];
-        const newVariantImageUrls = await Promise.all(newVariantImages.map(file => uploadAndTrack(file, `variant_${index}`)));
-        const finalVariantImages = [
-          ...(variantDto.images || []).filter(url => !dto.imagesToDelete?.includes(url)),
-          ...newVariantImageUrls,
+        const newFiles = newVariantImagesMap.get(index.toString()) ?? [];
+        const newUploadedVariantUrls = await Promise.all(
+          newFiles.map((f) => uploadAndTrack(f, `variant_${index}`)),
+        );
+        // Also accept direct URLs per variant from DTO
+        const incomingVariantUrls: string[] = variantDto.newImageUrls ?? [];
+        const finalImages = [
+          ...(variantDto.images ?? []).filter((url) => !dto.imagesToDelete?.includes(url)),
+          ...newUploadedVariantUrls,
+          ...incomingVariantUrls,
         ];
-        console.log(`[PREPARE_VARIANT] Final images for variant ${index}:`, finalVariantImages);
-        return { dto: variantDto, finalImages: finalVariantImages };
+        return { dto: variantDto, finalImages };
       }),
     );
-    console.log('[UPDATE_PRODUCT] ✅ All variant data prepared.');
 
+    // --- STEP 6: Fetch default warehouse ---
+    const defaultWarehouse = await this.prisma.warehouse.findFirst({
+      where: { businessId: product.businessId, isDefault: true },
+      select: { id: true },
+    });
 
-    // --- STEP 2: DATABASE TRANSACTION ---
-    console.log('[UPDATE_PRODUCT] 🔄 Step 2: Starting database transaction...');
+    const existingStockMap = new Map<string, number>(
+      product.variants.map((v) => [v.id, v.stock]),
+    );
+
+    // --- STEP 7: Database Transaction ---
     return await this.prisma.$transaction(
       async (tx) => {
-        console.log('[TX] Inside transaction.');
-        // 2a. Update the Product itself
-        console.log('[TX] 🔄 Updating main product record...');
+
+        // 7a. Update main product
         await tx.product.update({
           where: { id: productId },
           data: {
-            title: dto.title,
-            description: dto.description,
-            isFeatured: dto.isFeatured,
+            title:          dto.title,
+            description:    dto.description,
+            isFeatured:     dto.isFeatured,       // ✅ sellers can set
             isCustomizable: dto.isCustomizable,
-            slug: dto.title && dto.title !== product.title ? this.generateSlug(dto.title) : undefined,
-            images: finalProductImages,
-            model3dUrl: finalModel3dUrl,
-            licenseDocumentUrl: finallicenseDocumentUrl,
-            customizationConfig: dto.customizationConfig ? JSON.parse(dto.customizationConfig) : undefined,
+            brand:          dto.brand || undefined,
+            tags:           dto.tags ?? undefined,
+            metaTitle:      dto.metaTitle || undefined,
+            metaDescription: dto.metaDescription || undefined,
+            slug: dto.title && dto.title !== product.title
+              ? this.generateSlug(dto.title)
+              : undefined,
+            images:              finalProductImages,
+            model3dUrl:          finalModel3dUrl,
+            licenseDocumentUrl:  finalLicenseDocUrl,
+            customizationConfig: dto.customizationConfig
+              ? JSON.parse(dto.customizationConfig)
+              : undefined,
+            // ✅ isPublished: admin only
+            ...(callerRole === 'admin' && dto.isPublished !== undefined
+              ? {
+                  isPublished: dto.isPublished,
+                  publishDate: dto.publishDate ? new Date(dto.publishDate) : undefined,
+                }
+              : {}),
           },
         });
-        console.log('[TX] ✅ Main product record updated.');
 
-        // 2b. Process Variant Deletions
+        // 7b. Delete removed variants
         const existingVariantIds = product.variants.map((v) => v.id);
-        const incomingVariantIds = dto.variants.map((v) => v.id).filter(Boolean);
+        const incomingVariantIds = dto.variants.map((v) => v.id).filter(Boolean) as string[];
         const variantsToDelete = existingVariantIds.filter((id) => !incomingVariantIds.includes(id));
         if (variantsToDelete.length > 0) {
-          console.log('[TX] 🔄 Deleting variants with IDs:', variantsToDelete);
+          console.log('[TX] Deleting variants:', variantsToDelete);
+          await tx.variantAttributeValue.deleteMany({
+            where: { variantId: { in: variantsToDelete } },
+          });
           await tx.variant.deleteMany({ where: { id: { in: variantsToDelete } } });
-          console.log('[TX] ✅ Variants deleted.');
         }
 
-        // 2c. Process Variant Updates and Creates
-        console.log('[TX] 🔄 Processing variant updates and creates...');
-        for (const preparedVariant of preparedVariantsData) {
-          const variantDto = preparedVariant.dto;
-          const finalImages = preparedVariant.finalImages;
-
+        // 7c. Upsert variants
+        for (const { dto: variantDto, finalImages } of preparedVariants) {
           const attributeValuesToCreate = variantDto.attributeValues.map((attr) => ({
-            attribute: { connect: { id: attr.attributeId } },
+            attribute:       { connect: { id: attr.attributeId } },
             attributeOption: { connect: { id: attr.attributeOptionId } },
           }));
 
-          if (variantDto.id) { // UPDATE
-            console.log(`[TX] Updating variant with ID: ${variantDto.id}`);
-            await tx.variantAttributeValue.deleteMany({ where: { variantId: variantDto.id } });
+          // ✅ FIXED variantPayload — sellingPriceType removed, empty strings → undefined
+          const variantPayload = {
+            sku:                    variantDto.sku,
+            price:                  new Prisma.Decimal(variantDto.price),
+            mrp:                    variantDto.mrp
+                                      ? new Prisma.Decimal(variantDto.mrp)
+                                      : undefined,
+            purchasePrice:          variantDto.purchasePrice
+                                      ? new Prisma.Decimal(variantDto.purchasePrice)
+                                      : undefined,
+            // sellingPriceType:    ← REMOVED, does not exist in Variant schema
+            stock:                  variantDto.stock,
+            hsnCode:                variantDto.hsnCode  || undefined,
+            sacCode:                variantDto.sacCode  || undefined,
+            tax:                    variantDto.tax      || undefined,
+            description:            variantDto.description || undefined,
+            weightInGrams:          variantDto.weightInGrams
+                                      ? Number(variantDto.weightInGrams)
+                                      : undefined,
+            height:                 variantDto.height
+                                      ? new Prisma.Decimal(variantDto.height)
+                                      : undefined,
+            width:                  variantDto.width
+                                      ? new Prisma.Decimal(variantDto.width)
+                                      : undefined,
+            length:                 variantDto.length
+                                      ? new Prisma.Decimal(variantDto.length)
+                                      : undefined,
+            dimensionUnit:          variantDto.dimensionUnit   ?? 'CM',
+            minStockCount:          variantDto.minStockCount
+                                      ? new Prisma.Decimal(variantDto.minStockCount)
+                                      : undefined,
+            isMinStockAlertEnabled: variantDto.isMinStockAlertEnabled ?? false,
+            // ✅ Batching
+            isBatchingEnabled:      variantDto.isBatchingEnabled  ?? false,
+            // ✅ Expiry
+            isExpiryTracked:        variantDto.isExpiryTracked    ?? false,
+            expiryAlertDays:        variantDto.expiryAlertDays    ?? undefined,
+            // ✅ Serialisation
+            isSerialTracked:        variantDto.isSerialTracked    ?? false,
+            stockDeductionMethod:   (variantDto.stockDeductionMethod ?? StockMethod.FIFO) as StockMethod,
+            isDefault:              variantDto.isDefault ?? false,
+            status:                 (variantDto.status ?? VariantStatus.ACTIVE) as VariantStatus,
+            images:                 finalImages,
+          };
+
+          console.log('[TX] Creating/Updating variant:', variantPayload);
+
+          if (variantDto.id) {
+            // ── UPDATE existing variant ──────────────────────────────────
+            const oldStock = existingStockMap.get(variantDto.id) ?? 0;
+            const stockDelta = variantDto.stock - oldStock;
+
+            await tx.variantAttributeValue.deleteMany({
+              where: { variantId: variantDto.id },
+            });
             await tx.variant.update({
               where: { id: variantDto.id },
               data: {
-                sku: variantDto.sku, price: variantDto.price, mrp: variantDto.mrp, stock: variantDto.stock,
-                status: variantDto.status, images: finalImages,
+                ...variantPayload,
                 attributeValues: { create: attributeValuesToCreate },
               },
             });
-          } else { // CREATE
-            console.log(`[TX] Creating new variant with SKU: ${variantDto.sku}`);
-            await tx.variant.create({
+
+            // Sync WarehouseStock
+            if (stockDelta !== 0 && defaultWarehouse) {
+              await tx.warehouseStock.upsert({
+                where: {
+                  warehouseId_variantId: {
+                    warehouseId: defaultWarehouse.id,
+                    variantId:   variantDto.id,
+                  },
+                },
+                update: { quantity: { increment: stockDelta } },
+                create: {
+                  warehouseId: defaultWarehouse.id,
+                  variantId:   variantDto.id,
+                  quantity:    variantDto.stock,
+                },
+              });
+            }
+
+            // StockActivity audit log
+            if (stockDelta !== 0) {
+              await tx.stockActivity.create({
+                data: {
+                  businessId:    product.businessId,
+                  itemId:        productId,
+                  variantId:     variantDto.id,
+                  activityType:  stockDelta > 0 ? 'STOCK_IN' : 'STOCK_OUT',
+                  invoicePrefix: 'ADJ',
+                  invoiceNo:     0,
+                  quantity:      new Prisma.Decimal(Math.abs(stockDelta)),
+                  closingStock:  new Prisma.Decimal(variantDto.stock),
+                },
+              });
+            }
+
+          } else {
+            // ── CREATE new variant ───────────────────────────────────────
+            const newVariant = await tx.variant.create({
               data: {
-                sku: variantDto.sku, price: variantDto.price, mrp: variantDto.mrp, stock: variantDto.stock,
-                status: variantDto.status, images: finalImages,
-                product: { connect: { id: productId } },
+                ...variantPayload,
+                product:         { connect: { id: productId } },
                 attributeValues: { create: attributeValuesToCreate },
               },
             });
+
+            // Seed WarehouseStock
+            if (variantDto.stock > 0 && defaultWarehouse) {
+              await tx.warehouseStock.create({
+                data: {
+                  warehouseId: defaultWarehouse.id,
+                  variantId:   newVariant.id,
+                  quantity:    variantDto.stock,
+                },
+              });
+              await tx.stockActivity.create({
+                data: {
+                  businessId:    product.businessId,
+                  itemId:        productId,
+                  variantId:     newVariant.id,
+                  activityType:  'OPENING',
+                  invoicePrefix: 'ADJ',
+                  invoiceNo:     0,
+                  quantity:      new Prisma.Decimal(variantDto.stock),
+                  closingStock:  new Prisma.Decimal(variantDto.stock),
+                },
+              });
+            }
           }
         }
-        console.log('[TX] ✅ Variants processed.');
 
-        // 2d. Return the fully updated product
-        console.log('[TX] 🔄 Fetching final, updated product data...');
+        // 7d. Return fully updated product
         return tx.product.findUnique({
           where: { id: productId },
           include: {
-            variants: { include: { attributeValues: { include: { attribute: true, attributeOption: true } } } },
+            variants: {
+              include: {
+                attributeValues: {
+                  include: { attribute: true, attributeOption: true },
+                },
+              },
+            },
             category: true,
           },
         });
       },
       { maxWait: 15000, timeout: 30000 },
     );
+
   } catch (error) {
-    console.error('[UPDATE_PRODUCT] ❌ ERROR caught in main try/catch block:', error);
+    console.error('[UPDATE_PRODUCT] ❌ Error:', error);
+
+    // S3 rollback on any failure
     if (newUploadedUrls.length > 0) {
-      console.warn('[UPDATE_PRODUCT] Rolling back S3 uploads:', newUploadedUrls);
-      // await this.s3Service.deleteImages(newUploadedUrls); // Uncomment for production
+      console.warn('[UPDATE_PRODUCT] Rolling back S3 uploads...');
+      await this.s3Service.deleteImages(newUploadedUrls).catch((e) =>
+        console.error('[UPDATE_PRODUCT] S3 rollback failed:', e),
+      );
     }
+
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2002') {
+        const target = (error.meta?.target as string[]) || [];
+        if (target.includes('sku'))
+          throw new BadRequestException('One of the provided SKU values is already in use.');
+      }
+      if (error.code === 'P2025')
+        throw new BadRequestException(
+          'A referenced record (category, attribute option) does not exist.',
+        );
+    }
+
     throw error;
   }
 }
+
    async getInventoryStats(businessId: string, userId: string) {
     // 1. Authorize the user against the business
     const business = await this.prisma.business.findUnique({
