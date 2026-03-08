@@ -141,18 +141,31 @@ async createPosSale(
     return this.sellerService.getBusinessSales(businessId, query);
   }
 
-  @Get(':businessId/sales/:saleId')
-  @ApiOperation({ summary: "Get a specific sale record for one of the seller's businesses" })
-  @ApiResponse({ status: 200, description: 'Returns detailed information for a single sale.' })
-  @ApiResponse({ status: 404, description: 'Sale not found or does not belong to the seller.' })
-  async getBusinessSaleById(
-    @Req() req: UserRequest,
-    @Param('businessId', ParseUUIDPipe) businessId: string,
-    @Param('saleId', ParseUUIDPipe) saleId: string,
-  ) {
-    await this.verifyBusinessOwnership(req.user.id, businessId);
-    return this.sellerService.getBusinessSaleById(businessId, saleId);
-  }
+// GET /seller/:businessId/sales/:saleId
+@Get(':businessId/sales/:saleId')
+@ApiOperation({ summary: 'Get a specific sale by ID' })
+async getBusinessSaleById(
+  @Req() req: UserRequest,
+  @Param('businessId', ParseUUIDPipe) businessId: string,
+  @Param('saleId',     ParseUUIDPipe) saleId:     string,
+) {
+  await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
+  return this.sellerService.getBusinessSaleById(businessId, saleId);
+}
+
+// PATCH /seller/:businessId/sales/:saleId
+@Patch(':businessId/sales/:saleId')
+@ApiOperation({ summary: 'Update an existing sale (reverts and re-applies)' })
+async updatePosSale(
+  @Req() req: UserRequest,
+  @Param('businessId', ParseUUIDPipe) businessId: string,
+  @Param('saleId',     ParseUUIDPipe) saleId:     string,
+  @Body() dto: UpdatePosSaleDto,
+) {
+  await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
+  return this.sellerService.updatePosSale(businessId, saleId, dto);
+}
+
   
  @Get(':businessId/sales/stats')
   @ApiOperation({ summary: 'Get sales statistics and timeline for a dashboard' })
@@ -180,17 +193,7 @@ async getBusinessCustomers(
 ) {
   return this.sellerService.getPosCustomers(businessId, query);
 }
- @Patch(':businessId/sales/:saleId')
-  @ApiOperation({ summary: 'Update an existing sale (Reverts and Re-applies)' })
-  async updatePosSale(
-    @Req() req: UserRequest,
-    @Param('businessId', ParseUUIDPipe) businessId: string,
-    @Param('saleId', ParseUUIDPipe) saleId: string,
-    @Body() dto: UpdatePosSaleDto,
-  ) {
-    await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
-    return this.sellerService.updatePosSale(businessId, saleId, dto);
-  }
+
 
   // 2. Download Invoice PDF (Fastify Version)
    @Get(':businessId/sales/:saleId/pdf')

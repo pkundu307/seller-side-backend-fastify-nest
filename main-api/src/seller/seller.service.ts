@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SellerPaginationDto } from './dto/seller-pagination.dto';
-import { BankCashCheque, OrderStatus, PaymentMethod, Prisma } from '@prisma/client';
+import { BankCashCheque, OrderStatus, PaymentMethod, Prisma, PrismaClient } from '@prisma/client';
 import { UpdateSellerOrderDto } from './dto/update-order.dtp';
 import { CreatePosSaleDto, PosPaymentMode } from './dto/create-pos-sale.dto';
 import { UpdatePosSaleDto } from './dto/update-pos-sale.dto';
@@ -11,6 +11,7 @@ import { GetSalesStatsDto } from './dto/get-sales-stats.dto';
 import { GetPosCustomersDto } from './dto/get-pos-customers.dto';
 import { DashboardFilterDto } from './dto/dashboard-filter.dto';
 import { SellerReplyTicketDto, SellerTicketQueryDto, UpdateTicketStatusDto } from './dto/seller-ticket.dto';
+import { ITXClientDenyList } from '@prisma/client/runtime/library';
 // Define a type for the address object to cast the JSON to
 interface ShippingAddress {
   street: string;
@@ -324,311 +325,362 @@ dueDate: new Date()
 
 // seller.service.ts
 async createPosSale(businessId: string, dto: CreatePosSaleDto) {
-    const {
-      customerName = 'Walk-in Customer',
-      customerPhone = '',
-      items,
-      paymentMode = PosPaymentMode.CASH,
-      amountReceived,
-      additionalCharges = [],
-      gstin = '',
-      address = '',
-      pan = '',
-      email = '', // Extract email from DTO
-      depositAccountId,
-    } = dto;
+  const {
+    customerName = 'Walk-in Customer',
+    customerPhone = '',
+    items,
+    paymentMode = PosPaymentMode.CASH,
+    amountReceived,
+    additionalCharges = [],
+    gstin = '',
+    address = '',
+    pan = '',
+    email = '',
+    depositAccountId,
+  } = dto;
 
-    // 0. Fetch Business Name
-    const business = await this.prisma.business.findUnique({
-      where: { id: businessId },
-      select: { name: true },
-    });
+  // ── 0. Fetch Business ──────────────────────────────────────────────────────
+  const business = await this.prisma.business.findUnique({
+    where: { id: businessId },
+    select: { name: true },
+  });
+  if (!business) throw new NotFoundException('Business not found');
 
-    if (!business) throw new NotFoundException('Business not found');
+  // ── 1. Fetch & Validate Variants ──────────────────────────────────────────
+  const variantIds = items.map((i) => i.variantId);
+  const variants = await this.prisma.variant.findMany({
+    where: { id: { in: variantIds }, product: { businessId } },
+    include: { product: { select: { title: true } } },
+  });
 
-    // 1. Fetch Variants
-    const variantIds = items.map((item) => item.variantId);
-    const variants = await this.prisma.variant.findMany({
-      where: {
-        id: { in: variantIds },
-        product: { businessId: businessId },
-      },
-      include: { product: { select: { title: true } } },
-    });
+  if (variants.length !== variantIds.length) {
+    throw new BadRequestException('One or more items do not belong to your business.');
+  }
 
-    if (variants.length !== variantIds.length) {
-      throw new BadRequestException('One or more items do not belong to your business.');
+  // ── 2. Build Sale Items ────────────────────────────────────────────────────
+  let totalItemsAmountDec = new Prisma.Decimal(0);
+  const saleItemsData: Prisma.SaleItemCreateWithoutSaleInput[] = [];
+
+  for (const item of items) {
+    const variant = variants.find((v) => v.id === item.variantId);
+    if (!variant) continue;
+
+    if (variant.stock < item.quantity) {
+      throw new BadRequestException(`Insufficient stock: ${variant.product.title}`);
     }
 
-    // 2. Calculate ITEM Totals
-    let totalItemsAmountDec = new Prisma.Decimal(0);
-    const saleItemsData: Prisma.SaleItemCreateWithoutSaleInput[] = [];
+    const quantityDec  = new Prisma.Decimal(item.quantity);
+    const priceDec     = new Prisma.Decimal(variant.price);
+    const itemTotalDec = priceDec.times(quantityDec);
+    totalItemsAmountDec = totalItemsAmountDec.plus(itemTotalDec);
 
-    for (const item of items) {
-      const variant = variants.find((v) => v.id === item.variantId);
-      if (!variant) continue;
+    saleItemsData.push({
+      itemId:                  variant.id,
+      itemName:                `${variant.product.title} - ${variant.sku}`,
+      itemCode:                variant.sku,
+      itemDescription:         variant.description || '',
+      quantity:                quantityDec,
+      price:                   priceDec,
+      unit:                    variant.dimensionUnit || 'PCS',
+      taxableAmount:           itemTotalDec,
+      amount:                  itemTotalDec,
+      hsnCode:                 variant.hsnCode || '',
+      sacCode:                 variant.sacCode || '',
+      batchNo:                 '',
+      manufactureDate:         new Date(),
+      expiryDate:              new Date(),
+      priceType:               'MRP',
+      discountPercent:         new Prisma.Decimal(0),
+      discountAmount:          new Prisma.Decimal(0),
+      tax:                     '0%',
+      taxAmount:               new Prisma.Decimal(0),
+      cess:                    '',
+      cessAmount:              new Prisma.Decimal(0),
+      isMrpEnabled:            true,
+      isWholesaleEnabled:      false,
+      isSerialisationEnabled:  false,
+      isBatchingEnabled:       false,
+      sellingPrice:            priceDec,
+      sellingPriceType:        'MRP',
+      purchasePrice:           variant.purchasePrice ?? new Prisma.Decimal(0),
+      purchasePriceType:       'MRP',
+      mrp:                     variant.mrp ?? new Prisma.Decimal(0),
+      wholesalePrice:          new Prisma.Decimal(0),
+      wholesalePriceType:      '',
+      wholesaleQuantity:       new Prisma.Decimal(0),
+    });
+  }
 
-      if (variant.stock < item.quantity) {
-        throw new BadRequestException(`Insufficient stock: ${variant.product.title}`);
-      }
+  // ── 3. Build Additional Charges ───────────────────────────────────────────
+  let totalChargesDec = new Prisma.Decimal(0);
+  const additionalChargesData: Prisma.SaleAdditionalChargeCreateWithoutSaleInput[] = [];
 
-      const quantityDec = new Prisma.Decimal(item.quantity);
-      const priceDec = new Prisma.Decimal(variant.price);
-      const itemTotalDec = priceDec.times(quantityDec);
+  for (const charge of additionalCharges) {
+    const chargeAmount = new Prisma.Decimal(charge.amount);
+    totalChargesDec = totalChargesDec.plus(chargeAmount);
+    additionalChargesData.push({ name: charge.name, amount: chargeAmount, tax: '0' });
+  }
 
-      totalItemsAmountDec = totalItemsAmountDec.plus(itemTotalDec);
+  // ── 4. Financials ─────────────────────────────────────────────────────────
+  const grandTotalDec     = totalItemsAmountDec.plus(totalChargesDec);
+  const amountReceivedDec = new Prisma.Decimal(amountReceived ?? 0);
+  const balanceAmountDec  = grandTotalDec.minus(amountReceivedDec);
+  const isSettled         = balanceAmountDec.lte(0);
 
-      saleItemsData.push({
-        itemId: variant.id,
-        itemName: `${variant.product.title} - ${variant.sku}`,
-        itemCode: variant.sku,
-        itemDescription: variant.description || '',
-        quantity: quantityDec,
-        price: priceDec,
-        unit: variant.dimensionUnit || 'PCS',
-        taxableAmount: itemTotalDec,
-        amount: itemTotalDec,
-        hsnCode: variant.hsnCode || '',
-        sacCode: variant.sacCode || '',
-        batchNo: '',
-        manufactureDate: new Date(),
-        expiryDate: new Date(),
-        priceType: 'MRP',
-        discountPercent: new Prisma.Decimal(0),
-        discountAmount: new Prisma.Decimal(0),
-        tax: '0%',
-        taxAmount: new Prisma.Decimal(0),
-        cess: '',
-        cessAmount: new Prisma.Decimal(0),
-        isMrpEnabled: true,
-        isWholesaleEnabled: false,
-        isSerialisationEnabled: false,
-        isBatchingEnabled: false,
-        sellingPrice: priceDec,
-        sellingPriceType: 'MRP',
-        purchasePrice: variant.purchasePrice || new Prisma.Decimal(0),
-        purchasePriceType: 'MRP',
-        mrp: variant.mrp || new Prisma.Decimal(0),
-        wholesalePrice: new Prisma.Decimal(0),
-        wholesalePriceType: '',
-        wholesaleQuantity: new Prisma.Decimal(0),
+  // Fail fast — before opening the transaction
+  if (balanceAmountDec.greaterThan(0) && !customerPhone) {
+    throw new BadRequestException(
+      'Customer phone number is required for credit sales.',
+    );
+  }
+
+  // ── 5. Transaction ────────────────────────────────────────────────────────
+  return this.prisma.$transaction(async (tx) => {
+
+    // ── 5a. Resolve Deposit Account ────────────────────────────────────────
+    let targetAccount: BankCashCheque | null = null;
+
+    if (depositAccountId) {
+      targetAccount = await tx.bankCashCheque.findFirst({
+        where: { id: depositAccountId, businessId, isEnabled: true },
       });
-    }
-
-    // 3. Calculate ADDITIONAL CHARGES
-    let totalChargesDec = new Prisma.Decimal(0);
-    const additionalChargesData: Prisma.SaleAdditionalChargeCreateWithoutSaleInput[] = [];
-
-    if (additionalCharges && additionalCharges.length > 0) {
-      for (const charge of additionalCharges) {
-        const chargeAmount = new Prisma.Decimal(charge.amount);
-        totalChargesDec = totalChargesDec.plus(chargeAmount);
-        additionalChargesData.push({
-          name: charge.name,
-          amount: chargeAmount,
-          tax: '0',
-        });
+      if (!targetAccount) {
+        throw new BadRequestException('Selected deposit account is invalid or disabled.');
       }
-    }
+    } else {
+      const accountTypeFilter =
+        paymentMode === PosPaymentMode.CASH ? 'CASH' : { in: ['BANK', 'UPI'] };
 
-    // 4. Final Financials
-    const grandTotalDec = totalItemsAmountDec.plus(totalChargesDec);
-    const amountReceivedDec = new Prisma.Decimal(amountReceived || 0);
-    const balanceAmountDec = grandTotalDec.minus(amountReceivedDec);
-    const isSettled = balanceAmountDec.lte(0);
+      targetAccount = await tx.bankCashCheque.findFirst({
+        where: { businessId, accountType: accountTypeFilter as any, isEnabled: true },
+        orderBy: { isDefault: 'desc' },
+      });
 
-    return this.prisma.$transaction(async (tx) => {
-      // 5. ACCOUNTING: Resolve Shop Account
-      let targetAccount: BankCashCheque | null = null;
-
-      if (depositAccountId) {
-        targetAccount = await tx.bankCashCheque.findFirst({
-          where: { id: depositAccountId, businessId, isEnabled: true },
-        });
-        if (!targetAccount) throw new BadRequestException('Selected account is invalid.');
-      } else {
-        const targetAccountType = paymentMode === 'CASH' ? 'CASH' : { in: ['BANK', 'UPI'] };
-        targetAccount = await tx.bankCashCheque.findFirst({
-          where: {
+      // Auto-create account only when absolutely none exists
+      if (!targetAccount) {
+        targetAccount = await tx.bankCashCheque.create({
+          data: {
             businessId,
-            accountType: targetAccountType as any,
-            isEnabled: true,
+            accountName:    paymentMode === PosPaymentMode.CASH ? 'Cash Drawer' : 'Main Bank Account',
+            accountType:    paymentMode === PosPaymentMode.CASH ? 'CASH' : 'BANK',
+            isDefault:      true,
+            isEnabled:      true,
+            openingBalance: 0,
+            closingBalance: 0,
           },
-          orderBy: { isDefault: 'desc' },
         });
-
-        if (!targetAccount) {
-          targetAccount = await tx.bankCashCheque.create({
-            data: {
-              businessId,
-              accountName: paymentMode === 'CASH' ? 'Cash Drawer' : 'Main Bank Account',
-              accountType: paymentMode === 'CASH' ? 'CASH' : 'BANK',
-              isDefault: true,
-              isEnabled: true,
-              openingBalance: 0,
-              closingBalance: 0,
-            },
-          });
-        }
       }
+    }
 
-      // 6. CUSTOMER LOGIC
-      let customerUserId: string | undefined = undefined;
+    // ── 5b. Find or Create Party (scoped to this business) ─────────────────
+    //
+    //  Walk-in (no phone) → partyId = null  (Sale.partyId must be String? in schema)
+    //  Named customer     → upsert a Party record in THIS business
+    //
+    let partyId: string | null = null;
 
-      if (balanceAmountDec.greaterThan(0) || customerPhone) {
-        if (!customerPhone && balanceAmountDec.greaterThan(0)) {
-          throw new BadRequestException('Customer Phone Number is required for Credit sales.');
-        }
-        if (customerPhone) {
-          const customer = await this.findOrCreatePosCustomer(tx, customerName, customerPhone);
-          customerUserId = customer.id;
-        }
-      }
-
-      // 7. Generate Invoice Number
-      const lastSale = await tx.sale.findFirst({
-        where: { businessId },
-        orderBy: { invoiceNo: 'desc' },
-        select: { invoiceNo: true },
+    if (customerPhone) {
+      partyId = await this.findOrCreateParty(tx, businessId, {
+        name:    customerName,
+        phone:   customerPhone,
+        email:   email   || null,
+        gstin:   gstin   || null,
+        address: address || null,
+        pan:     pan     || null,
       });
-      const nextInvoiceNo = (lastSale?.invoiceNo || 0) + 1;
+    }
 
-      // 8. Create the Sale
-      const newSale = await tx.sale.create({
-        data: {
-          businessId,
-          businessName: business.name,
-          partyName: customerName,
-          phoneNo: customerPhone,
-          partyId: customerUserId || '',
-          partyType: customerUserId ? 'Registered' : 'Unregistered',
-          placeOfSupply: '',
-          invoicePrefix: 'POS',
-          invoiceNo: nextInvoiceNo,
-          invoiceDate: new Date(),
-          isDueDateEnabled: false,
-          dueDate: new Date(),
-          paymentTerm: 0,
-          totalAmount: grandTotalDec,
-          totalTaxableAmount: totalItemsAmountDec,
-          totalTaxAmount: new Prisma.Decimal(0),
-          balanceAmount: balanceAmountDec.greaterThan(0) ? balanceAmountDec : 0,
-          isSettled: isSettled,
-          status: 'FINALIZED',
-          isScanItemEnabled: false,
-          isConverted: false,
-          isDiscountAfterTaxEnabled: false,
-          isAutoRoundoffEnabled: false,
-          notes: 'POS Transaction',
-          termCondition: '',
-          billingAddress: address,
-          shippingAddress: address,
-          taxId: gstin,
-          panNo: pan,
-          discountPercent: new Prisma.Decimal(0),
-          discountAmount: new Prisma.Decimal(0),
-          roundoffType: '',
-          roundoffAmount: new Prisma.Decimal(0),
-          saleType: paymentMode === 'CASH' ? 'CASH' : 'BANK',
-          saleItems: { create: saleItemsData },
-          saleAdditionalCharges: { create: additionalChargesData },
-          salePaymentModes: amountReceivedDec.greaterThan(0) && targetAccount
+    // ── 5c. Generate Invoice Number ────────────────────────────────────────
+    const lastSale = await tx.sale.findFirst({
+      where:   { businessId },
+      orderBy: { invoiceNo: 'desc' },
+      select:  { invoiceNo: true },
+    });
+    const nextInvoiceNo = (lastSale?.invoiceNo ?? 0) + 1;
+
+    // ── 5d. Create Sale ────────────────────────────────────────────────────
+    const newSale = await tx.sale.create({
+      data: {
+        businessId,
+        businessName:              business.name,
+        partyName:                 customerName,
+        phoneNo:                   customerPhone,
+        partyId:                   partyId,           // null for walk-ins — requires String? in schema
+        partyType:                 partyId ? 'Registered' : 'Unregistered',
+        placeOfSupply:             '',
+        invoicePrefix:             'POS',
+        invoiceNo:                 nextInvoiceNo,
+        invoiceDate:               new Date(),
+        isDueDateEnabled:          false,
+        dueDate:                   new Date(),
+        paymentTerm:               0,
+        totalAmount:               grandTotalDec,
+        totalTaxableAmount:        totalItemsAmountDec,
+        totalTaxAmount:            new Prisma.Decimal(0),
+        balanceAmount:             balanceAmountDec.greaterThan(0) ? balanceAmountDec : new Prisma.Decimal(0),
+        isSettled,
+        status:                    'FINALIZED',
+        isScanItemEnabled:         false,
+        isConverted:               false,
+        isDiscountAfterTaxEnabled: false,
+        isAutoRoundoffEnabled:     false,
+        notes:                     'POS Transaction',
+        termCondition:             '',
+        billingAddress:            address,
+        shippingAddress:           address,
+        taxId:                     gstin,
+        panNo:                     pan,
+        discountPercent:           new Prisma.Decimal(0),
+        discountAmount:            new Prisma.Decimal(0),
+        roundoffType:              '',
+        roundoffAmount:            new Prisma.Decimal(0),
+        saleType:                  paymentMode === PosPaymentMode.CASH ? 'CASH' : 'BANK',
+        saleItems:                 { create: saleItemsData },
+        saleAdditionalCharges:     { create: additionalChargesData },
+        salePaymentModes:
+          amountReceivedDec.greaterThan(0) && targetAccount
             ? {
                 create: {
                   bankCashChequeId: targetAccount.id,
-                  accountName: targetAccount.accountName,
-                  paymentMode: paymentMode,
-                  amount: amountReceivedDec,
-                  ifsc: targetAccount.bankIfscCode || '',
-                  acNo: targetAccount.bankAccountNo || '',
+                  accountName:      targetAccount.accountName,
+                  paymentMode:      paymentMode,
+                  amount:           amountReceivedDec,
+                  ifsc:             targetAccount.bankIfscCode  ?? '',
+                  acNo:             targetAccount.bankAccountNo ?? '',
                 },
               }
             : undefined,
-        },
-        include: { saleItems: true, saleAdditionalCharges: true },
+      },
+      include: { saleItems: true, saleAdditionalCharges: true },
+    });
+
+    // ── 5e. Update Account Balance + Cash/Bank Ledger ──────────────────────
+    if (amountReceivedDec.greaterThan(0) && targetAccount) {
+      await tx.bankCashCheque.update({
+        where: { id: targetAccount.id },
+        data:  { closingBalance: { increment: amountReceivedDec } },
       });
 
-      // 9. UPDATE SHOP LEDGER
-      if (amountReceivedDec.greaterThan(0) && targetAccount) {
-        await tx.bankCashCheque.update({
-          where: { id: targetAccount.id },
-          data: { closingBalance: { increment: amountReceivedDec } },
-        });
-
-        await tx.bankCashChequeTransaction.create({
-          data: {
-            businessId,
-            accountId: targetAccount.id,
-            transactionType: 'CREDIT',
-            amount: amountReceivedDec,
-            runningBalance: targetAccount.closingBalance.plus(amountReceivedDec),
-            referenceId: newSale.id,
-            referenceType: 'SALE',
-            invoiceNo: `POS-${nextInvoiceNo}`,
-            paymentMode: paymentMode,
-            partyName: customerName,
-          },
-        });
-      }
-
-      // 10. UPDATE CUSTOMER LEDGER (Party Ledger)
-      console.log(customerName,customerPhone);
-      
-      if (balanceAmountDec.greaterThan(0) && customerUserId) {
-        await tx.partyLedger.create({
-          data: {
-            businessId,
-            partyType: 'CUSTOMER',
-            referenceId: customerUserId,
-            partyName: customerName,
-            
-            // --- MAPPING NEW FIELDS ---
-            phoneNo: customerPhone || null,
-            email: email || null,
-            gstin: gstin || null,
-            // -------------------------
-
-            transactionDate: new Date(),
-            description: `Credit Sale Inv #POS-${nextInvoiceNo}`,
-            debit: balanceAmountDec,
-            credit: 0,
-            linkedSaleId: newSale.id,
-          },
-        });
-      }
-
-      // 11. Decrement Stock
-      for (const item of items) {
-        await tx.variant.update({
-          where: { id: item.variantId },
-          data: { stock: { decrement: item.quantity } },
-        });
-      }
-
-      return newSale;
-    });
-  }
-  // --- Helper to Create Shadow Accounts ---
-  private async findOrCreatePosCustomer(tx: any, name: string, phone: string) {
-    let customer = await tx.customerUser.findUnique({ where: { phoneNumber: phone } });
-    console.log(phone,name);
-    
-    if (!customer) {
-      customer = await tx.customerUser.create({
+      await tx.bankCashChequeTransaction.create({
         data: {
-          name: name || 'Unknown',
-          phoneNumber: phone,
-          email: `${phone}@pos.local`, // Dummy email
-          authSource: 'self',
-          type: 'user',
-          isPhoneVerified: true,
+          businessId,
+          accountId:       targetAccount.id,
+          transactionType: 'CREDIT',
+          amount:          amountReceivedDec,
+          runningBalance:  targetAccount.closingBalance.plus(amountReceivedDec),
+          referenceId:     newSale.id,
+          referenceType:   'SALE',
+          invoiceNo:       `POS-${nextInvoiceNo}`,
+          paymentMode:     paymentMode,
+          partyName:       customerName,
+          // partyId FK also points to Party — safe to pass only when not null
+          ...(partyId ? { partyId } : {}),
         },
       });
     }
-    return customer;
+
+    // ── 5f. Party Ledger (credit / udhaar entry) ───────────────────────────
+    if (balanceAmountDec.greaterThan(0) && partyId) {
+      await tx.partyLedger.create({
+        data: {
+          businessId,
+          partyId,                                       // ← correct FK → Party
+          partyType:       'CUSTOMER',
+          partyName:       customerName,
+          phoneNo:         customerPhone || null,
+          email:           email         || null,
+          gstin:           gstin         || null,
+          transactionDate: new Date(),
+          description:     `Credit Sale Inv #POS-${nextInvoiceNo}`,
+          debit:           balanceAmountDec,
+          credit:          new Prisma.Decimal(0),
+          linkedSaleId:    newSale.id,
+        },
+      });
+
+      // Keep Party.closingBalance in sync (outstanding receivable)
+      await tx.party.update({
+        where: { id: partyId },
+        data:  { closingBalance: { increment: balanceAmountDec } },
+      });
+    }
+
+    // ── 5g. Decrement Stock ────────────────────────────────────────────────
+    for (const item of items) {
+      await tx.variant.update({
+        where: { id: item.variantId },
+        data:  { stock: { decrement: item.quantity } },
+      });
+    }
+
+    return newSale;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: Find or Create a Party record scoped to THIS business
+//
+//  Lookup key: businessId + phoneNo + partyType='CUSTOMER'
+//  (same phone number can belong to customers of different businesses)
+// ─────────────────────────────────────────────────────────────────────────────
+private async findOrCreateParty(
+  tx: Omit<PrismaClient, ITXClientDenyList>,
+  businessId: string,
+  customer: {
+    name:    string;
+    phone:   string;
+    email:   string | null;
+    gstin:   string | null;
+    address: string | null;
+    pan:     string | null;
+  },
+): Promise<string> {
+  // 1. Try existing party in this business
+  const existing = await tx.party.findFirst({
+    where: { businessId, phoneNo: customer.phone, partyType: 'CUSTOMER' },
+    select: { id: true },
+  });
+
+  if (existing) {
+    // Silently update details the seller may have edited at POS
+    await tx.party.update({
+      where: { id: existing.id },
+      data: {
+        partyName: customer.name,
+        ...(customer.email   ? { email:  customer.email  } : {}),
+        ...(customer.gstin   ? { taxId:  customer.gstin  } : {}),
+        ...(customer.pan     ? { panNo:  customer.pan    } : {}),
+        ...(customer.address ? { billingAddress: { address: customer.address } } : {}),
+      },
+    });
+    return existing.id;
   }
 
+  // 2. Create new Party on the go
+  const newParty = await tx.party.create({
+    data: {
+      businessId,
+      partyType:             'CUSTOMER',
+      partyCategory:         'RETAIL',
+      partyName:             customer.name,
+      isBusiness:            false,
+      phoneNo:               customer.phone,
+      email:                 customer.email   ?? null,
+      taxId:                 customer.gstin   ?? null,
+      panNo:                 customer.pan     ?? null,
+      billingAddress:        customer.address ? { address: customer.address } : undefined,
+      openingBalance:        0,
+      openingBalanceType:    'DEBIT',
+      closingBalance:        0,
+      isEnabled:             true,
+      isSynced:              false,
+      isBillingShippingSame: true,
+    },
+    select: { id: true },
+  });
 
+  return newParty.id;
+}
   async generateShippingLabelPdf(businessId: string, orderId: string, design: 'a4' | 'pos' = 'a4'): Promise<Buffer> {
     console.log(`[PDF] Starting generation for Order ID: ${orderId}, Design: ${design}`);
     
@@ -778,25 +830,27 @@ async getBusinessSales(businessId: string, query: SalePaginationDto) {
   /**
    * API: Get a single sale by its ID, ensuring it belongs to the seller.
    */
-  async getBusinessSaleById(businessId: string, saleId: string) {
-    const sale = await this.prisma.sale.findUnique({
-      where: { id: saleId },
-      include: {
-        saleItems: true, // Include all details for the single view
-        saleTaxes: true,
-        saleAdditionalCharges: true,
-         salePaymentModes: true,
-        business: true
-      },
-    });
+async getBusinessSaleById(businessId: string, saleId: string) {
+  const sale = await this.prisma.sale.findUnique({
+    where: { id: saleId },
+    include: {
+      saleItems:             true,
+      saleTaxes:             true,
+      saleAdditionalCharges: true,
+      salePaymentModes:      true,
+      business:              true,
+      party:                 true,   // frontend reads partyId from sale.party
+    },
+  });
 
-    // Security check: ensure the fetched sale belongs to the business
-    if (!sale || sale.businessId !== businessId) {
-      throw new NotFoundException(`Sale with ID "${saleId}" not found or does not belong to your business.`);
-    }
-
-    return sale;
+  if (!sale || sale.businessId !== businessId) {
+    throw new NotFoundException(
+      `Sale with ID "${saleId}" not found or does not belong to your business.`,
+    );
   }
+
+  return sale;
+}
 
   async getSalesStats(businessId: string, query: GetSalesStatsDto) {
     // 1. Determine Date Range (Default to last 30 days)
@@ -918,157 +972,149 @@ async getBusinessSales(businessId: string, query: SalePaginationDto) {
   }
 
 async getPosProducts(businessId: string, search?: string) {
-  // 1. Base Condition: Always filter by business, active status, and not deleted
+  // 1. Base Condition
   const whereCondition: Prisma.ProductWhereInput = {
     businessId,
     deletedAt: null,
   };
 
-  // 2. Add Search Logic (Only if search string exists)
+  // 2. Search Logic
   if (search && search.trim() !== '') {
     whereCondition.OR = [
-      { title: { contains: search, mode: 'insensitive' } }, // Search Name
-      { 
-        variants: { 
-          some: { 
-            sku: { contains: search, mode: 'insensitive' }, // Search SKU/Barcode
-            deletedAt: null 
-          } 
-        } 
+      { title: { contains: search, mode: 'insensitive' } },
+      {
+        variants: {
+          some: {
+            sku: { contains: search, mode: 'insensitive' },
+            deletedAt: null,
+          },
+        },
       },
     ];
   }
 
-  // 3. Fetch Data
-  const products = await this.prisma.product.findMany({
-    where: whereCondition,
-    take: 100, // Limit results
-    orderBy: { title: 'asc' }, // A-Z order
-    select: {
-      id: true,
-      title: true,
-      images: true,
-      variants: {
-        where: { 
-          deletedAt: null,
-          status: 'ACTIVE' 
+  // 3. Fetch Products + Business signature in parallel
+  const [products, business] = await Promise.all([
+    this.prisma.product.findMany({
+      where: whereCondition,
+      take: 100,
+      orderBy: { title: 'asc' },
+      select: {
+        id: true,
+        title: true,
+        images: true,
+        variants: {
+          where: { deletedAt: null, status: 'ACTIVE' },
+          select: {
+            id: true,
+            sku: true,
+            price: true,
+            stock: true,
+            dimensionUnit: true,
+            hsnCode: true,
+            attributeValues: {
+              select: {
+                attributeOption: { select: { value: true } },
+              },
+            },
+          },
         },
-        select: {
-          id: true,
-          sku: true,
-          price: true,
-          stock: true,
-          dimensionUnit: true,
-          attributeValues: {
-            select: {
-              attributeOption: { select: { value: true } }
-            }
-          }
-        }
-      }
-    }
-  });
+      },
+    }),
 
-  // 4. Transform for Frontend
-  return products.map(p => ({
-    id: p.id,
-    title: p.title,
-    image: p.images?.[0] || null, // 1st image only
-    variants: p.variants.map(v => ({
-      variantId: v.id,
-      sku: v.sku,
-      price: Number(v.price), // Ensure number type
-      stock: v.stock,
-      unit: v.dimensionUnit,
-      // Creates string like "Red / XL" or "" if no attributes
-      attributes: v.attributeValues.map(av => av.attributeOption.value).join(' / ') 
-    }))
-  }));
+    this.prisma.business.findUnique({
+      where: { id: businessId },
+      select: {
+        name:                            true,
+        authorizedSignatoryName:         true,
+        authorizedSignatoryDesignation:  true,
+        authorizedSignatorySignatureUrl: true,
+      },
+    }),
+  ]);
+
+  // 4. Transform & Return
+  return {
+    business: {
+      name:             business?.name                            ?? '',
+      signatoryName:    business?.authorizedSignatoryName         ?? null,
+      signatoryTitle:   business?.authorizedSignatoryDesignation  ?? null,
+      signatureUrl:     business?.authorizedSignatorySignatureUrl ?? null,
+    },
+    products: products.map((p) => ({
+      id:     p.id,
+      title:  p.title,
+      image:  p.images?.[0] ?? null,
+      variants: p.variants.map((v) => ({
+        variantId:  v.id,
+        sku:        v.sku,
+        price:      Number(v.price),
+        stock:      v.stock,
+        unit:       v.dimensionUnit,
+        hsnCode:    v.hsnCode ?? '',
+        attributes: v.attributeValues
+          .map((av) => av.attributeOption.value)
+          .join(' / '),
+      })),
+    })),
+  };
 }
+
 
 async getPosCustomers(businessId: string, query: GetPosCustomersDto) {
   const { page = 1, limit = 10, search } = query;
   const skip = (page - 1) * limit;
 
-  // 1. Get IDs from SALES (Active Buyers)
-  const salesPromise = this.prisma.sale.findMany({
-    where: { businessId, partyId: { not: undefined }, deletedAt: null },
-    select: { partyId: true },
-    distinct: ['partyId']
-  });
-
-  // 2. Get IDs from LEDGER (People with Opening Balance/Manual Credit)
-  const ledgerPromise = this.prisma.partyLedger.findMany({
-    where: { businessId, referenceId: { not: null } }, // referenceId links to CustomerUser
-    select: { referenceId: true },
-    distinct: ['referenceId']
-  });
-
-  const [sales, ledgerEntries] = await Promise.all([salesPromise, ledgerPromise]);
-
-  // 3. Merge and De-duplicate IDs
-  const allCustomerIds = new Set([
-    ...sales.map(s => s.partyId),
-    ...ledgerEntries.map(l => l.referenceId)
-  ]);
-  
-  // Convert to array and filter out empty strings/nulls
-  const uniqueIds = Array.from(allCustomerIds).filter((id): id is string => id !== null);
-
-  // 4. Filter CustomerUser Table (The Source of Truth)
-  const whereCondition: Prisma.CustomerUserWhereInput = {
-    id: { in: uniqueIds },
-    deletedAt: null,
+  const where: Prisma.PartyWhereInput = {
+    businessId,
+    partyType: 'CUSTOMER',
+    ...(search
+      ? {
+          OR: [
+            { partyName: { contains: search, mode: 'insensitive' } },
+            { phoneNo:   { contains: search, mode: 'insensitive' } },
+            { email:     { contains: search, mode: 'insensitive' } },
+          ],
+        }
+      : {}),
   };
 
-  // 5. Apply Search (Name/Phone/Email)
-  if (search) {
-    whereCondition.AND = {
-      OR: [
-        { name: { contains: search, mode: 'insensitive' } },
-        { phoneNumber: { contains: search } },
-        { email: { contains: search, mode: 'insensitive' } },
-      ],
-    };
-  }
-
-  // 6. Fetch Full Profiles with Ledger Balance
-  // We perform a transaction to get the profiles AND count total for pagination
-  const [customers, total] = await this.prisma.$transaction([
-    this.prisma.customerUser.findMany({
-      where: whereCondition,
+  const [parties, total] = await this.prisma.$transaction([
+    this.prisma.party.findMany({
+      where,
       skip,
-      take: limit,
-      orderBy: { name: 'asc' },
+      take:    limit,
+      orderBy: { partyName: 'asc' },
       select: {
-        id: true,
-        name: true,
-        phoneNumber: true,
-        email: true,
-        picture: true,
-        addresses: {
-          where: { isDefault: true },
-          take: 1,
-          select: { street: true, city: true }
-        },
-        // OPTIONAL: Fetch their wallet/ledger balance summary here if needed
-        wallet: { select: { balance: true } } 
-      }
+        id:             true,
+        partyName:      true,
+        phoneNo:        true,
+        email:          true,
+        closingBalance: true,
+        billingAddress: true,
+        partyCategory:  true,
+      },
     }),
-    this.prisma.customerUser.count({ where: whereCondition }),
+    this.prisma.party.count({ where }),
   ]);
 
   const totalPages = Math.ceil(total / limit);
 
   return {
-    data: customers.map((c) => ({
-      id: c.id,
-      name: c.name,
-      phone: c.phoneNumber,
-      // Hide the dummy "shadow" emails we generate
-      email: c.email && c.email.endsWith('@pos.local') ? null : c.email, 
-      address: c.addresses[0] ? `${c.addresses[0].street}, ${c.addresses[0].city}` : null,
-      balance: c.wallet?.balance || 0 // Current Wallet Balance
+    data: parties.map((p) => ({
+      id:       p.id,
+      name:     p.partyName,
+      phone:    p.phoneNo   ?? null,
+      email:    p.email     ?? null,
+      category: p.partyCategory ?? null,
+      address:  p.billingAddress
+        ? typeof p.billingAddress === 'string'
+          ? p.billingAddress
+          : (p.billingAddress as any)?.city
+            ? `${(p.billingAddress as any).street ?? ''}, ${(p.billingAddress as any).city}`
+            : null
+        : null,
+      balance: Number(p.closingBalance ?? 0),
     })),
     meta: {
       total,
@@ -1081,203 +1127,237 @@ async getPosCustomers(businessId: string, query: GetPosCustomersDto) {
 }
 
 async updatePosSale(businessId: string, saleId: string, dto: UpdatePosSaleDto) {
-    // 1. Fetch Existing Sale
-    const existingSale = await this.prisma.sale.findUnique({
-      where: { id: saleId },
-      include: { 
-        saleItems: true, 
-        salePaymentModes: true,
-        saleAdditionalCharges: true 
-      }
-    });
+  const existingSale = await this.prisma.sale.findUnique({
+    where: { id: saleId },
+    include: {
+      saleItems:             true,
+      salePaymentModes:      true,
+      saleAdditionalCharges: true,
+    },
+  });
 
-    if (!existingSale || existingSale.businessId !== businessId) {
-      throw new NotFoundException("Sale not found");
+  if (!existingSale || existingSale.businessId !== businessId) {
+    throw new NotFoundException('Sale not found');
+  }
+
+  const variantIds = dto.items.map((i) => i.variantId);
+  const variants   = await this.prisma.variant.findMany({
+    where:   { id: { in: variantIds }, product: { businessId } },
+    include: { product: { select: { title: true } } },
+  });
+
+  if (variants.length !== variantIds.length) {
+    throw new BadRequestException('One or more items are invalid.');
+  }
+
+  return this.prisma.$transaction(async (tx) => {
+
+    // ── A. REVERT OLD STATE ──────────────────────────────────────
+
+    // A1. Revert Stock
+    for (const oldItem of existingSale.saleItems) {
+      await tx.variant.update({
+        where: { id: oldItem.itemId },
+        data:  { stock: { increment: Number(oldItem.quantity) } },
+      });
     }
 
-    // 2. Fetch Variants for New Items
-    const variantIds = dto.items.map(i => i.variantId);
-    const variants = await this.prisma.variant.findMany({
-      where: { id: { in: variantIds }, product: { businessId } },
-      include: { product: { select: { title: true } } }
+    // A2. Revert Shop Ledger
+    if (existingSale.salePaymentModes.length > 0) {
+      const oldPayment = existingSale.salePaymentModes[0];
+      await tx.bankCashCheque.update({
+        where: { id: oldPayment.bankCashChequeId },
+        data:  { closingBalance: { decrement: oldPayment.amount } },
+      });
+      await tx.bankCashChequeTransaction.create({
+        data: {
+          businessId,
+          accountId:       oldPayment.bankCashChequeId,
+          transactionType: 'DEBIT',
+          amount:          oldPayment.amount,
+          runningBalance:  0,
+          referenceId:     saleId,
+          referenceType:   'SALE',
+          invoiceNo:       `REV-${existingSale.invoicePrefix}-${existingSale.invoiceNo}`,
+          partyName:       `Correction: ${existingSale.partyName}`,
+          transactionNo:   'REVERSAL',
+        },
+      });
+    }
+
+    // A3. Revert Party Ledger
+    if (Number(existingSale.balanceAmount) > 0 && existingSale.partyId) {
+      try {
+        await tx.partyLedger.deleteMany({ where: { linkedSaleId: saleId } });
+      } catch {
+        // linkedSaleId may not exist on older records — safe to skip
+      }
+    }
+
+    // A4. Delete Old Line Items
+    await tx.saleItem.deleteMany({            where: { saleId } });
+    await tx.saleAdditionalCharge.deleteMany({ where: { saleId } });
+    await tx.salePaymentMode.deleteMany({     where: { saleId } });
+
+    // ── B. CALCULATE NEW STATE ───────────────────────────────────
+
+    let totalItemsDec = new Prisma.Decimal(0);
+    const saleItemsData: Prisma.SaleItemCreateWithoutSaleInput[] = [];
+
+    for (const item of dto.items) {
+      const variant = variants.find((v) => v.id === item.variantId);
+      if (!variant) continue;
+
+      const qty      = new Prisma.Decimal(item.quantity);
+      const price    = new Prisma.Decimal(variant.price);
+      const amount   = price.times(qty);
+      totalItemsDec  = totalItemsDec.plus(amount);
+
+      saleItemsData.push({
+        itemId:              variant.id,
+        itemName:            `${variant.product.title} - ${variant.sku}`,
+        itemCode:            variant.sku,
+        quantity:            qty,
+        price,
+        amount,
+        taxableAmount:       amount,
+        unit:                variant.dimensionUnit || 'PCS',
+        hsnCode:             variant.hsnCode       || '',
+        itemDescription:     '',
+        sacCode:             '',
+        batchNo:             '',
+        manufactureDate:     new Date(),
+        expiryDate:          new Date(),
+        priceType:           'MRP',
+        discountPercent:     0,
+        discountAmount:      0,
+        tax:                 '0%',
+        taxAmount:           0,
+        cess:                '',
+        cessAmount:          0,
+        isMrpEnabled:        true,
+        isWholesaleEnabled:  false,
+        isSerialisationEnabled: false,
+        isBatchingEnabled:   false,
+        sellingPrice:        price,
+        sellingPriceType:    'MRP',
+        purchasePrice:       0,
+        purchasePriceType:   'MRP',
+        mrp:                 0,
+        wholesalePrice:      0,
+        wholesalePriceType:  '',
+        wholesaleQuantity:   0,
+      });
+    }
+
+    let totalChargesDec = new Prisma.Decimal(0);
+    const chargesData: Prisma.SaleAdditionalChargeCreateWithoutSaleInput[] = [];
+
+    for (const ch of (dto.additionalCharges ?? [])) {
+      const amt       = new Prisma.Decimal(ch.amount);
+      totalChargesDec = totalChargesDec.plus(amt);
+      chargesData.push({ name: ch.name, amount: amt, tax: '0' });
+    }
+
+    const grandTotal  = totalItemsDec.plus(totalChargesDec);
+    const received    = new Prisma.Decimal(dto.amountReceived ?? 0);
+    const balance     = grandTotal.minus(received);
+    const isSettled   = balance.lte(0);
+
+    // ── C. APPLY NEW STATE ───────────────────────────────────────
+
+    // C1. Update Sale Header — includes gstin/address from frontend
+    const updatedSale = await tx.sale.update({
+      where: { id: saleId },
+      data: {
+        partyName:          dto.customerName    ?? existingSale.partyName,
+        phoneNo:            dto.customerPhone   ?? existingSale.phoneNo,
+        billingAddress:     dto.address         ?? existingSale.billingAddress,
+        taxId:              dto.gstin           ?? existingSale.taxId,
+        panNo:              dto.pan             ?? existingSale.panNo,
+        totalAmount:        grandTotal,
+        totalTaxableAmount: totalItemsDec,
+        balanceAmount:      balance.greaterThan(0) ? balance : new Prisma.Decimal(0),
+        isSettled,
+        status:             'FINALIZED',
+        saleItems:          { create: saleItemsData },
+        saleAdditionalCharges: { create: chargesData },
+      },
     });
 
-    if (variants.length !== variantIds.length) throw new BadRequestException("Invalid items.");
+    // C2. Payment Mode + Ledger
+    if (received.greaterThan(0)) {
+      let targetAccount = dto.depositAccountId
+        ? await tx.bankCashCheque.findFirst({ where: { id: dto.depositAccountId } })
+        : await tx.bankCashCheque.findFirst({
+            where: {
+              businessId,
+              accountType: dto.paymentMode === 'CASH' ? 'CASH' : { in: ['BANK', 'UPI'] },
+              isEnabled: true,
+            },
+          });
 
-    return this.prisma.$transaction(async (tx) => {
-      // --- A. REVERT OLD STATE ---
-
-      // A1. Revert Stock
-      for (const oldItem of existingSale.saleItems) {
-        await tx.variant.update({
-          where: { id: oldItem.itemId }, 
-          data: { stock: { increment: Number(oldItem.quantity) } }
-        });
-      }
-
-      // A2. Revert Shop Ledger
-      if (existingSale.salePaymentModes.length > 0) {
-        const oldPayment = existingSale.salePaymentModes[0];
+      if (targetAccount) {
         await tx.bankCashCheque.update({
-          where: { id: oldPayment.bankCashChequeId },
-          data: { closingBalance: { decrement: oldPayment.amount } }
+          where: { id: targetAccount.id },
+          data:  { closingBalance: { increment: received } },
         });
         await tx.bankCashChequeTransaction.create({
           data: {
             businessId,
-            accountId: oldPayment.bankCashChequeId,
-            transactionType: 'DEBIT',
-            amount: oldPayment.amount,
-            runningBalance: 0, 
-            referenceId: saleId,
-            referenceType: 'SALE',
-            invoiceNo: `REV-${existingSale.invoicePrefix}-${existingSale.invoiceNo}`,
-            partyName: `Correction: ${existingSale.partyName}`,
-            transactionNo: 'REVERSAL'
-          }
+            accountId:       targetAccount.id,
+            transactionType: 'CREDIT',
+            amount:          received,
+            runningBalance:  0,
+            referenceId:     saleId,
+            referenceType:   'SALE',
+            invoiceNo:       `UPD-${updatedSale.invoiceNo}`,
+            partyName:       dto.customerName ?? 'Walk-in Customer',
+          },
         });
-      }
-
-      // A3. Revert Customer Ledger
-      // FIX: Use 'partyId' instead of 'customerUserId'
-      if (Number(existingSale.balanceAmount) > 0 && existingSale.partyId) {
-        await tx.partyLedger.deleteMany({
-          where: { linkedSaleId: saleId }
-        });
-      }
-
-      // A4. Delete Old Details
-      await tx.saleItem.deleteMany({ where: { saleId } });
-      await tx.saleAdditionalCharge.deleteMany({ where: { saleId } });
-      await tx.salePaymentMode.deleteMany({ where: { saleId } });
-
-
-      // --- B. CALCULATE NEW STATE ---
-      
-      let totalItemsAmountDec = new Prisma.Decimal(0);
-      const saleItemsData: Prisma.SaleItemCreateWithoutSaleInput[] = [];
-
-      for (const item of dto.items) {
-        const variant = variants.find(v => v.id === item.variantId);
-        
-        if (!variant) continue;
-
-        const quantityDec = new Prisma.Decimal(item.quantity);
-        const priceDec = new Prisma.Decimal(variant.price);
-        const itemTotal = priceDec.times(quantityDec);
-        totalItemsAmountDec = totalItemsAmountDec.plus(itemTotal);
-
-        saleItemsData.push({
-          itemId: variant.id,
-          itemName: `${variant.product.title} - ${variant.sku}`,
-          itemCode: variant.sku,
-          quantity: quantityDec,
-          price: priceDec,
-          amount: itemTotal,
-          taxableAmount: itemTotal,
-          unit: variant.dimensionUnit || 'PCS',
-          hsnCode: variant.hsnCode || '', itemDescription: '', sacCode: '', batchNo: '', manufactureDate: new Date(), expiryDate: new Date(), priceType: 'MRP', discountPercent: 0, discountAmount: 0, tax: '0%', taxAmount: 0, cess: '', cessAmount: 0, isMrpEnabled: true, isWholesaleEnabled: false, isSerialisationEnabled: false, isBatchingEnabled: false, sellingPrice: priceDec, sellingPriceType: 'MRP', purchasePrice: 0, purchasePriceType: 'MRP', mrp: 0, wholesalePrice: 0, wholesalePriceType: '', wholesaleQuantity: 0
-        });
-      }
-
-      // Charges
-      let totalChargesDec = new Prisma.Decimal(0);
-      const chargesData: Prisma.SaleAdditionalChargeCreateWithoutSaleInput[] = [];
-      
-      if (dto.additionalCharges) {
-        for (const ch of dto.additionalCharges) {
-          const amt = new Prisma.Decimal(ch.amount);
-          totalChargesDec = totalChargesDec.plus(amt);
-          chargesData.push({ name: ch.name, amount: amt, tax: '0' });
-        }
-      }
-
-      const grandTotalDec = totalItemsAmountDec.plus(totalChargesDec);
-      const receivedDec = new Prisma.Decimal(dto.amountReceived || 0);
-      const balanceDec = grandTotalDec.minus(receivedDec);
-      const isSettled = balanceDec.lte(0);
-
-      // --- C. APPLY NEW STATE ---
-
-      // C1. Update Sale Header
-      const updatedSale = await tx.sale.update({
-        where: { id: saleId },
-        data: {
-          partyName: dto.customerName,
-          phoneNo: dto.customerPhone,
-          totalAmount: grandTotalDec,
-          totalTaxableAmount: totalItemsAmountDec,
-          balanceAmount: balanceDec.greaterThan(0) ? balanceDec : 0,
-          isSettled,
-          status: 'FINALIZED',
-          notes: 'Updated POS Transaction',
-          
-          saleItems: { create: saleItemsData },
-          saleAdditionalCharges: { create: chargesData }
-        }
-      });
-
-      // C2. Handle Financials
-      if (receivedDec.greaterThan(0)) {
-        let targetAccount: BankCashCheque | null = null;
-        
-        if (dto.depositAccountId) {
-           targetAccount = await tx.bankCashCheque.findFirst({ where: { id: dto.depositAccountId } });
-        } else {
-           const type = dto.paymentMode === 'CASH' ? 'CASH' : { in: ['BANK', 'UPI'] };
-           targetAccount = await tx.bankCashCheque.findFirst({ where: { businessId, accountType: type as any, isEnabled: true } });
-        }
-
-        if (targetAccount) {
-          await tx.bankCashCheque.update({
-            where: { id: targetAccount.id },
-            data: { closingBalance: { increment: receivedDec } }
-          });
-          await tx.bankCashChequeTransaction.create({
-            data: {
-              businessId, accountId: targetAccount.id, transactionType: 'CREDIT',
-              amount: receivedDec, runningBalance: 0, 
-              referenceId: saleId, referenceType: 'SALE', invoiceNo: `UPD-${updatedSale.invoiceNo}`,
-              partyName: dto.customerName
-            }
-          });
-          await tx.salePaymentMode.create({
-            data: {
-              saleId,
-              bankCashChequeId: targetAccount.id,
-              accountName: targetAccount.accountName,
-              paymentMode: dto.paymentMode || 'CASH', // Fallback to CASH if undefined
-              amount: receivedDec,
-              ifsc: '', acNo: ''
-            }
-          });
-        }
-      }
-
-      // C3. Handle Customer Ledger
-      // FIX: Use 'partyId' instead of 'customerUserId'
-      if (balanceDec.greaterThan(0) && existingSale.partyId) {
-        await tx.partyLedger.create({
+        await tx.salePaymentMode.create({
           data: {
-            businessId, partyType: 'CUSTOMER', referenceId: existingSale.partyId,
-            partyName: dto.customerName || 'Unknown', transactionDate: new Date(),
-            description: `Updated Inv #${updatedSale.invoiceNo}`,
-            debit: balanceDec, credit: 0, linkedSaleId: saleId
-          }
+            saleId,
+            bankCashChequeId: targetAccount.id,
+            accountName:      targetAccount.accountName,
+            paymentMode:      dto.paymentMode ?? 'CASH',
+            amount:           received,
+            ifsc:             '',
+            acNo:             '',
+          },
         });
       }
+    }
 
-      // C4. Deduct New Stock
-      for (const item of dto.items) {
-        await tx.variant.update({
-          where: { id: item.variantId },
-          data: { stock: { decrement: item.quantity } }
-        });
-      }
+    // C3. Party Ledger — only if balance due and party linked
+    if (balance.greaterThan(0) && existingSale.partyId) {
+      await tx.partyLedger.create({
+        data: {
+          businessId,
+          partyType:       'CUSTOMER',
+          partyId:         existingSale.partyId,
+          partyName:       dto.customerName ?? existingSale.partyName,
+          transactionDate: new Date(),
+          description:     `Updated Inv #${updatedSale.invoiceNo}`,
+          debit:           balance,
+          credit:          new Prisma.Decimal(0),
+          linkedSaleId:    saleId,
+        },
+      });
+    }
 
-      return updatedSale;
-    });
-  }
+    // C4. Deduct New Stock
+    for (const item of dto.items) {
+      await tx.variant.update({
+        where: { id: item.variantId },
+        data:  { stock: { decrement: item.quantity } },
+      });
+    }
+
+    return updatedSale;
+  });
+}
+
 
   async verifyBusinessOwnership(userId: string, businessId: string) {
     const business = await this.prisma.business.findUnique({

@@ -15,6 +15,8 @@ import { ConfigService } from '@nestjs/config';
 import { AuthSource, CustomerType, CustomerUser, NotificationType } from '@prisma/client';
 import { NotificationService } from 'src/notifications/notifications.service';
 import { PrismaService } from 'src/prisma/prisma.service'; // <--- IMPORT THIS
+import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
+import { randomInt } from 'crypto';
 
 @Injectable()
 export class AuthService {
@@ -307,5 +309,75 @@ async googleLogin(googleLoginDto: GoogleLoginDto) {
 
     return tokens;
   }
+ async forgotPassword(dto: ForgotPasswordDto) {
+    const { email } = dto;
 
+    // Search only in the User table (Sellers, Admins, etc.)
+    const user = await this.prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      return { message: 'If an account exists with this email, an OTP has been sent.' };
+    }
+
+    const otp = randomInt(100000, 999999).toString();
+    const expiry = new Date();
+    expiry.setMinutes(expiry.getMinutes() + 10);
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { 
+        lastOtp: otp, 
+        otpExpiry: expiry 
+      },
+    });
+
+    // ✅ FIX: Use createForSeller instead of createForCustomer
+    await this.notificationService.createForSeller(
+      { id: user.id, email: user.email }, // Matches Pick<User, 'id' | 'email'>
+      'Jottosop Password Reset',
+      `Your verification code is: ${otp}. This code will expire in 10 minutes.`,
+      NotificationType.ALERT,
+    );
+
+    return { message: 'OTP sent successfully.' };
+  }
+
+  // ========================================================
+  // 2. VERIFY OTP AND RESET PASSWORD - For SELLER/USER only
+  // ========================================================
+  async resetPassword(dto: ResetPasswordDto) {
+    const { email, otp, newPassword } = dto;
+
+    const user = await this.prisma.user.findUnique({ where: { email } });
+
+    if (!user || !user.lastOtp || !user.otpExpiry) {
+      throw new UnauthorizedException('Invalid reset request');
+    }
+
+    // Check if OTP matches
+    if (user.lastOtp !== otp) {
+      throw new UnauthorizedException('Invalid OTP');
+    }
+
+    // Check if OTP is expired
+    if (new Date() > user.otpExpiry) {
+      throw new UnauthorizedException('OTP has expired');
+    }
+
+    // Hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // Update User and CLEAR security fields
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { 
+        password: hashedPassword, 
+        lastOtp: null, 
+        otpExpiry: null,
+        refreshToken: null // Security: Logout all current sessions
+      },
+    });
+
+    return { message: 'Password reset successfully. You can now log in.' };
+  }
 }

@@ -1,101 +1,202 @@
-import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCouponDto } from './dto/create-coupon.dto';
-import { ValidateCouponDto } from './dto/validate-coupon.dto';
-import { DiscountType } from '@prisma/client';
+import { UpdateCouponDto } from './dto/update-coupon.dto';
+import { CreateDiscountDto } from './dto/create-discount.dto';
+import { CreateDiscountTargetDto } from './dto/create-discount-target.dto';
+import { ListCouponsDto } from './dto/list-coupons.dto';
 
 @Injectable()
 export class CouponsService {
   constructor(private prisma: PrismaService) {}
 
-  /**
-   * (Admin) Get all coupons
-   */
-  async findAll() {
-    return this.prisma.coupon.findMany({
+  // ─── DISCOUNT CRUD ───────────────────────────────────────────────
+
+  async createDiscount(dto: CreateDiscountDto) {
+    return this.prisma.discount.create({ data: dto });
+  }
+
+  async findAllDiscounts() {
+    return this.prisma.discount.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        coupons: { select: { id: true, code: true, active: true, usedCount: true } },
+        targets: true,
+      },
+    });
+  }
+
+  async findOneDiscount(id: string) {
+    const discount = await this.prisma.discount.findUnique({
+      where: { id },
+      include: { coupons: true, targets: true },
+    });
+    if (!discount) throw new NotFoundException(`Discount "${id}" not found.`);
+    return discount;
+  }
+
+  async updateDiscount(id: string, dto: Partial<CreateDiscountDto>) {
+    await this.findOneDiscount(id);
+    return this.prisma.discount.update({ where: { id }, data: dto });
+  }
+
+  async deleteDiscount(id: string) {
+    await this.findOneDiscount(id);
+    const linkedCoupons = await this.prisma.coupon.count({ where: { discountId: id } });
+    if (linkedCoupons > 0) {
+      throw new BadRequestException(
+        `Cannot delete. ${linkedCoupons} coupon(s) are linked to this discount.`,
+      );
+    }
+    return this.prisma.discount.delete({ where: { id } });
+  }
+
+  // ─── DISCOUNT TARGETS ────────────────────────────────────────────
+
+  async addTarget(discountId: string, dto: CreateDiscountTargetDto) {
+    await this.findOneDiscount(discountId);
+    return this.prisma.discountTarget.create({ data: { discountId, ...dto } });
+  }
+
+  async removeTarget(discountId: string, targetId: string) {
+    const target = await this.prisma.discountTarget.findFirst({
+      where: { id: targetId, discountId },
+    });
+    if (!target) throw new NotFoundException(`Target "${targetId}" not found on this discount.`);
+    return this.prisma.discountTarget.delete({ where: { id: targetId } });
+  }
+
+  // ─── COUPON CRUD ─────────────────────────────────────────────────
+
+  async createCoupon(dto: CreateCouponDto) {
+    const discount = await this.prisma.discount.findUnique({ where: { id: dto.discountId } });
+    if (!discount) throw new NotFoundException(`Discount "${dto.discountId}" not found.`);
+
+    const existing = await this.prisma.coupon.findUnique({ where: { code: dto.code } });
+    if (existing) throw new ConflictException(`Coupon code "${dto.code}" already exists.`);
+
+    return this.prisma.coupon.create({ data: dto });
+  }
+
+async findAllCoupons(query: ListCouponsDto) {
+  const page = query.page ?? 1;
+  const limit = query.limit ?? 20;
+  const skip = (page - 1) * limit;
+
+  const where = query.active !== undefined ? { active: query.active } : {};
+
+  const [data, total] = await this.prisma.$transaction([
+    this.prisma.coupon.findMany({
+      where,
+      skip,
+      take: limit,
       orderBy: { createdAt: 'desc' },
       include: {
         discount: {
-          select: { name: true, discountType: true, discountValue: true },
+          select: { name: true, discountType: true, discountValue: true, minOrderAmount: true },
         },
+        _count: { select: { usages: true } },
       },
-    });
-  }
+    }),
+    this.prisma.coupon.count({ where }),
+  ]);
 
-  /**
-   * (Admin) Create a new coupon
-   */
-  async create(dto: CreateCouponDto) {
-    // 1. Check if discount exists
-    const discount = await this.prisma.discount.findUnique({
-      where: { id: dto.discountId },
-    });
-    if (!discount) {
-      throw new NotFoundException(`Discount with ID "${dto.discountId}" not found.`);
-    }
+  return {
+    data,
+    meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+  };
+}
 
-    // 2. Check if coupon code already exists
-    const existingCoupon = await this.prisma.coupon.findUnique({
-      where: { code: dto.code },
-    });
-    if (existingCoupon) {
-      throw new ConflictException(`Coupon code "${dto.code}" already exists.`);
-    }
 
-    // 3. Create the coupon
-    return this.prisma.coupon.create({
-      data: dto,
-    });
-  }
-
-  /**
-   * (Public) Validate a coupon for the checkout page
-   */
-  async validate(dto: ValidateCouponDto) {
-    const { code, subtotal } = dto;
-
+  async findOneCoupon(id: string) {
     const coupon = await this.prisma.coupon.findUnique({
-      where: { code: code },
-      include: { discount: true },
-    });
-
-    // --- All Validation Logic ---
-    if (!coupon || !coupon.active || !coupon.discount) {
-      throw new BadRequestException('This coupon code is not valid.');
-    }
-    const now = new Date();
-    if ((coupon.startsAt && coupon.startsAt > now) || (coupon.expiresAt && coupon.expiresAt < now)) {
-      throw new BadRequestException('This coupon is not active at this time.');
-    }
-    if (coupon.maxUses && coupon.usedCount >= coupon.maxUses) {
-      throw new BadRequestException('This coupon has reached its usage limit.');
-    }
-    if (coupon.discount.minOrderAmount && subtotal < coupon.discount.minOrderAmount.toNumber()) {
-      throw new BadRequestException(`A minimum of ₹${coupon.discount.minOrderAmount} is needed to use this coupon.`);
-    }
-
-    // --- Calculate the discount value ---
-    let discountAmount = 0;
-    const { discount } = coupon;
-    if (discount.discountType === DiscountType.percentage) {
-      discountAmount = (subtotal * discount.discountValue.toNumber()) / 100;
-      if (discount.maxDiscountAmount && discountAmount > discount.maxDiscountAmount.toNumber()) {
-        discountAmount = discount.maxDiscountAmount.toNumber();
-      }
-    } else if (discount.discountType === DiscountType.fixed_amount) {
-      discountAmount = discount.discountValue.toNumber();
-    }
-    
-    // --- Return a clean, useful response for the frontend ---
-    return {
-      isValid: true,
-      code: coupon.code,
-      discount: {
-        type: discount.discountType,
-        value: discount.discountValue.toNumber(),
-        calculatedDiscount: parseFloat(discountAmount.toFixed(2)),
+      where: { id },
+      include: {
+        discount: { include: { targets: true } },
+        _count: { select: { usages: true } },
       },
-      newTotal: parseFloat((subtotal - discountAmount).toFixed(2)),
+    });
+    if (!coupon) throw new NotFoundException(`Coupon "${id}" not found.`);
+    return coupon;
+  }
+
+  async updateCoupon(id: string, dto: UpdateCouponDto) {
+    await this.findOneCoupon(id);
+
+    // If code is being changed, check it's not taken
+    if (dto.code) {
+      const conflict = await this.prisma.coupon.findFirst({
+        where: { code: dto.code, NOT: { id } },
+      });
+      if (conflict) throw new ConflictException(`Coupon code "${dto.code}" already exists.`);
+    }
+
+    return this.prisma.coupon.update({ where: { id }, data: dto });
+  }
+
+  async deleteCoupon(id: string) {
+    await this.findOneCoupon(id);
+    const usages = await this.prisma.couponUsage.count({ where: { couponId: id } });
+    if (usages > 0) {
+      throw new BadRequestException(
+        `Cannot delete. This coupon has ${usages} usage record(s). Deactivate it instead.`,
+      );
+    }
+    return this.prisma.coupon.delete({ where: { id } });
+  }
+
+  async toggleCoupon(id: string, active: boolean) {
+    await this.findOneCoupon(id);
+    return this.prisma.coupon.update({ where: { id }, data: { active } });
+  }
+
+  // ─── COUPON ANALYTICS ────────────────────────────────────────────
+
+  async getCouponStats(id: string) {
+    await this.findOneCoupon(id);
+
+    const [totalUsages, activeUsages, totalDiscountGiven] = await this.prisma.$transaction([
+      this.prisma.couponUsage.count({ where: { couponId: id } }),
+      this.prisma.couponUsage.count({ where: { couponId: id, isReversed: false } }),
+      this.prisma.couponUsage.aggregate({
+        where: { couponId: id, isReversed: false },
+        _sum: { discountApplied: true },
+      }),
+    ]);
+
+    return {
+      totalUsages,
+      activeUsages,
+      reversedUsages: totalUsages - activeUsages,
+      totalDiscountGiven: totalDiscountGiven._sum.discountApplied ?? 0,
+    };
+  }
+
+  async getCouponUsageLog(id: string, page = 1, limit = 20) {
+    await this.findOneCoupon(id);
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.couponUsage.findMany({
+        where: { couponId: id },
+        skip,
+        take: limit,
+        orderBy: { usedAt: 'desc' },
+        include: {
+          customerUser: { select: { id: true, name: true, email: true, phoneNumber: true } },
+        },
+      }),
+      this.prisma.couponUsage.count({ where: { couponId: id } }),
+    ]);
+
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
 }

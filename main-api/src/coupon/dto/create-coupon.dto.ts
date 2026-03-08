@@ -1,45 +1,56 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
-import { IsBoolean, IsDate, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateCouponDto {
-  @ApiProperty({ description: 'The unique code for the coupon (e.g., WELCOME10)', example: 'SUMMER25' })
+  @ApiProperty({ example: 'SAVE20' })
   @IsString()
-  @IsNotEmpty()
-  @Transform(({ value }) => value.toUpperCase()) // Automatically convert code to uppercase
   code: string;
 
-  @ApiProperty({ description: 'The ID of the discount rules this coupon is linked to' })
+  @ApiProperty()
   @IsString()
-  @IsNotEmpty()
   discountId: string;
 
-  @ApiPropertyOptional({ description: 'Is the coupon currently active?', default: true })
+  @ApiPropertyOptional({ default: true })
   @IsOptional()
   @IsBoolean()
   active?: boolean;
 
-  @ApiPropertyOptional({ description: 'The maximum number of times this coupon can be used in total' })
+  @ApiPropertyOptional({ example: 100 })
   @IsOptional()
   @IsInt()
-  @Min(1)
   maxUses?: number;
 
-  @ApiPropertyOptional({ description: 'The maximum number of times a single user can use this coupon' })
+  @ApiPropertyOptional({ example: 1 })
+  @IsOptional()
+  @IsInt()
+  perUserLimit?: number;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  firstOrderOnly?: boolean;
+
+  @ApiPropertyOptional({ example: 5000 })
+  @IsOptional()
+  @IsNumber()
+  maxOrderAmount?: number;
+
+  @ApiPropertyOptional({ example: 2 })
   @IsOptional()
   @IsInt()
   @Min(1)
-  perUserLimit?: number;
+  minItemQuantity?: number;
 
-  @ApiPropertyOptional({ description: 'The date and time when the coupon becomes valid (ISO 8601 format)' })
+  @ApiPropertyOptional({ example: 'ONLINE', enum: ['ONLINE', 'POS', 'APP', 'ALL'] })
   @IsOptional()
-  @IsDate()
-  @Transform(({ value }) => value && new Date(value))
+  @IsString()
+  channel?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
   startsAt?: Date;
 
-  @ApiPropertyOptional({ description: 'The date and time when the coupon expires (ISO 8601 format)' })
+  @ApiPropertyOptional()
   @IsOptional()
-  @IsDate()
-  @Transform(({ value }) => value && new Date(value))
   expiresAt?: Date;
 }

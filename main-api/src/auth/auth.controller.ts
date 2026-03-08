@@ -8,6 +8,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 import { auth } from 'google-auth-library';
 import { ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -66,4 +67,15 @@ export class AuthController {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
   }
+  @Post('forgot-password')
+@HttpCode(HttpStatus.OK)
+async forgotPassword(@Body() dto: ForgotPasswordDto) {
+  return this.authService.forgotPassword(dto);
+}
+
+@Post('reset-password')
+@HttpCode(HttpStatus.OK)
+async resetPassword(@Body() dto: ResetPasswordDto) {
+  return this.authService.resetPassword(dto);
+}
 }
