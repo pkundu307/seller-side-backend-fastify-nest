@@ -12,6 +12,9 @@ import { GetPosCustomersDto } from './dto/get-pos-customers.dto';
 import { DashboardFilterDto } from './dto/dashboard-filter.dto';
 import { SellerReplyTicketDto, SellerTicketQueryDto, UpdateTicketStatusDto } from './dto/seller-ticket.dto';
 import { ITXClientDenyList } from '@prisma/client/runtime/library';
+
+const PLATFORM_FEE = 4;
+const SHIPPING_FEE = 40;
 // Define a type for the address object to cast the JSON to
 interface ShippingAddress {
   street: string;
@@ -32,145 +35,174 @@ export class SellerService {
   /**
    * API 1: Get all orders for a specific business, with pagination and stats.
    */
-  async getBusinessOrders(businessId: string, query: SellerPaginationDto) {
-    const { page = 1, limit = 10, status, paymentMethod, search } = query;
-    const skip = (page - 1) * limit;
 
-    // --- Build Dynamic Where Clause for Filtering ---
-    const where: Prisma.OrderWhereInput = {
+
+async getBusinessOrders(businessId: string, query: SellerPaginationDto) {
+  const { page = 1, limit = 10, status, paymentMethod, search } = query;
+  const skip = (page - 1) * limit;
+
+  const where: Prisma.OrderWhereInput = {
+    items: {
+      some: {
+        variant: { product: { businessId } },
+      },
+    },
+    status: status ? { equals: status } : undefined,
+    paymentMethod: paymentMethod ? { equals: paymentMethod } : undefined,
+    orderNumber: search ? { contains: search, mode: 'insensitive' } : undefined,
+  };
+
+  const orders = await this.prisma.order.findMany({
+    where,
+    skip,
+    take: limit,
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      orderNumber: true,
+      createdAt: true,
+      totalAmount: true,
+      status: true,
+      paymentMethod: true,
+      customerUser: { select: { name: true } },
+      _count: { select: { items: true } },
+    },
+  });
+
+  const [total, cod, online, delivered, pending] = await Promise.all([
+    this.prisma.order.count({ where }),
+    this.prisma.order.count({ where: { ...where, paymentMethod: PaymentMethod.cash_on_delivery } }),
+    this.prisma.order.count({ where: { ...where, paymentMethod: PaymentMethod.online } }),
+    this.prisma.order.count({ where: { ...where, status: OrderStatus.delivered } }),
+    this.prisma.order.count({ where: { ...where, status: OrderStatus.pending } }),
+  ]);
+
+  const mappedOrders = orders.map(order => ({
+    ...order,
+    totalAmount: parseFloat(order.totalAmount.toString()) - PLATFORM_FEE - SHIPPING_FEE,
+  }));
+
+  return {
+    orders: mappedOrders,
+    stats: {
+      totalOrders: total,
+      cashOnDeliveryOrders: cod,
+      onlineOrders: online,
+      deliveredOrders: delivered,
+      pendingOrders: pending,
+    },
+    pagination: {
+      total,
+      page,
+      limit,
+      lastPage: Math.ceil(total / limit),
+    },
+  };
+}
+
+async getBusinessOrderById(businessId: string, orderId: string) {
+
+  const order = await this.prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
       items: {
-        some: {
-          // --- FIX 1: Correctly query through the nested relation ---
-          // OrderItem -> Variant -> Product -> businessId
+        where: {
+          variant: { product: { businessId } }
+        },
+        include: {
           variant: {
-            product: {
-              businessId: businessId,
-            },
-          },
-        },
-      },
-      status: status ? { equals: status } : undefined,
-      paymentMethod: paymentMethod ? { equals: paymentMethod } : undefined,
-      orderNumber: search ? { contains: search, mode: 'insensitive' } : undefined,
-    };
-
-    // --- Fetch Paginated Orders ---
-    const orders = await this.prisma.order.findMany({
-      where,
-      skip,
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        orderNumber: true,
-        createdAt: true,
-        totalAmount: true,
-        status: true,
-        paymentMethod: true,
-        customerUser: {
-          select: { name: true },
-        },
-        _count: {
-          select: { items: true },
-        },
-      },
-    });
-
-    // --- Fetch Order Statistics (Queries are now also corrected) ---
-    const totalOrders = this.prisma.order.count({ where });
-    const cashOnDeliveryOrders = this.prisma.order.count({ where: { ...where, paymentMethod: PaymentMethod.cash_on_delivery } });
-    const onlineOrders = this.prisma.order.count({ where: { ...where, paymentMethod: PaymentMethod.online } });
-    const deliveredOrders = this.prisma.order.count({ where: { ...where, status: OrderStatus.delivered } });
-    const pendingOrders = this.prisma.order.count({ where: { ...where, status: OrderStatus.pending } });
-
-    const [total, cod, online, delivered, pending] = await Promise.all([
-      totalOrders,
-      cashOnDeliveryOrders,
-      onlineOrders,
-      deliveredOrders,
-      pendingOrders,
-    ]);
-
-    return {
-      orders,
-      stats: {
-        totalOrders: total,
-        cashOnDeliveryOrders: cod,
-        onlineOrders: online,
-        deliveredOrders,
-        pendingOrders,
-      },
-      pagination: {
-        total,
-        page,
-        limit,
-        lastPage: Math.ceil(total / limit),
-      },
-    };
-  }
-
-  /**
-   * API 2: Get a single order by ID, ensuring it belongs to the seller.
-   */
-  async getBusinessOrderById(businessId: string, orderId: string) {
-    // --- FIX 2: Add `include` to fetch the relations needed later ---
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: {
-        items: {
-          where: {
-            // --- FIX 3: Correct nested path for filtering items ---
-            variant: {
+            select: {
+              sku: true,
+              images: true,
+              attributeValues: {
+                select: {
+                  attribute: { select: { name: true } },
+                  attributeOption: { select: { value: true } }
+                }
+              },
               product: {
-                businessId: businessId,
-              },
-            },
-          },
-          include: {
-            variant: {
-              select: {
-                sku: true,
-                images: true, // Also good to return variant images
-                attributeValues: {
-                  include: {
-                    attribute: { select: { name: true } },
-                    attributeOption: { select: { value: true } },
-                  },
-                },
-              },
-            },
-            // --- FIX 4: Correctly include the Product through the Variant ---
-            // This structure is for fetching, not filtering.
-            // We can't include Product directly from OrderItem.
-          },
-        },
-        customerUser: {
-          select: {
-            name: true,
-          },
-        },
+                select: {
+                  title: true
+                }
+              }
+            }
+          }
+        }
       },
-    });
-
-    if (!order) {
-      throw new NotFoundException(`Order with ID "${orderId}" not found.`);
+      customerUser: {
+        select: { name: true }
+      }
     }
+  })
 
-    // --- FIX 5: Now `order.items` and `order.customerUser` exist and can be accessed ---
-    if (order.items.length === 0) {
-      throw new ForbiddenException(`You do not have permission to view this order as it contains no items from your business.`);
-    }
-    
-    // Sanitize the response to hide personal info
-    const { customerUser, ...restOfOrder } = order;
-    return {
-      ...restOfOrder,
-      customer: {
-        name: customerUser.name,
-        shippingAddress: order.selectedAddress,
-      },
-    };
+  if (!order) {
+    throw new NotFoundException(`Order with ID "${orderId}" not found.`)
   }
+
+  if (order.items.length === 0) {
+    throw new ForbiddenException(`You do not have permission to view this order.`)
+  }
+
+  // ---------------------------
+  // Seller Subtotal Calculation
+  // ---------------------------
+
+  const sellerSubtotal = order.items.reduce((sum, item) => {
+    return sum + Number(item.priceAtTimeOfOrder) * item.quantity
+  }, 0)
+
+  const commissionPercent = 0 // later fetch from PlatformFeeConfig
+
+  const commission = sellerSubtotal * commissionPercent / 100
+  const tds = sellerSubtotal * 0.01
+  const tcs = sellerSubtotal * 0.01
+
+  const sellerPayout = sellerSubtotal - commission - tds - tcs
+
+  const commissionGST = commission * 0.18
+  const platformNetRevenue = commission - commissionGST
+
+  const { customerUser, ...restOfOrder } = order
+
+  return {
+    id: restOfOrder.id,
+    orderNumber: restOfOrder.orderNumber,
+    status: restOfOrder.status,
+    paymentMethod: restOfOrder.paymentMethod,
+    paymentStatus: restOfOrder.paymentStatus,
+    createdAt: restOfOrder.createdAt,
+
+    customer: {
+      name: customerUser.name,
+      shippingAddress: restOfOrder.selectedAddress
+    },
+
+    items: restOfOrder.items.map(item => ({
+      productTitle: item.variant?.product?.title,
+      sku: item.variant?.sku,
+      image: item.variant?.images?.[0] ?? null,
+      attributes: item.variant?.attributeValues?.map(v => ({
+        name: v.attribute.name,
+        value: v.attributeOption.value
+      })),
+      price: Number(item.priceAtTimeOfOrder),
+      quantity: item.quantity,
+      subtotal: Number(item.priceAtTimeOfOrder) * item.quantity
+    })),
+
+    financials: {
+      sellerSubtotal,
+      commissionPercent,
+      commission,
+      tds,
+      tcs,
+      sellerPayout,
+      commissionGST,
+      platformNetRevenue
+    }
+  }
+}
+
 async updateOrderStatus(businessId: string, orderId: string, dto: UpdateSellerOrderDto) {
   return this.prisma.$transaction(async (tx) => {
     // 1. Fetch the full order with all necessary relations

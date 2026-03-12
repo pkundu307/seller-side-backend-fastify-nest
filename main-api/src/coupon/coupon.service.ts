@@ -10,6 +10,7 @@ import { UpdateCouponDto } from './dto/update-coupon.dto';
 import { CreateDiscountDto } from './dto/create-discount.dto';
 import { CreateDiscountTargetDto } from './dto/create-discount-target.dto';
 import { ListCouponsDto } from './dto/list-coupons.dto';
+import { ValidateCouponDto } from './dto/validate-coupon.dto';
 
 @Injectable()
 export class CouponsService {
@@ -199,4 +200,84 @@ async findAllCoupons(query: ListCouponsDto) {
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
+  async validateCoupon(dto: ValidateCouponDto) {
+  const coupon = await this.prisma.coupon.findUnique({
+    where: { code: dto.code },
+    include: {
+      discount: {
+        include: { targets: true },
+      },
+    },
+  });
+
+  if (!coupon) throw new NotFoundException('Coupon code not found.');
+  if (!coupon.active) throw new BadRequestException('This coupon is no longer active.');
+
+  const now = new Date();
+  if (coupon.startsAt && coupon.startsAt > now)
+    throw new BadRequestException('This coupon is not active yet.');
+  if (coupon.expiresAt && coupon.expiresAt < now)
+    throw new BadRequestException('This coupon has expired.');
+  if (coupon.maxUses !== null && coupon.usedCount >= coupon.maxUses)
+    throw new BadRequestException('This coupon has reached its usage limit.');
+
+  const discount = coupon.discount;
+  if (discount.minOrderAmount && dto.subtotal < Number(discount.minOrderAmount))
+    throw new BadRequestException(
+      `Minimum order amount of ₹${discount.minOrderAmount} required.`,
+    );
+
+  // ─── Target Check ─────────────────────────────────────────────
+  if (discount.targets.length > 0) {
+    if (!dto.cartItems || dto.cartItems.length === 0)
+      throw new BadRequestException('Cart items required to validate this coupon.');
+
+    const cartProductIds = dto.cartItems.map((i) => i.productId);
+    const cartCategoryIds = dto.cartItems.map((i) => i.categoryId).filter(Boolean);
+    const cartBrands = dto.cartItems.map((i) => i.brand).filter(Boolean);
+
+    const isTargetMet = discount.targets.some((t) => {
+      if (t.productId) return cartProductIds.includes(t.productId);
+      if (t.categoryId) return cartCategoryIds.includes(t.categoryId);
+      if (t.brand) return cartBrands.includes(t.brand);
+      return false;
+    });
+
+    if (!isTargetMet)
+      throw new BadRequestException(
+        'This coupon is not applicable on items in your cart.',
+      );
+  }
+
+  // ─── Calculate Discount ───────────────────────────────────────
+  let calculatedDiscount = 0;
+
+  if (discount.discountType === 'percentage') {
+    calculatedDiscount = (dto.subtotal * Number(discount.discountValue)) / 100;
+    if (discount.maxDiscountAmount) {
+      calculatedDiscount = Math.min(calculatedDiscount, Number(discount.maxDiscountAmount));
+    }
+  } else if (discount.discountType === 'fixed_amount') {
+    calculatedDiscount = Number(discount.discountValue);
+    if (discount.maxDiscountAmount) {
+      calculatedDiscount = Math.min(calculatedDiscount, Number(discount.maxDiscountAmount));
+    }
+  } else if (discount.discountType === 'free_shipping') {
+    calculatedDiscount = 0; // handled on frontend shipping fee
+  }
+
+  calculatedDiscount = Math.min(calculatedDiscount, dto.subtotal);
+
+  return {
+    valid: true,
+    code: coupon.code,
+    discount: {
+      type: discount.discountType,
+      value: Number(discount.discountValue),
+      calculatedDiscount: Math.round(calculatedDiscount * 100) / 100,
+    },
+    newTotal: Math.max(dto.subtotal - calculatedDiscount, 0),
+  };
+}
+
 }

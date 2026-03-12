@@ -142,7 +142,7 @@ async login(loginDto: LoginDto) {
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
         secret: this.configService.get('JWT_SECRET'),
-        expiresIn: '1h', // Access token is short-lived
+        expiresIn: '1000h', // Access token is short-lived
       }),
       this.jwtService.signAsync(payload, {
         secret: this.configService.get('JWT_REFRESH_SECRET') || 'refresh_secret_key',
@@ -207,7 +207,8 @@ async googleLogin(googleLoginDto: GoogleLoginDto) {
         user.id, 
         user.email, 
         user.type, // Customer role
-        'CUSTOMER'
+        'CUSTOMER',
+
       );
 
       // 3. Save the hashed Refresh Token to the database
@@ -219,7 +220,8 @@ async googleLogin(googleLoginDto: GoogleLoginDto) {
         user: { 
           name: user.name, 
           role: user.type, 
-          type: 'CUSTOMER' 
+          type: 'CUSTOMER',
+          picture: user.picture
         }
       };
 

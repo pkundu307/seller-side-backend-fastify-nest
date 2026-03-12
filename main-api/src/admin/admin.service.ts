@@ -11,6 +11,7 @@ import { UpdateBusinessDetailsDto } from './dto/update-business-details.dto';
 import { SettlementStatus } from '@prisma/client';
 import { AdminReplyTicketDto, AdminTicketQueryDto, AdminUpdateTicketStatusDto } from './dto/admin-ticket.dto';
 import { AdminOrderFilterDto, UpdateOrderAdminDto } from './dto/admin-order.dto';
+import { CreatePlatformFeeDto, UpdatePlatformFeeDto } from './dto/platform-fee.dto';
 interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
   brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
@@ -41,12 +42,47 @@ export class AdminService {
       totalProducts,
     };
   }
+async createPlatformFee(dto: CreatePlatformFeeDto) {
+
+  const exists = await this.prisma.platformFeeConfig.findUnique({
+    where: { feeType: dto.feeType },
+  });
+
+  if (exists) {
+    throw new BadRequestException(
+      `Fee configuration already exists for ${dto.feeType}`,
+    );
+  }
+
+  return this.prisma.platformFeeConfig.create({
+    data: {
+      feeType: dto.feeType,
+      name: dto.name,
+      description: dto.description,
+      calculationType: dto.calculationType,
+      rate: dto.rate,
+      amount: dto.amount,
+    },
+  });
+}
 
 
 
+async updatePlatformFee(id: string, dto: UpdatePlatformFeeDto) {
 
+  const fee = await this.prisma.platformFeeConfig.findUnique({
+    where: { id },
+  });
 
+  if (!fee) {
+    throw new NotFoundException("Platform fee config not found");
+  }
 
+  return this.prisma.platformFeeConfig.update({
+    where: { id },
+    data: dto,
+  });
+}
 
   async getFeaturedProducts() {
     // Fetch all featured products with related data
@@ -815,85 +851,235 @@ async getProductsForVerification(query: AdminProductFilterDto) {
   /**
    * 2. Get Order Details (Deep View)
    */
-  async getOrderDetails(orderId: string) {
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      include: {
-        customerUser: {
-          select: { id: true, name: true, email: true, phoneNumber: true, picture: true }
-        },
-        items: {
-          include: {
-            variant: {
-              include: {
-                product: {
-                  select: { id: true, title: true, images: true, businessId: true, business: { select: { name: true } } }
+
+
+async getOrderDetails(orderId: string) {
+  function calculateSettlement(orderAmount: number, commissionPercent: number) {
+  const commission = orderAmount * commissionPercent / 100
+  const tds = orderAmount * 0.01
+  const tcs = orderAmount * 0.01
+
+  const sellerPayout = orderAmount - commission - tds - tcs
+
+  const commissionGST = commission * 0.18
+  const platformNetRevenue = commission - commissionGST
+
+  return {
+    commission,
+    tds,
+    tcs,
+    sellerPayout,
+    commissionGST,
+    platformNetRevenue
+  }
+}
+  const order = await this.prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      customerUser: {
+        select: { id: true, name: true, email: true, phoneNumber: true }
+      },
+      items: {
+        include: {
+          variant: {
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  title: true,
+                  images: true,
+                  businessId: true,
+                  business: { select: { id: true, name: true } }
                 }
               }
             }
           }
-        },
-        settlements: {
-          include: {
-            business: { select: { id: true, name: true, bankDetails: true } }
-          }
-        },
-        returnRequests: true,
-      }
-    });
+        }
+      },
+      settlements: true,
+      returnRequests: true
+    }
+  })
 
-    if (!order) throw new NotFoundException('Order not found');
-    return order;
+  if (!order) throw new NotFoundException('Order not found')
+
+  const orderAmount = Number(order.totalAmount)
+
+  const commissionPercent = 0 // later fetch from PlatformFeeConfig
+
+  const settlement = calculateSettlement(orderAmount, commissionPercent)
+
+  return {
+    id: order.id,
+    orderNumber: order.orderNumber,
+    status: order.status,
+    paymentMethod: order.paymentMethod,
+    paymentStatus: order.paymentStatus,
+    createdAt: order.createdAt,
+
+    orderAmount,
+
+    settlement,
+
+    customer: order.customerUser,
+    shippingAddress: order.selectedAddress,
+
+    items: order.items,
+
+    settlements: order.settlements,
+
+    returnRequests: order.returnRequests
   }
+}
 
   /**
    * 3. Update Order (Status or Settlement)
    */
 async updateOrderAdmin(orderId: string, dto: UpdateOrderAdminDto) {
-    const order = await this.prisma.order.findUnique({ 
-        where: { id: orderId },
-        include: { settlements: true }
-    });
-    
-    if (!order) throw new NotFoundException('Order not found');
+  function calculateSettlement(orderAmount: number, commissionPercent: number) {
+  const commission = orderAmount * commissionPercent / 100
+  const tds = orderAmount * 0.01
+  const tcs = orderAmount * 0.01
 
-    return this.prisma.$transaction(async (tx) => {
-      let updatedOrder = order;
+  const sellerPayout = orderAmount - commission - tds - tcs
 
-      // A. Update Main Order Status (if provided)
-      if (dto.status || dto.trackingNumber) {
-        updatedOrder = await tx.order.update({
-          where: { id: orderId },
-          data: {
-            status: dto.status,
-            trackingNumber: dto.trackingNumber,
-            ...(dto.status === 'delivered' && { deliveredAt: new Date() }),
-            ...(dto.status === 'shipped' && { shippedAt: new Date() }),
-          },
-          // ✅ FIX: Include settlements so the return type matches 'updatedOrder'
-          include: { settlements: true } 
-        });
-      }
+  const commissionGST = commission * 0.18
+  const platformNetRevenue = commission - commissionGST
 
-      // B. Update Seller Settlement Status (Payout)
-      if (dto.settlementStatus) {
-        await tx.sellerSettlement.updateMany({
-          where: { orderId: orderId },
-          data: {
-            status: dto.settlementStatus,
-            referenceId: dto.payoutReferenceId, 
-            payoutDate: dto.settlementStatus === 'PAID' ? new Date() : undefined
-          }
-        });
-
-        // Optional: Refetch to ensure the return value shows the new settlement status
-        updatedOrder = await tx.order.findUnique({
-          where: { id: orderId },
-          include: { settlements: true }
-        }) as any; 
-      }
-
-      return updatedOrder;
-    });
+  return {
+    commission,
+    tds,
+    tcs,
+    sellerPayout,
+    commissionGST,
+    platformNetRevenue
   }
+}
+  const order = await this.prisma.order.findUnique({
+    where: { id: orderId }
+  })
+
+  if (!order) throw new NotFoundException('Order not found')
+
+  return this.prisma.$transaction(async (tx) => {
+
+    // -------------------------
+    // A. Update Order Status
+    // -------------------------
+
+    if (dto.status || dto.trackingNumber !== undefined) {
+
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          ...(dto.status && { status: dto.status }),
+          ...(dto.trackingNumber !== undefined && { trackingNumber: dto.trackingNumber }),
+          ...(dto.status === 'delivered' && { deliveredAt: new Date() }),
+          ...(dto.status === 'shipped' && { shippedAt: new Date() }),
+          ...(dto.status === 'cancelled' && { cancelledAt: new Date() }),
+        }
+      })
+    }
+
+    // -------------------------
+    // B. Settlement
+    // -------------------------
+
+    if (dto.settlementStatus) {
+
+      const firstItem = await tx.orderItem.findFirst({
+        where: { orderId },
+        include: {
+          variant: {
+            include: { product: true }
+          }
+        }
+      })
+
+      if (!firstItem?.variant?.product?.businessId) return
+
+      const businessId = firstItem.variant.product.businessId
+
+      const orderAmount = Number(order.totalAmount)
+
+      const commissionPercent = 5
+
+      const settlement = calculateSettlement(orderAmount, commissionPercent)
+
+      await tx.sellerSettlement.upsert({
+
+        where: {
+          businessId_orderId: {
+            businessId,
+            orderId
+          }
+        },
+
+        update: {
+          status: dto.settlementStatus,
+          referenceId: dto.payoutReferenceId,
+          ...(dto.settlementStatus === 'PAID' && { payoutDate: new Date() })
+        },
+
+        create: {
+          businessId,
+          orderId,
+
+          grossAmount: orderAmount,
+
+          commission: settlement.commission,
+
+          tcsAmount: settlement.tcs,
+
+          netPayable: settlement.sellerPayout,
+
+          status: dto.settlementStatus,
+
+          referenceId: dto.payoutReferenceId,
+
+          ...(dto.settlementStatus === 'PAID' && { payoutDate: new Date() })
+        }
+
+      })
+    }
+
+    // -------------------------
+    // C. Return Updated Order
+    // -------------------------
+
+    return tx.order.findUnique({
+      where: { id: orderId },
+      include: {
+        settlements: true,
+        items: {
+          include: {
+            variant: {
+              include: {
+                product: {
+                  select: {
+                    id: true,
+                    title: true,
+                    images: true,
+                    businessId: true,
+                    business: { select: { name: true } }
+                  }
+                }
+              }
+            }
+          }
+        },
+        customerUser: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phoneNumber: true
+          }
+        },
+        returnRequests: true
+      }
+    })
+  })
+}
+
 }

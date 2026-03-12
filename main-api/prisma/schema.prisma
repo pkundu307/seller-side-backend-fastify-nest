@@ -7,6 +7,73 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model PlatformFeeConfig {
+  id String @id @default(uuid())
+
+  feeType PlatformFeeType
+
+  name        String
+  description String?
+
+  // Charge structure
+  calculationType FeeCalculationType
+  rate            Decimal? // % rate if percentage
+  amount          Decimal? // fixed charge
+
+  currency String @default("INR")
+
+  // Scope
+  appliesToSeller   Boolean @default(true)
+  appliesToCustomer Boolean @default(false)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([feeType])
+}
+
+enum PlatformFeeType {
+  PLATFORM_COMMISSION
+  SHIPPING_FEE
+  PAYMENT_GATEWAY_FEE
+  TDS
+  TCS
+  PACKAGING_FEE
+}
+
+enum FeeCalculationType {
+  PERCENTAGE
+  FIXED
+}
+
+model PlatformCharge {
+  id String @id @default(uuid())
+
+  orderId    String
+  businessId String
+
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  chargeType  PlatformChargeType
+  description String?
+
+  rate   Decimal?
+  amount Decimal
+
+  currency String @default("INR")
+
+  isDeductedFromSeller Boolean @default(true)
+  isRefundable         Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+  @@index([businessId])
+}
+
 model CustomerUser {
   id                String                 @id @default(uuid())
   email             String                 @unique
@@ -22,7 +89,7 @@ model CustomerUser {
   isEmailVerified   Boolean                @default(false)
   isPhoneVerified   Boolean                @default(false)
   lastLoginAt       DateTime?
-    couponUsages    CouponUsage[]
+  couponUsages      CouponUsage[]
   phoneNumber       String?                @unique
   preferredLanguage String?                @default("en-US")
   deletedAt         DateTime?
@@ -156,33 +223,33 @@ model Address {
 }
 
 model Business {
-  id                    String              @id @default(uuid())
-  name                  String
-  gstNumber             String              @unique
-  address               String
-  city                  String
-  state                 String
-  country               String
-  postalCode            String
-  phone                 String
-  ownerId               String
-  email                 String?
-  invoicePrefix         String              @default("INV")
-  purchaseInvoicePrefix String              @default("PO")
-  invoiceStartNumber    Int                 @default(1)
-  purchaseStartNumber   Int                 @default(1)
-  fiscalYearStart       String              @default("April")
-  invoiceNotes          String?
-  invoiceTerms          String?
-  dateFormat            String              @default("DD/MM/YYYY")
-  language              String              @default("en")
-  itemBatches           ItemBatching[]
-  serialisations        ItemSerialisation[]
-  campaigns             Campaign[]
-  gstRegistrationType   String?  @db.VarChar(32)
-  isCompositionDealer   Boolean  @default(false)
- stateCode           String?   @db.VarChar(4)
-  gstState            GstState? @relation(fields: [stateCode], references: [stateCode])
+  id                              String                      @id @default(uuid())
+  name                            String
+  gstNumber                       String                      @unique
+  address                         String
+  city                            String
+  state                           String
+  country                         String
+  postalCode                      String
+  phone                           String
+  ownerId                         String
+  email                           String?
+  invoicePrefix                   String                      @default("INV")
+  purchaseInvoicePrefix           String                      @default("PO")
+  invoiceStartNumber              Int                         @default(1)
+  purchaseStartNumber             Int                         @default(1)
+  fiscalYearStart                 String                      @default("April")
+  invoiceNotes                    String?
+  invoiceTerms                    String?
+  dateFormat                      String                      @default("DD/MM/YYYY")
+  language                        String                      @default("en")
+  itemBatches                     ItemBatching[]
+  serialisations                  ItemSerialisation[]
+  campaigns                       Campaign[]
+  gstRegistrationType             String?                     @db.VarChar(32)
+  isCompositionDealer             Boolean                     @default(false)
+  stateCode                       String?                     @db.VarChar(4)
+  gstState                        GstState?                   @relation(fields: [stateCode], references: [stateCode])
   isVerified                      Boolean                     @default(false)
   createdAt                       DateTime                    @default(now())
   updatedAt                       DateTime                    @updatedAt
@@ -255,68 +322,73 @@ model Business {
   activities                      ActivityLog[]               @relation("BusinessActivities")
   parties                         Party[]
   partyActivities                 PartyActivity[]
-    invoiceSeries   InvoiceSeries[]
-  uqcMappings     UqcMapping[]
+  invoiceSeries                   InvoiceSeries[]
+  uqcMappings                     UqcMapping[]
+  platformCharges                 PlatformCharge[]
 }
-model InvoiceSeries {
-  id              String   @id @default(uuid())
-  businessId      String
-  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  documentType    String   @db.VarChar(64)
+model InvoiceSeries {
+  id         String   @id @default(uuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  documentType String @db.VarChar(64)
   // TAX_INVOICE | CREDIT_NOTE | DEBIT_NOTE
   // REVISED_INVOICE | DELIVERY_CHALLAN | RECEIPT_VOUCHER
 
-  prefix          String   @db.VarChar(32)
+  prefix String @db.VarChar(32)
   // e.g. "INV", "CN", "DN"
 
-  fromNo          Int
-  toNo            Int
-  totalIssued     Int      @default(0)
-  totalCancelled  Int      @default(0)
+  fromNo         Int
+  toNo           Int
+  totalIssued    Int @default(0)
+  totalCancelled Int @default(0)
 
-  periodMonth     Int      // 1–12
-  periodYear      Int      // e.g. 2025
+  periodMonth Int // 1–12
+  periodYear  Int // e.g. 2025
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([businessId])
   @@index([periodMonth, periodYear])
   @@map("invoice_series")
 }
-model UqcMapping {
-  id          String   @id @default(uuid())
-  businessId  String
-  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
-  customUnit  String   @db.VarChar(64)
+model UqcMapping {
+  id         String   @id @default(uuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  customUnit String @db.VarChar(64)
   // What the seller types: "piece", "pcs", "pc", "nos"
 
-  gstUqc      String   @db.VarChar(16)
+  gstUqc String @db.VarChar(16)
   // Standard GST code: NOS, KGS, MTR, LTR, SQM, TON, NA
 
   @@unique([businessId, customUnit])
   @@index([businessId])
   @@map("uqc_mapping")
 }
+
 model GstState {
-  id        Int      @id @default(autoincrement())
-  stateCode String   @unique @db.VarChar(4)
+  id        Int    @id @default(autoincrement())
+  stateCode String @unique @db.VarChar(4)
   // "01", "02", ... "37"
 
-  stateName String   @unique @db.VarChar(128)
+  stateName String @unique @db.VarChar(128)
   // "Jammu and Kashmir", "Kerala" etc.
 
   stateShortName String @db.VarChar(8)
   // "JK", "KL", "MH", "TN" etc.
 
-  isUT      Boolean  @default(false)
+  isUT        Boolean      @default(false)
   // true for Union Territories like Ladakh, DD, DNH
-sales          Sale[]
-  creditNotes    CreditNote[]
-  businesses     Business[]
-  parties        Party[]
+  sales       Sale[]
+  creditNotes CreditNote[]
+  businesses  Business[]
+  parties     Party[]
+
   @@map("gst_state")
 }
 
@@ -566,62 +638,64 @@ model Review {
 }
 
 model Order {
-  id                    String             @id @default(uuid())
+  id                    String        @id @default(uuid())
   totalAmount           Decimal
   customerUserId        String
   paymentMethod         PaymentMethod
-  paymentStatus         PaymentStatus      @default(pending)
-  status                OrderStatus        @default(pending)
+  paymentStatus         PaymentStatus @default(pending)
+  status                OrderStatus   @default(pending)
   selectedAddress       Json
-  discount              Decimal            @default(0)
-  taxAmount             Decimal            @default(0)
-  shippingFee           Decimal            @default(0)
+  discount              Decimal       @default(0)
+  taxAmount             Decimal       @default(0)
+  shippingFee           Decimal       @default(0)
   trackingNumber        String?
   estimatedDeliveryDate DateTime?
   cancellationReason    String?
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
   cancelledAt           DateTime?
   confirmedAt           DateTime?
-  currency              String             @default("INR")
+  currency              String        @default("INR")
   deliveredAt           DateTime?
   ipAddress             String?
-  isRefunded            Boolean            @default(false)
-  orderNumber           String             @unique
+  isRefunded            Boolean       @default(false)
+  orderNumber           String        @unique
   refundAmount          Decimal?
   shippedAt             DateTime?
-    couponId        String?
-  couponCode      String?   @db.VarChar(128)
-  couponDiscount  Decimal?  @db.Decimal(10, 2)
+  couponId              String?
+  couponCode            String?       @db.VarChar(128)
+  couponDiscount        Decimal?      @db.Decimal(10, 2)
 
-  coupon          Coupon?   @relation(fields: [couponId], references: [id], onDelete: SetNull)
-  customerUser          CustomerUser       @relation(fields: [customerUserId], references: [id])
-  items                 OrderItem[]
-  returnRequests        ReturnRequest[]
-  settlements           SellerSettlement[]
-  supportTickets        SupportTicket[]
+  coupon          Coupon?            @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  customerUser    CustomerUser       @relation(fields: [customerUserId], references: [id])
+  items           OrderItem[]
+  returnRequests  ReturnRequest[]
+  platformCharges PlatformCharge[]
+  settlements     SellerSettlement[]
+  supportTickets  SupportTicket[]
 }
+
 model CouponUsage {
-  id               String       @id @default(uuid())
+  id String @id @default(uuid())
 
-  couponId         String
-  coupon           Coupon       @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  couponId String
+  coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
 
-  customerUserId   String
-  customerUser     CustomerUser @relation(fields: [customerUserId], references: [id], onDelete: Cascade)
+  customerUserId String
+  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id], onDelete: Cascade)
 
-  orderId          String?      @unique
+  orderId String? @unique
   // unique = one usage record per order
 
-  discountApplied  Decimal      @db.Decimal(10, 2)
-  usedAt           DateTime     @default(now())
-  isReversed       Boolean      @default(false)
-  reversedAt       DateTime?
+  discountApplied Decimal   @db.Decimal(10, 2)
+  usedAt          DateTime  @default(now())
+  isReversed      Boolean   @default(false)
+  reversedAt      DateTime?
+  // composite index for perUserLimit check query
 
   @@index([couponId])
   @@index([customerUserId])
   @@index([couponId, customerUserId])
-  // composite index for perUserLimit check query
 }
 
 model OrderItem {
@@ -680,7 +754,7 @@ model Discount {
 
 model DiscountTarget {
   id         String     @id @default(uuid())
-    brand       String?   @db.VarChar(256)
+  brand      String?    @db.VarChar(256)
   discountId String     @map("discount_id")
   targetType TargetType @map("target_type")
   productId  String?    @map("product_id")
@@ -689,24 +763,24 @@ model DiscountTarget {
 }
 
 model Coupon {
-  id           String    @id @default(uuid())
-  code         String    @unique
-  active       Boolean   @default(true)
-  discountId   String    @map("discount_id")
-  maxUses      Int?      @map("max_uses")
-  usedCount    Int       @default(0) @map("used_count")
-  perUserLimit Int?      @map("per_user_limit")
-   firstOrderOnly  Boolean   @default(false)
-  maxOrderAmount  Decimal?  @db.Decimal(10, 2)
+  id              String        @id @default(uuid())
+  code            String        @unique
+  active          Boolean       @default(true)
+  discountId      String        @map("discount_id")
+  maxUses         Int?          @map("max_uses")
+  usedCount       Int           @default(0) @map("used_count")
+  perUserLimit    Int?          @map("per_user_limit")
+  firstOrderOnly  Boolean       @default(false)
+  maxOrderAmount  Decimal?      @db.Decimal(10, 2)
   minItemQuantity Int?
-  channel         String?   @db.VarChar(64)
-    usages          CouponUsage[]
-      orders          Order[]  
-  startsAt     DateTime? @map("starts_at")
-  expiresAt    DateTime? @map("expires_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-  discount     Discount  @relation(fields: [discountId], references: [id])
+  channel         String?       @db.VarChar(64)
+  usages          CouponUsage[]
+  orders          Order[]
+  startsAt        DateTime?     @map("starts_at")
+  expiresAt       DateTime?     @map("expires_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  discount        Discount      @relation(fields: [discountId], references: [id])
 }
 
 model PushSubscription {
@@ -788,17 +862,17 @@ model Sale {
   panNo                     String                 @db.VarChar(128)
   isDiscountAfterTaxEnabled Boolean
   discountPercent           Decimal
-   placeOfSupplyCode   String?   @db.VarChar(4)
-  gstState            GstState? @relation(fields: [placeOfSupplyCode], references: [stateCode])
+  placeOfSupplyCode         String?                @db.VarChar(4)
+  gstState                  GstState?              @relation(fields: [placeOfSupplyCode], references: [stateCode])
   discountAmount            Decimal
   totalTaxableAmount        Decimal
   totalTaxAmount            Decimal
-    isReverseCharge     Boolean   @default(false)
-  ecommerceGstin      String?   @db.VarChar(20)
- portCode            String?   @db.VarChar(10)
-  shippingBillNo      String?   @db.VarChar(64)
-  shippingBillDate    DateTime?
-  supplyType          String    @default("REGULAR") @db.VarChar(64)
+  isReverseCharge           Boolean                @default(false)
+  ecommerceGstin            String?                @db.VarChar(20)
+  portCode                  String?                @db.VarChar(10)
+  shippingBillNo            String?                @db.VarChar(64)
+  shippingBillDate          DateTime?
+  supplyType                String                 @default("REGULAR") @db.VarChar(64)
   isAutoRoundoffEnabled     Boolean
   roundoffType              String                 @db.VarChar(64)
   roundoffAmount            Decimal
@@ -849,10 +923,10 @@ model SaleItem {
   amount                 Decimal
   isMrpEnabled           Boolean
   isWholesaleEnabled     Boolean
-    uqc         String  @default("NOS") @db.VarChar(16)
- isNilRated  Boolean @default(false)
-  isExempt    Boolean @default(false)
-  isNonGst    Boolean @default(false)
+  uqc                    String   @default("NOS") @db.VarChar(16)
+  isNilRated             Boolean  @default(false)
+  isExempt               Boolean  @default(false)
+  isNonGst               Boolean  @default(false)
   isSerialisationEnabled Boolean
   isBatchingEnabled      Boolean
   sellingPrice           Decimal
@@ -1389,6 +1463,7 @@ model SellerSettlement {
   id          String           @id @default(uuid())
   businessId  String
   orderId     String
+  tdsAmount   Decimal          @default(0)
   grossAmount Decimal
   commission  Decimal
   tcsAmount   Decimal
@@ -1614,24 +1689,24 @@ model ChallanItem {
 }
 
 model CreditNote {
-  id         String   @id @default(uuid())
-  businessId String
-  saleId     String
-  noteNo     String
-  date       DateTime
-  reason     String
-  amount     Decimal
-  taxAmount  Decimal
-   placeOfSupplyCode   String?   @db.VarChar(4)
+  id                  String    @id @default(uuid())
+  businessId          String
+  saleId              String
+  noteNo              String
+  date                DateTime
+  reason              String
+  amount              Decimal
+  taxAmount           Decimal
+  placeOfSupplyCode   String?   @db.VarChar(4)
   gstState            GstState? @relation(fields: [placeOfSupplyCode], references: [stateCode])
-    noteType            String    @default("C") @db.VarChar(4)
+  noteType            String    @default("C") @db.VarChar(4)
   reasonCode          String?   @db.VarChar(4)
   originalInvoiceDate DateTime?
-  status     String   @default("ACTIVE")
-    taxableAmount  Decimal   @default(0)  // ADD THIS FIELD
-  createdAt  DateTime @default(now())
-  business   Business @relation(fields: [businessId], references: [id])
-  sale       Sale     @relation(fields: [saleId], references: [id])
+  status              String    @default("ACTIVE")
+  taxableAmount       Decimal   @default(0) // ADD THIS FIELD
+  createdAt           DateTime  @default(now())
+  business            Business  @relation(fields: [businessId], references: [id])
+  sale                Sale      @relation(fields: [saleId], references: [id])
 }
 
 model DebitNote {
@@ -1802,21 +1877,21 @@ model Party {
   businessId String
   business   Business @relation(fields: [businessId], references: [id])
 
-  partyType     String  @db.VarChar(128) // SUPPLIER / CUSTOMER / BOTH
-  partyCategory String? @db.VarChar(128)
-  partyName     String  @db.VarChar(256)
-stateCode           String?   @db.VarChar(4)
-  gstState            GstState? @relation(fields: [stateCode], references: [stateCode])
-  isBusiness   Boolean @default(true)
-  businessName String? @db.VarChar(512)
-  email        String? @db.VarChar(128)
-  phoneNo      String? @db.VarChar(36)
-  phoneNoAlt   String? @db.VarChar(36)
+  partyType     String    @db.VarChar(128) // SUPPLIER / CUSTOMER / BOTH
+  partyCategory String?   @db.VarChar(128)
+  partyName     String    @db.VarChar(256)
+  stateCode     String?   @db.VarChar(4)
+  gstState      GstState? @relation(fields: [stateCode], references: [stateCode])
+  isBusiness    Boolean   @default(true)
+  businessName  String?   @db.VarChar(512)
+  email         String?   @db.VarChar(128)
+  phoneNo       String?   @db.VarChar(36)
+  phoneNoAlt    String?   @db.VarChar(36)
 
-  taxId         String? @db.VarChar(128) // GSTIN
-  panNo         String? @db.VarChar(128)
-  tanNo         String? @db.VarChar(128)
-  placeOfSupply String? @db.VarChar(128)
+  taxId                 String? @db.VarChar(128) // GSTIN
+  panNo                 String? @db.VarChar(128)
+  tanNo                 String? @db.VarChar(128)
+  placeOfSupply         String? @db.VarChar(128)
   billingAddress        Json? // structured address
   shippingAddress       Json?
   isBillingShippingSame Boolean @default(true)
@@ -2541,9 +2616,8 @@ enum TargetType {
 enum DiscountType {
   percentage
   fixed_amount
-  free_shipping   // ADD THIS
+  free_shipping // ADD THIS
 }
-
 
 enum AuthSource {
   self
@@ -2711,4 +2785,16 @@ enum ShareLinkStatus {
   ACTIVE
   EXPIRED
   REVOKED
+}
+
+enum PlatformChargeType {
+  COMMISSION
+  SHIPPING_FEE
+  PAYMENT_GATEWAY_FEE
+  TDS
+  TCS
+  PACKAGING_FEE
+  ADVERTISING_FEE
+  PENALTY
+  ADJUSTMENT
 }

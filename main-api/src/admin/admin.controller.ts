@@ -14,6 +14,7 @@ import { AdminProductFilterDto, UpdateProductPublishStatusDto } from './dto/prod
 import { AdminReplyTicketDto, AdminTicketQueryDto, AdminUpdateTicketStatusDto } from './dto/admin-ticket.dto';
 import { UserRequest } from 'src/auth/auth.types';
 import { AdminOrderFilterDto, UpdateOrderAdminDto } from './dto/admin-order.dto';
+import { CreatePlatformFeeDto, UpdatePlatformFeeDto } from './dto/platform-fee.dto';
 
 interface ParsedHomepageFiles {
   itemImages: Map<number, { buffer: Buffer; filename: string; mimetype: string }>;
@@ -45,7 +46,27 @@ export class AdminController {
     return this.adminService.getDashboardStats();
   }
   
+@Post('platform-fee')
+@Roles('admin')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@ApiBearerAuth()
+@ApiOperation({ summary: 'Create platform fee configuration' })
+createPlatformFee(@Body() dto: CreatePlatformFeeDto) {
+  return this.adminService.createPlatformFee(dto);
+}
 
+
+@Patch('platform-fee/:id')
+@Roles('admin')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@ApiBearerAuth()
+@ApiOperation({ summary: 'Update platform fee configuration' })
+updatePlatformFee(
+  @Param('id', ParseUUIDPipe) id: string,
+  @Body() dto: UpdatePlatformFeeDto,
+) {
+  return this.adminService.updatePlatformFee(id, dto);
+}
 
 
    @Get('featured-products')
