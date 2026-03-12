@@ -1,19 +1,19 @@
-# --- Build Stage ---
+# Build Stage
 FROM golang:1.24-alpine AS builder
 WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o backup-service .
+RUN go build -o backup-service main.go
 
-# --- Runtime Stage ---
-# We use Alpine because we need to install 'postgresql-client'
+# Final Stage
 FROM alpine:latest
+WORKDIR /app
 
-# Install pg_dump (postgresql-client) and certificates
-RUN apk add --no-cache postgresql-client ca-certificates
+# ✅ CRITICAL: Install postgresql-client (and gzip/ca-certificates)
+RUN apk add --no-cache postgresql17-client gzip ca-certificates
 
-WORKDIR /root/
 COPY --from=builder /app/backup-service .
+
+# Create the tmp directory for backups
+RUN mkdir -p /tmp
 
 CMD ["./backup-service"]

@@ -43,13 +43,11 @@ async getBusinessOrders(businessId: string, query: SellerPaginationDto) {
 
   const where: Prisma.OrderWhereInput = {
     items: {
-      some: {
-        variant: { product: { businessId } },
-      },
+      some: { variant: { product: { businessId } } },
     },
-    status: status ? { equals: status } : undefined,
+    status:        status        ? { equals: status }        : undefined,
     paymentMethod: paymentMethod ? { equals: paymentMethod } : undefined,
-    orderNumber: search ? { contains: search, mode: 'insensitive' } : undefined,
+    orderNumber:   search        ? { contains: search, mode: 'insensitive' } : undefined,
   };
 
   const orders = await this.prisma.order.findMany({
@@ -66,6 +64,16 @@ async getBusinessOrders(businessId: string, query: SellerPaginationDto) {
       paymentMethod: true,
       customerUser: { select: { name: true } },
       _count: { select: { items: true } },
+      items: {
+        where: { variant: { product: { businessId } } },
+        select: {
+          variant: {
+            select: {
+              product: { select: { isCustomizable: true } },
+            },
+          },
+        },
+      },
     },
   });
 
@@ -77,19 +85,20 @@ async getBusinessOrders(businessId: string, query: SellerPaginationDto) {
     this.prisma.order.count({ where: { ...where, status: OrderStatus.pending } }),
   ]);
 
-  const mappedOrders = orders.map(order => ({
+  const mappedOrders = orders.map(({ items, ...order }) => ({
     ...order,
     totalAmount: parseFloat(order.totalAmount.toString()) - PLATFORM_FEE - SHIPPING_FEE,
+    isCustomizable: items.some(item => item.variant?.product?.isCustomizable === true),
   }));
 
   return {
     orders: mappedOrders,
     stats: {
-      totalOrders: total,
+      totalOrders:          total,
       cashOnDeliveryOrders: cod,
-      onlineOrders: online,
-      deliveredOrders: delivered,
-      pendingOrders: pending,
+      onlineOrders:         online,
+      deliveredOrders:      delivered,
+      pendingOrders:        pending,
     },
     pagination: {
       total,
@@ -100,15 +109,13 @@ async getBusinessOrders(businessId: string, query: SellerPaginationDto) {
   };
 }
 
-async getBusinessOrderById(businessId: string, orderId: string) {
 
+async getBusinessOrderById(businessId: string, orderId: string) {
   const order = await this.prisma.order.findUnique({
     where: { id: orderId },
     include: {
       items: {
-        where: {
-          variant: { product: { businessId } }
-        },
+        where: { variant: { product: { businessId } } },
         include: {
           variant: {
             select: {
@@ -116,78 +123,82 @@ async getBusinessOrderById(businessId: string, orderId: string) {
               images: true,
               attributeValues: {
                 select: {
-                  attribute: { select: { name: true } },
-                  attributeOption: { select: { value: true } }
-                }
+                  attribute:       { select: { name: true } },
+                  attributeOption: { select: { value: true } },
+                },
               },
               product: {
                 select: {
-                  title: true
-                }
-              }
-            }
-          }
-        }
+                  title:          true,
+                  isCustomizable: true,
+                  // customizationConfig available here too if you need the field schema
+                },
+              },
+            },
+          },
+          // ✅ NO customizations relation — these are scalar fields on OrderItem itself:
+          // customizationDetails (Json?) and customizationImages (String[]) are auto-included
+        },
       },
       customerUser: {
-        select: { name: true }
-      }
-    }
-  })
+        select: { name: true },
+      },
+    },
+  });
 
   if (!order) {
-    throw new NotFoundException(`Order with ID "${orderId}" not found.`)
+    throw new NotFoundException(`Order with ID "${orderId}" not found.`);
   }
 
   if (order.items.length === 0) {
-    throw new ForbiddenException(`You do not have permission to view this order.`)
+    throw new ForbiddenException(`You do not have permission to view this order.`);
   }
 
-  // ---------------------------
-  // Seller Subtotal Calculation
-  // ---------------------------
-
+  // ── Financials ────────────────────────────────────────────────────
   const sellerSubtotal = order.items.reduce((sum, item) => {
-    return sum + Number(item.priceAtTimeOfOrder) * item.quantity
-  }, 0)
+    return sum + Number(item.priceAtTimeOfOrder) * item.quantity;
+  }, 0);
 
-  const commissionPercent = 0 // later fetch from PlatformFeeConfig
+  const commissionPercent  = 0; // fetch from PlatformFeeConfig later
+  const commission         = (sellerSubtotal * commissionPercent) / 100;
+  const tds                = sellerSubtotal * 0.01;
+  const tcs                = sellerSubtotal * 0.01;
+  const sellerPayout       = sellerSubtotal - commission - tds - tcs;
+  const commissionGST      = commission * 0.18;
+  const platformNetRevenue = commission - commissionGST;
 
-  const commission = sellerSubtotal * commissionPercent / 100
-  const tds = sellerSubtotal * 0.01
-  const tcs = sellerSubtotal * 0.01
-
-  const sellerPayout = sellerSubtotal - commission - tds - tcs
-
-  const commissionGST = commission * 0.18
-  const platformNetRevenue = commission - commissionGST
-
-  const { customerUser, ...restOfOrder } = order
+  const { customerUser, ...restOfOrder } = order;
 
   return {
-    id: restOfOrder.id,
-    orderNumber: restOfOrder.orderNumber,
-    status: restOfOrder.status,
+    id:            restOfOrder.id,
+    orderNumber:   restOfOrder.orderNumber,
+    status:        restOfOrder.status,
     paymentMethod: restOfOrder.paymentMethod,
     paymentStatus: restOfOrder.paymentStatus,
-    createdAt: restOfOrder.createdAt,
+    createdAt:     restOfOrder.createdAt,
 
     customer: {
-      name: customerUser.name,
-      shippingAddress: restOfOrder.selectedAddress
+      name:            customerUser.name,
+      shippingAddress: restOfOrder.selectedAddress,
     },
 
     items: restOfOrder.items.map(item => ({
       productTitle: item.variant?.product?.title,
-      sku: item.variant?.sku,
-      image: item.variant?.images?.[0] ?? null,
-      attributes: item.variant?.attributeValues?.map(v => ({
-        name: v.attribute.name,
-        value: v.attributeOption.value
+      sku:          item.variant?.sku,
+      image:        item.variant?.images?.[0] ?? null,
+      attributes:   item.variant?.attributeValues?.map(v => ({
+        name:  v.attribute.name,
+        value: v.attributeOption.value,
       })),
-      price: Number(item.priceAtTimeOfOrder),
+      price:    Number(item.priceAtTimeOfOrder),
       quantity: item.quantity,
-      subtotal: Number(item.priceAtTimeOfOrder) * item.quantity
+      subtotal: Number(item.priceAtTimeOfOrder) * item.quantity,
+      note:     item.note ?? null,
+
+      // ── Customization — scalar fields directly on OrderItem ──────
+      isCustomizable:      item.variant?.product?.isCustomizable ?? false,
+      customizationDetails: item.customizationDetails ?? null,  // Json?
+      customizationImages:  item.customizationImages ?? [],     // String[]
     })),
 
     financials: {
@@ -198,9 +209,9 @@ async getBusinessOrderById(businessId: string, orderId: string) {
       tcs,
       sellerPayout,
       commissionGST,
-      platformNetRevenue
-    }
-  }
+      platformNetRevenue,
+    },
+  };
 }
 
 async updateOrderStatus(businessId: string, orderId: string, dto: UpdateSellerOrderDto) {

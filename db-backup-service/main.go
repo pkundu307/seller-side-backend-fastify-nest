@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -55,18 +56,30 @@ func performBackup(dbURL, accountID, accessKey, secretKey, bucket string) error 
 	fileName := fmt.Sprintf("backup_%s.sql.gz", timestamp)
 	localPath := "/tmp/" + fileName
 
-	// Step A: Run pg_dump and pipe to Gzip
-	// We use 'sh -c' to handle the pipe cleanly
-	cmdStr := fmt.Sprintf("pg_dump '%s' | gzip > %s", dbURL, localPath)
+	// Step A: Run pg_dump
+	// We use the full DATABASE_URL directly.
+	// We add --no-owner and --clean to make the backup more portable
+	cmdStr := fmt.Sprintf("pg_dump --dbname='%s' --no-owner --clean | gzip > %s", dbURL, localPath)
 	cmd := exec.Command("sh", "-c", cmdStr)
 
-	// Capture stderr to debug pg_dump issues
-	cmd.Stderr = os.Stderr
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	log.Println("Dump & Compress: In Progress...")
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("pg_dump failed: %w", err)
+		return fmt.Errorf("pg_dump failed: %v | stderr: %s", err, stderr.String())
 	}
+
+	// ✅ CHECK: Verify the file is not empty
+	fileInfo, err := os.Stat(localPath)
+	if err != nil {
+		return err
+	}
+	if fileInfo.Size() < 100 { // A real backup will be much larger than 100 bytes
+		return fmt.Errorf("backup file is too small (%d bytes), likely failed", fileInfo.Size())
+	}
+
+	log.Printf("Backup file created: %s (%d bytes)", fileName, fileInfo.Size())
 
 	// Step B: Upload to R2
 	log.Println("Upload: Sending to Cloudflare R2...")
@@ -75,9 +88,8 @@ func performBackup(dbURL, accountID, accessKey, secretKey, bucket string) error 
 		return err
 	}
 	defer file.Close()
-	defer os.Remove(localPath) // Cleanup local file
+	defer os.Remove(localPath) // Cleanup
 
-	// Configure S3 Client for R2
 	r2Resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
 		return aws.Endpoint{
 			URL: fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID),
@@ -99,6 +111,8 @@ func performBackup(dbURL, accountID, accessKey, secretKey, bucket string) error 
 		Bucket: aws.String(bucket),
 		Key:    aws.String("db-backups/" + fileName),
 		Body:   file,
+		// Optional: Set ContentType to show correctly in R2 UI
+		ContentType: aws.String("application/gzip"),
 	})
 
 	return err

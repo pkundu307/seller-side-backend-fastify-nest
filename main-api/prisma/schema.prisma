@@ -225,7 +225,7 @@ model Address {
 model Business {
   id                              String                      @id @default(uuid())
   name                            String
-  gstNumber                       String                      @unique
+gstNumber String? @unique
   address                         String
   city                            String
   state                           String

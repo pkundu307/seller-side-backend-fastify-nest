@@ -31,111 +31,113 @@ export class BusinessService {
   // CREATE BUSINESS
   // ========================================================
 async createBusiness(dto: CreateBusinessDto, ownerId: string) {
-    // 1. Generate Slug
-    let slug = slugify(dto.name);
-    const existingSlug = await this.prisma.business.findUnique({ where: { slug } });
-    if (existingSlug) {
-      slug = `${slug}-${Math.floor(1000 + Math.random() * 9000)}`;
-    }
+  // 1. Generate Slug
+  let slug = slugify(dto.name);
+  const existingSlug = await this.prisma.business.findUnique({ where: { slug } });
+  if (existingSlug) {
+    slug = `${slug}-${Math.floor(1000 + Math.random() * 9000)}`;
+  }
 
-    // 2. Default Configs
-    const industryConfigs: Record<IndustryType, any> = {
-      [IndustryType.RETAIL_GENERAL]: { isBarcodeEnabled: true, isStockAlertEnabled: true },
-      [IndustryType.RETAIL_PHARMACY]: { isBatchingEnabled: true, expiryAlertDays: 90, requiresDoctor: true },
-      [IndustryType.RETAIL_FASHION]: { isVariantMatrixEnabled: true, hasFittingRooms: true },
-      [IndustryType.RESTAURANT_QSR]: { autoPrintKOT: true, hasTokenDisplay: true },
-      [IndustryType.RESTAURANT_DINEIN]: { hasTableManagement: true, serviceChargePct: 5, enableKOT: true },
-      [IndustryType.SERVICE_SALON]: { isAppointmentEnabled: true, staffCommissionEnabled: true },
-      [IndustryType.TOUR_AND_TRAVEL]: { isBookingEnabled: true, visaProcessingEnabled: true },
+  // 2. Default Configs
+  const industryConfigs: Record<IndustryType, any> = {
+    [IndustryType.RETAIL_GENERAL]:   { isBarcodeEnabled: true, isStockAlertEnabled: true },
+    [IndustryType.RETAIL_PHARMACY]:  { isBatchingEnabled: true, expiryAlertDays: 90, requiresDoctor: true },
+    [IndustryType.RETAIL_FASHION]:   { isVariantMatrixEnabled: true, hasFittingRooms: true },
+    [IndustryType.RESTAURANT_QSR]:   { autoPrintKOT: true, hasTokenDisplay: true },
+    [IndustryType.RESTAURANT_DINEIN]:{ hasTableManagement: true, serviceChargePct: 5, enableKOT: true },
+    [IndustryType.SERVICE_SALON]:    { isAppointmentEnabled: true, staffCommissionEnabled: true },
+    [IndustryType.TOUR_AND_TRAVEL]:  { isBookingEnabled: true, visaProcessingEnabled: true },
+  };
+
+  const defaultConfig = industryConfigs[dto.industryType] || {};
+
+  try {
+    // 3. Create Business
+    const business = await this.prisma.business.create({
+      data: {
+        name: dto.name,
+        // Pass undefined (not null) when absent so Prisma stores NULL
+        gstNumber: dto.gstNumber ?? null,
+        address: dto.address,
+        city: dto.city,
+        state: dto.state,
+        country: dto.country,
+        postalCode: dto.postalCode,
+        phone: dto.phone,
+        category: dto.category || 'General',
+        industryType: dto.industryType,
+        businessConfig: defaultConfig,
+        ownerId,
+        slug,
+        sellerAgreementAccepted: dto.sellerAgreementAccepted,
+        sellerAgreementVersion: dto.sellerAgreementVersion,
+        sellerAgreementAcceptedAt: new Date(),
+
+        bankAccounts: {
+          create: {
+            accountName: 'Cash Drawer',
+            accountType: AccountType.CASH,
+            isDefault: true,
+            isEnabled: true,
+            openingBalance: 0,
+            closingBalance: 0,
+          },
+        },
+        warehouses: {
+          create: {
+            name: 'Main Store',
+            isDefault: true,
+          },
+        },
+        agreementLogs: {
+          create: {
+            version: dto.sellerAgreementVersion,
+            acceptedAt: new Date(),
+          },
+        },
+      },
+      include: {
+        owner: {
+          select: { email: true, name: true },
+        },
+      },
+    });
+
+    // 4. Send Welcome Email via RabbitMQ
+    const notificationPayload = {
+      recipientId: ownerId,
+      recipientEmail: business.owner.email,
+      recipientType: 'SELLER',
+      notificationId: `WELCOME_${business.id}`,
+      title: 'Welcome to Jottosop Business!',
+      message: `Congratulations! Your business "${business.name}" has been successfully registered on Jottosop. You can now start adding products and managing sales.`,
+      type: 'SYSTEM',
+      metadata: {
+        businessId: business.id,
+        slug: business.slug,
+      },
     };
 
-    const defaultConfig = industryConfigs[dto.industryType] || {};
+    this.rmqClient.emit('send_notification', notificationPayload);
 
-    try {
-      // 3. Create Business (Atomic Transaction)
-      const business = await this.prisma.business.create({
-        data: {
-          name: dto.name,
-          gstNumber: dto.gstNumber,
-          address: dto.address,
-          city: dto.city,
-          state: dto.state,
-          country: dto.country,
-          postalCode: dto.postalCode,
-          phone: dto.phone,
-          category: dto.category || 'General',
-          industryType: dto.industryType,
-          businessConfig: defaultConfig,
-          ownerId,
-          slug,
-          sellerAgreementAccepted: dto.sellerAgreementAccepted,
-          sellerAgreementVersion: dto.sellerAgreementVersion,
-          sellerAgreementAcceptedAt: new Date(),
-          
-          bankAccounts: {
-            create: {
-              accountName: 'Cash Drawer',
-              accountType: AccountType.CASH,
-              isDefault: true,
-              isEnabled: true,
-              openingBalance: 0,
-              closingBalance: 0
-            }
-          },
-          warehouses: {
-            create: {
-              name: 'Main Store',
-              isDefault: true,
-            }
-          },
-          agreementLogs: {
-            create: {
-              version: dto.sellerAgreementVersion,
-              acceptedAt: new Date(),
-            }
-          }
-        },
-        // ✅ INCLUDE OWNER TO GET EMAIL
-        include: {
-          owner: {
-            select: { email: true, name: true }
-          }
+    return business;
+
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2002') {
+        const target = error.meta?.target as string[];
+        if (target?.includes('gstNumber')) {
+          throw new ConflictException('A business with this GST Number already exists.');
         }
-      });
-
-      // 4. ✅ SEND WELCOME EMAIL VIA RABBITMQ
-      // This matches the struct expected by your Go service
-      const notificationPayload = {
-        recipientId: ownerId,
-        recipientEmail: business.owner.email,
-        recipientType: 'SELLER',
-        notificationId: `WELCOME_${business.id}`,
-        title: 'Welcome to Jottosop Business!',
-        message: `Congratulations! Your business "${business.name}" has been successfully registered on Jottosop. You can now start adding products and managing sales.`,
-        type: 'SYSTEM',
-        metadata: {
-          businessId: business.id,
-          slug: business.slug
-        }
-      };
-
-      // Emit sends the message to the queue asynchronously
-      this.rmqClient.emit('send_notification', notificationPayload);
-
-      return business;
-
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError) {
-        if (error.code === 'P2002') {
-          const target = error.meta?.target as string[];
-          if (target?.includes('gstNumber')) {
-            throw new ConflictException('A business with this GST Number already exists.');
-          }
+        if (target?.includes('slug')) {
+          throw new ConflictException('A business with this name already exists.');
         }
       }
-      throw new InternalServerErrorException('Failed to create business profile.');
     }
+    throw new InternalServerErrorException('Failed to create business profile.');
   }
+}
+
 
   // ========================================================
   // READ OPERATIONS

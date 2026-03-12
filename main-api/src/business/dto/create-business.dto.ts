@@ -13,10 +13,11 @@ export class CreateBusinessDto {
   @IsEnum(IndustryType)
   industryType: IndustryType;
 
-  @ApiProperty({ example: '22AAAAA0000A1Z5' })
+  @ApiPropertyOptional({ example: '22AAAAA0000A1Z5' })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  gstNumber: string;
+  @IsNotEmpty()  // ensures if provided, it can't be an empty string
+  gstNumber?: string;
 
   @ApiProperty({ example: '123 Business Street' })
   @IsString()
@@ -53,19 +54,17 @@ export class CreateBusinessDto {
   @IsString()
   category?: string;
 
-  // --- NEW FIELDS FOR AGREEMENT ---
-
-  @ApiProperty({ 
-    example: true, 
-    description: 'User must accept terms to proceed' 
+  @ApiProperty({
+    example: true,
+    description: 'User must accept terms to proceed',
   })
   @IsBoolean()
   @Equals(true, { message: 'You must accept the Seller Services Agreement to continue.' })
   sellerAgreementAccepted: boolean;
 
-  @ApiProperty({ 
-    example: 'v1.0', 
-    description: 'The version of the agreement displayed to the user' 
+  @ApiProperty({
+    example: 'v1.0',
+    description: 'The version of the agreement displayed to the user',
   })
   @IsString()
   @IsNotEmpty()
