@@ -8,6 +8,7 @@ import { S3Service } from 'src/products/utils/s3Service';
 import { CreateReviewDto, UpdateReviewDto } from './dto/review.dto';
 import * as sharp from 'sharp';
 import { CreateTicketDto, ReplyTicketDto } from './dto/ticket.dto';
+import { STATE_CODE_MAP } from 'src/utils/state-codes';
 
 @Injectable()
 export class CustomerUserService {
@@ -43,78 +44,63 @@ export class CustomerUserService {
     });
   }
 
-  async createAddress(userId: string, addressData: CreateAddressDto): Promise<Address> {
-    return this.prisma.$transaction(async (tx) => {
-      // 1. If the new address is being set as default...
-      if (addressData.isDefault === true) {
-        // ...then set all OTHER addresses for this user to isDefault: false.
-        await tx.address.updateMany({
-          where: {
-            customerUserId: userId,
-            isDefault: true,
-          },
-          data: {
-            isDefault: false,
-          },
-        });
-      }
+async createAddress(userId: string, addressData: CreateAddressDto): Promise<Address> {
+  const resolvedStateCode = STATE_CODE_MAP[addressData.state] || undefined;
 
-      // 2. Now, create the new address with the correct default status.
-      const newAddress = await tx.address.create({
-        data: {
-          ...addressData,
-          customerUserId: userId,
-        },
+  return this.prisma.$transaction(async (tx) => {
+    // If this is the user's first address, force it to be default
+    const count = await tx.address.count({ where: { customerUserId: userId } });
+    const shouldBeDefault = count === 0 ? true : !!addressData.isDefault;
+
+    if (shouldBeDefault) {
+      await tx.address.updateMany({
+        where: { customerUserId: userId, isDefault: true },
+        data: { isDefault: false },
       });
+    }
 
-      return newAddress;
+    return await tx.address.create({
+      data: {
+        ...addressData,
+        stateCode: resolvedStateCode,
+        isDefault: shouldBeDefault,
+        customerUserId: userId,
+      },
     });
+  });
+}
+
+async updateAddress(userId: string, addressId: string, addressData: UpdateAddressDto): Promise<Address> {
+  const address = await this.prisma.address.findUnique({ where: { id: addressId } });
+  if (!address || address.customerUserId !== userId) {
+    throw new ForbiddenException(`Unauthorized access to address`);
   }
 
-  async updateAddress(
-    userId: string,
-    addressId: string,
-    addressData: UpdateAddressDto,
-  ): Promise<Address> {
-    // First, verify the address exists and belongs to the user.
-    const address = await this.prisma.address.findUnique({
+  let resolvedStateCode: string | undefined = undefined;
+  if (addressData.state) {
+    resolvedStateCode = STATE_CODE_MAP[addressData.state] || undefined;
+  }
+
+  return this.prisma.$transaction(async (tx) => {
+    if (addressData.isDefault === true) {
+      await tx.address.updateMany({
+        where: { customerUserId: userId, isDefault: true, NOT: { id: addressId } },
+        data: { isDefault: false },
+      });
+    }
+
+    return await tx.address.update({
       where: { id: addressId },
+      data: {
+        ...addressData,
+        stateCode: resolvedStateCode,
+      },
     });
+  });
+}
 
-    if (!address) {
-      throw new NotFoundException(`Address with ID "${addressId}" not found.`);
-    }
-    if (address.customerUserId !== userId) {
-      throw new ForbiddenException(`You do not have permission to update this address.`);
-    }
 
-    // Now perform the update within a transaction
-    return this.prisma.$transaction(async (tx) => {
-      // 1. If the user is trying to set this address as the new default...
-      if (addressData.isDefault === true) {
-        // ...then unset any other address that is currently the default for this user.
-        await tx.address.updateMany({
-          where: {
-            customerUserId: userId,
-            isDefault: true,
-            // Exclude the current address from this update in case it's already the default
-            NOT: { id: addressId }, 
-          },
-          data: {
-            isDefault: false,
-          },
-        });
-      }
 
-      // 2. Now, update the target address with the new data.
-      const updatedAddress = await tx.address.update({
-        where: { id: addressId },
-        data: addressData,
-      });
-
-      return updatedAddress;
-    });
-  }
 
   async deleteAddress(userId: string, addressId: string): Promise<{ success: boolean; message: string }> {
     try {

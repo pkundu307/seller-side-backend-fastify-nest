@@ -1,37 +1,37 @@
 // src/payment/dto/create-payment-initiation.dto.ts
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { 
-  IsArray, 
-  IsInt, 
-  IsNotEmpty, 
-  IsOptional, 
-  IsString, 
-  Min, 
+import {
+  IsArray,
+  IsInt,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
   ValidateNested,
-  IsObject
 } from 'class-validator';
 
 class OrderItemDto {
-  @ApiProperty({ description: 'The UUID of the product variant being purchased' })
+  @ApiProperty({ description: 'UUID of the product variant' })
   @IsString()
   @IsNotEmpty()
   variantId: string;
 
-  @ApiProperty({ description: 'The quantity of this variant', minimum: 1 })
+  @ApiProperty({ description: 'Quantity (min 1)', minimum: 1 })
   @IsInt()
   @Min(1)
   quantity: number;
 
-  @ApiPropertyOptional({ description: 'Any customization details for this item (e.g., engraving text, special instructions)' })
+  @ApiPropertyOptional({ description: 'Customization details for this item' })
   @IsOptional()
   @IsObject()
-  customizationDetails?: Record<string, any>;
+  customizationDetails?: Record<string, unknown>;
 
-  @ApiPropertyOptional({ 
-    description: 'Array of customization image URLs',
+  @ApiPropertyOptional({
+    description: 'Customization image URLs',
     type: [String],
-    example: ['https://example.com/image1.jpg', 'https://example.com/image2.jpg']
   })
   @IsOptional()
   @IsArray()
@@ -40,18 +40,18 @@ class OrderItemDto {
 }
 
 export class CreatePaymentInitiationDto {
-  @ApiProperty({ 
-    type: [OrderItemDto], 
-    description: 'An array of items to be included in the order' 
-  })
+  @ApiProperty({ type: [OrderItemDto], description: 'Items to purchase' })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => OrderItemDto)
   items: OrderItemDto[];
 
-  @ApiPropertyOptional({ 
-    description: 'An optional coupon code to apply to the order' 
-  })
+  @ApiProperty({ description: 'The address ID selected by the customer for delivery' })
+  @IsUUID()
+  @IsNotEmpty()
+  selectedAddressId: string;          // ← ADDED: required for Xpressbees shipping calc
+
+  @ApiPropertyOptional({ description: 'Optional coupon code' })
   @IsOptional()
   @IsString()
   couponCode?: string;

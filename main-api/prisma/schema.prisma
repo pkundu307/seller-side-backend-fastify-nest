@@ -208,6 +208,7 @@ model Address {
   city                   String
   state                  String
   postalCode             String
+  stateCode              String?      @db.VarChar(4)
   country                String
   customerUserId         String
   alternativePhoneNumber String?
@@ -701,11 +702,14 @@ model CouponUsage {
 model OrderItem {
   id                   String       @id @default(uuid())
   quantity             Int
+businessId String?
   priceAtTimeOfOrder   Decimal
   note                 String?
   orderId              String
   productId            String
   variantId            String?
+  supplyState     String?
+  supplyStateCode String? @db.VarChar(4)
   customizationDetails Json?
   customizationImages  String[]
   order                Order        @relation(fields: [orderId], references: [id])
@@ -719,6 +723,8 @@ model CartItem {
   productId            String
   variantId            String?
   customerUserId       String
+  supplyState         String?
+  supplyStateCode String? @db.VarChar(4)
   customizationDetails Json?
   customizationImages  String[]     @default([])
   customerUser         CustomerUser @relation(fields: [customerUserId], references: [id])
@@ -912,6 +918,7 @@ model SaleItem {
   quantity               Decimal
   price                  Decimal
   priceType              String   @db.VarChar(64)
+  supplyState     String?      @db.VarChar(128)
   unit                   String   @db.VarChar(128)
   discountPercent        Decimal
   discountAmount         Decimal

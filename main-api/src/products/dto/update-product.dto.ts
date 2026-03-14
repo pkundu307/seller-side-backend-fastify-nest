@@ -1,11 +1,11 @@
-// src/products/dto/update-product.dto.ts
 import { Type, Transform } from 'class-transformer';
 import {
   IsString, IsOptional, IsBoolean, IsArray, ValidateNested,
-  IsInt, IsNotEmpty, IsNumber, IsUUID, IsJSON, IsEnum, IsUrl,
+  IsInt, IsNotEmpty, IsNumber, IsEnum, IsUrl, Min,
 } from 'class-validator';
 import { StockMethod } from './create-product.dto';
 
+// ── Attribute ─────────────────────────────────────────────────────────────────
 class UpdateVariantAttributeDto {
   @IsInt()
   attributeId: number;
@@ -14,56 +14,118 @@ class UpdateVariantAttributeDto {
   attributeOptionId: number;
 }
 
-
-
-// update-variant.dto.ts
+// ── Variant ───────────────────────────────────────────────────────────────────
 export class UpdateVariantDto {
-  @IsOptional() @IsString()  id?: string;
-  @IsString()                sku: string;
-  @IsNumber()                price: number;
-  @IsNumber()                stock: number;
-  @IsOptional() @IsNumber()  mrp?: number;
-  @IsOptional() @IsNumber()  purchasePrice?: number;
-  @IsOptional() @IsString()  hsnCode?: string;
-  @IsOptional() @IsString()  sacCode?: string;
-  @IsOptional() @IsString()  tax?: string;
-  @IsOptional() @IsString()  description?: string;
-  @IsOptional() @IsNumber()  weightInGrams?: number;
-  @IsOptional() @IsNumber()  height?: number;
-  @IsOptional() @IsNumber()  width?: number;
-  @IsOptional() @IsNumber()  length?: number;
-  @IsOptional() @IsString()  dimensionUnit?: string;
-  @IsOptional() @IsNumber()  minStockCount?: number;
+
+  // ── Optional: only present when updating an existing variant ──────────────
+  @IsOptional() @IsString() id?: string;
+
+  // ── Required: identity & pricing ──────────────────────────────────────────
+  @IsString()
+  @IsNotEmpty()
+  sku: string;
+
+  @IsNumber()
+  price: number;
+
+  @IsNumber()
+  stock: number;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => UpdateVariantAttributeDto)
+  attributeValues: UpdateVariantAttributeDto[];
+
+  // ── Required: physical / shipping ──────────────────────────────────────────
+  @IsNumber()
+  @Min(1, { message: 'weightInGrams must be a positive number.' })
+  weightInGrams: number;
+
+  @IsNumber()
+  @Min(1, { message: 'length must be a positive number.' })
+  length: number;
+
+  @IsNumber()
+  @Min(1, { message: 'width must be a positive number.' })
+  width: number;
+
+  @IsNumber()
+  @Min(1, { message: 'height must be a positive number.' })
+  height: number;
+
+  // ── Optional: pricing extras ───────────────────────────────────────────────
+  @IsOptional() @IsNumber() mrp?: number;
+  @IsOptional() @IsNumber() purchasePrice?: number;
+  @IsOptional() @IsString() purchasePriceType?: string;
+
+  // ── Optional: tax / compliance ─────────────────────────────────────────────
+  @IsOptional() @IsString() hsnCode?: string;
+  @IsOptional() @IsString() sacCode?: string;
+  @IsOptional() @IsString() tax?: string;
+
+  // ── Optional: dimension unit ───────────────────────────────────────────────
+  @IsOptional() @IsString() dimensionUnit?: string;           // default 'CM'
+
+  // ── Optional: stock alerts ─────────────────────────────────────────────────
+  @IsOptional() @IsNumber() minStockCount?: number;
   @IsOptional() @IsBoolean() isMinStockAlertEnabled?: boolean;
-  @IsOptional() @IsBoolean() isBatchingEnabled?: boolean;      // ✅
-  @IsOptional() @IsBoolean() isExpiryTracked?: boolean;        // ✅
-  @IsOptional() @IsNumber()  expiryAlertDays?: number;         // ✅
-  @IsOptional() @IsBoolean() isSerialTracked?: boolean;        // ✅
-  @IsOptional() @IsString()  stockDeductionMethod?: string;
+
+  // ── Optional: batch / serial / expiry ──────────────────────────────────────
+  @IsOptional() @IsBoolean() isBatchingEnabled?: boolean;
+  @IsOptional() @IsBoolean() isExpiryTracked?: boolean;
+  @IsOptional() @IsInt()     @Min(1) expiryAlertDays?: number;
+  @IsOptional() @IsBoolean() isSerialTracked?: boolean;
+  @IsOptional() @IsEnum(StockMethod) stockDeductionMethod?: StockMethod;
+
+  // ── Optional: variant identity ─────────────────────────────────────────────
   @IsOptional() @IsBoolean() isDefault?: boolean;
   @IsOptional() @IsString()  status?: string;
-  @IsOptional() @IsArray()   images?: string[];
-  @IsOptional() @IsArray()   newImageUrls?: string[];          // ✅ direct URL uploads
-  @IsArray()                 attributeValues: { attributeId: number; attributeOptionId: number }[];
+  @IsOptional() @IsString()  description?: string;
+
+  // ── Optional: images ───────────────────────────────────────────────────────
+  @IsOptional() @IsArray() @IsString({ each: true }) images?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsUrl({}, { each: true })
+  newImageUrls?: string[];
 }
 
-// update-product.dto.ts
+// ── Product ───────────────────────────────────────────────────────────────────
 export class UpdateProductDto {
-  @IsOptional() @IsString()  title?: string;
-  @IsOptional() @IsString()  description?: string;
+
+  // ── Optional: product identity ─────────────────────────────────────────────
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsString() brand?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+
+  // ── Optional: SEO ──────────────────────────────────────────────────────────
+  @IsOptional() @IsString() metaTitle?: string;
+  @IsOptional() @IsString() metaDescription?: string;
+
+  // ── Optional: customization ────────────────────────────────────────────────
   @IsOptional() @IsBoolean() isCustomizable?: boolean;
+  @IsOptional() @IsString()  customizationConfig?: string;   // JSON string
+
+  // ── Optional: scheduling / publishing ──────────────────────────────────────
   @IsOptional() @IsBoolean() isFeatured?: boolean;
-  @IsOptional() @IsBoolean() isPublished?: boolean;   // ignored for sellers in service
-  @IsOptional() @IsString()  publishDate?: string;
-  @IsOptional() @IsString()  brand?: string;
-  @IsOptional() @IsArray()   tags?: string[];
-  @IsOptional() @IsString()  metaTitle?: string;
-  @IsOptional() @IsString()  metaDescription?: string;
-  @IsOptional() @IsString()  customizationConfig?: string;
-  @IsOptional() @IsArray()   imagesToDelete?: string[];
-  @IsOptional() @IsArray()   newProductImageUrls?: string[];   // ✅ direct URL uploads
+  @IsOptional() @IsBoolean() isPublished?: boolean;          // admin-only in service
+  @IsOptional() @IsString()  publishDate?: string;           // ISO date string
+
+  // ── Optional: image management ─────────────────────────────────────────────
+  @IsOptional() @IsArray() @IsUrl({}, { each: true }) imagesToDelete?: string[];
+  @IsOptional() @IsArray() @IsUrl({}, { each: true }) newProductImageUrls?: string[];
+
+  // ── Optional: file asset deletion flags ────────────────────────────────────
   @IsOptional() @IsBoolean() deleteModel3d?: boolean;
   @IsOptional() @IsBoolean() deleteSlicenseDocument?: boolean;
+
+  // ── Required: variants (always send full variant list) ─────────────────────
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => UpdateVariantDto)

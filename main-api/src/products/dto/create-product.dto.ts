@@ -1,23 +1,23 @@
-// src/products/dto/create-product.dto.ts
 import { Type, Transform } from 'class-transformer';
 import {
   IsArray, IsNotEmpty, IsNumberString, IsString, ValidateNested,
-  IsOptional, IsBoolean, IsEnum, IsInt, IsUrl,
+  IsOptional, IsBoolean, IsEnum, IsInt, IsUrl, Min, IsPositive,
 } from 'class-validator';
 
-export enum ProductType { STANDARD = 'STANDARD', DIGITAL = 'DIGITAL', SERVICE = 'SERVICE' }
-export enum StockMethod { FIFO = 'FIFO', FEFO = 'FEFO', MANUAL = 'MANUAL' }
+export enum ProductType  { STANDARD = 'STANDARD', DIGITAL = 'DIGITAL', SERVICE = 'SERVICE' }
+export enum StockMethod  { FIFO = 'FIFO', FEFO = 'FEFO', MANUAL = 'MANUAL' }
 
-// ── Attribute ──────────────────────────────────────────────────────────────
+// ── Attribute ─────────────────────────────────────────────────────────────────
 class CreateVariantAttributeDto {
   @IsNumberString()
   @IsNotEmpty()
-  attributeOptionId: string; // ID of chosen AttributeOption
+  attributeOptionId: string;
 }
 
-// ── Variant ────────────────────────────────────────────────────────────────
+// ── Variant ───────────────────────────────────────────────────────────────────
 export class CreateVariantDto {
-  // REQUIRED
+
+  // ── Required: identity & pricing ──────────────────────────────────────────
   @IsString()
   @IsNotEmpty()
   sku: string;
@@ -28,57 +28,73 @@ export class CreateVariantDto {
 
   @IsNumberString()
   @IsNotEmpty()
-  stock: string;           // defaults to 0 if not provided by frontend
+  stock: string;
 
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateVariantAttributeDto)
   attributes: CreateVariantAttributeDto[];
 
-  // OPTIONAL — pricing extras
+  // ── Required: physical / shipping ──────────────────────────────────────────
+  // These come from mandatory dropdowns on the frontend.
+  // Values are numeric strings representing the upper bound of the selected range.
+  @IsNumberString()
+  @IsNotEmpty({ message: 'Approx weight is required for shipping calculation.' })
+  weightInGrams: string;           // e.g. "1000"  → 1 kg bucket
+
+  @IsNumberString()
+  @IsNotEmpty({ message: 'Length is required for volumetric weight calculation.' })
+  length: string;                  // e.g. "25" cm
+
+  @IsNumberString()
+  @IsNotEmpty({ message: 'Width is required for volumetric weight calculation.' })
+  width: string;                   // e.g. "20" cm
+
+  @IsNumberString()
+  @IsNotEmpty({ message: 'Height is required for volumetric weight calculation.' })
+  height: string;                  // e.g. "10" cm
+
+  // ── Optional: pricing extras ───────────────────────────────────────────────
   @IsOptional() @IsNumberString() mrp?: string;
   @IsOptional() @IsNumberString() purchasePrice?: string;
-  @IsOptional() @IsString()       purchasePriceType?: string;   // default 'FIXED'
-  @IsOptional() @IsString()       sellingPriceType?: string;    // default 'FIXED'
+  @IsOptional() @IsString()       purchasePriceType?: string;
 
-  // OPTIONAL — tax / compliance
+  // ── Optional: tax / compliance ─────────────────────────────────────────────
   @IsOptional() @IsString() hsnCode?: string;
   @IsOptional() @IsString() sacCode?: string;
 
-  // OPTIONAL — dimensions / weight
-  @IsOptional() @IsNumberString() weightInGrams?: string;
-  @IsOptional() @IsNumberString() height?: string;
-  @IsOptional() @IsNumberString() width?: string;
-  @IsOptional() @IsNumberString() length?: string;
-  @IsOptional() @IsString()       dimensionUnit?: string;       // default 'CM'
+  // ── Optional: dimension unit ───────────────────────────────────────────────
+  @IsOptional() @IsString() dimensionUnit?: string;         // default 'CM'
 
-  // OPTIONAL — stock alerts
+  // ── Optional: stock alerts ─────────────────────────────────────────────────
   @IsOptional() @IsNumberString() minStockCount?: string;
-  @IsOptional()
-  @IsBoolean()
-  @Transform(({ value }) => value === 'true' || value === true)
-  isMinStockAlertEnabled?: boolean;                             // default false
-
-  // OPTIONAL — batch / serial / expiry (advanced; off by default)
-  @IsOptional()
-  @IsBoolean()
-  @Transform(({ value }) => value === 'true' || value === true)
-  isBatchingEnabled?: boolean;                                  // default false
 
   @IsOptional()
   @IsBoolean()
   @Transform(({ value }) => value === 'true' || value === true)
-  isExpiryTracked?: boolean;                                    // default false
+  isMinStockAlertEnabled?: boolean;
+
+  // ── Optional: batch / serial / expiry ──────────────────────────────────────
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  isBatchingEnabled?: boolean;
 
   @IsOptional()
   @IsBoolean()
   @Transform(({ value }) => value === 'true' || value === true)
-  isSerialTracked?: boolean;                                    // default false
+  isExpiryTracked?: boolean;
 
-  @IsOptional() @IsInt()         expiryAlertDays?: number;
-  @IsOptional() @IsEnum(StockMethod) stockDeductionMethod?: StockMethod; // default FIFO
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === 'true' || value === true)
+  isSerialTracked?: boolean;
 
-  // OPTIONAL — variant identity
+  @IsOptional() @IsInt() @Min(1) expiryAlertDays?: number;
+
+  @IsOptional() @IsEnum(StockMethod) stockDeductionMethod?: StockMethod;
+
+  // ── Optional: variant identity ─────────────────────────────────────────────
   @IsOptional()
   @IsBoolean()
   @Transform(({ value }) => value === 'true' || value === true)
@@ -86,16 +102,17 @@ export class CreateVariantDto {
 
   @IsOptional() @IsString() description?: string;
 
-  // OPTIONAL — images (file upload handled separately in multipart; these are direct URLs)
+  // ── Optional: images (files via multipart; these are direct URLs) ───────────
   @IsOptional()
   @IsArray()
   @IsUrl({}, { each: true })
   imageUrls?: string[];
 }
 
-// ── Product ────────────────────────────────────────────────────────────────
+// ── Product ───────────────────────────────────────────────────────────────────
 export class CreateProductDto {
-  // REQUIRED
+
+  // ── Required ──────────────────────────────────────────────────────────────
   @IsString()
   @IsNotEmpty()
   title: string;
@@ -113,35 +130,36 @@ export class CreateProductDto {
   @Type(() => CreateVariantDto)
   variants: CreateVariantDto[];
 
-  // OPTIONAL — product identity
-  @IsOptional() @IsEnum(ProductType) productType?: ProductType;  // default STANDARD
+  // ── Optional: product identity ─────────────────────────────────────────────
+  @IsOptional() @IsEnum(ProductType) productType?: ProductType;
   @IsOptional() @IsString()          brand?: string;
+
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
 
-  // OPTIONAL — SEO
+  // ── Optional: SEO ──────────────────────────────────────────────────────────
   @IsOptional() @IsString() metaTitle?: string;
   @IsOptional() @IsString() metaDescription?: string;
 
-  // OPTIONAL — customization
+  // ── Optional: customization ────────────────────────────────────────────────
   @IsOptional()
   @IsBoolean()
   @Transform(({ value }) => value === 'true' || value === true)
   isCustomizable?: boolean;
 
-  @IsOptional() @IsString() customizationConfig?: string; // JSON string
+  @IsOptional() @IsString() customizationConfig?: string;   // JSON string
 
-  // OPTIONAL — scheduling
+  // ── Optional: scheduling ───────────────────────────────────────────────────
   @IsOptional()
   @IsBoolean()
   @Transform(({ value }) => value === 'true' || value === true)
   isFeatured?: boolean;
 
-  @IsOptional() @IsString() publishDate?: string; // ISO date string
+  @IsOptional() @IsString() publishDate?: string;           // ISO date string
 
-  // OPTIONAL — product-level direct image URLs (files handled via multipart)
+  // ── Optional: product-level image URLs ────────────────────────────────────
   @IsOptional()
   @IsArray()
   @IsUrl({}, { each: true })
