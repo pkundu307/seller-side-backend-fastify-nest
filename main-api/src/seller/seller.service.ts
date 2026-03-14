@@ -37,36 +37,49 @@ export class SellerService {
    */
 
 
+// src/seller/orders/orders.service.ts
+
 async getBusinessOrders(businessId: string, query: SellerPaginationDto) {
   const { page = 1, limit = 10, status, paymentMethod, search } = query;
   const skip = (page - 1) * limit;
+
+  // ── Fee constants (mirror getBusinessOrderById) ──────────
+  const COMMISSION_PERCENT = 0;    // TODO: fetch from PlatformFeeConfig per category
+  const TDS_RATE           = 0.01; // §194-O — on net after commission
+  const TCS_RATE           = 0.01; // §52    — on seller gross
 
   const where: Prisma.OrderWhereInput = {
     items: {
       some: { variant: { product: { businessId } } },
     },
-    status:        status        ? { equals: status }        : undefined,
-    paymentMethod: paymentMethod ? { equals: paymentMethod } : undefined,
+    status:        status        ? { equals: status }                        : undefined,
+    paymentMethod: paymentMethod ? { equals: paymentMethod }                 : undefined,
     orderNumber:   search        ? { contains: search, mode: 'insensitive' } : undefined,
   };
 
   const orders = await this.prisma.order.findMany({
     where,
     skip,
-    take: limit,
+    take:    limit,
     orderBy: { createdAt: 'desc' },
     select: {
-      id: true,
-      orderNumber: true,
-      createdAt: true,
-      totalAmount: true,
-      status: true,
+      id:            true,
+      orderNumber:   true,
+      createdAt:     true,
+      status:        true,
       paymentMethod: true,
-      customerUser: { select: { name: true } },
-      _count: { select: { items: true } },
+      customerUser:  { select: { name: true } },
+      // ✅ Count only THIS seller's items (not all order items)
+      _count: {
+        select: {
+          items: { where: { variant: { product: { businessId } } } },
+        },
+      },
       items: {
         where: { variant: { product: { businessId } } },
         select: {
+          priceAtTimeOfOrder: true,   // ✅ needed for correct subtotal
+          quantity:           true,   // ✅ needed for correct subtotal
           variant: {
             select: {
               product: { select: { isCustomizable: true } },
@@ -85,11 +98,29 @@ async getBusinessOrders(businessId: string, query: SellerPaginationDto) {
     this.prisma.order.count({ where: { ...where, status: OrderStatus.pending } }),
   ]);
 
-  const mappedOrders = orders.map(({ items, ...order }) => ({
-    ...order,
-    totalAmount: parseFloat(order.totalAmount.toString()) - PLATFORM_FEE - SHIPPING_FEE,
-    isCustomizable: items.some(item => item.variant?.product?.isCustomizable === true),
-  }));
+  const mappedOrders = orders.map(({ items, ...order }) => {
+    // ✅ Seller subtotal from their items only (not full order amount)
+    const sellerSubtotal = parseFloat(
+      items
+        .reduce((sum, item) => sum + Number(item.priceAtTimeOfOrder) * item.quantity, 0)
+        .toFixed(2),
+    );
+
+    // ✅ Correct deduction chain (mirrors getBusinessOrderById)
+    const commissionAmt = parseFloat(((sellerSubtotal * COMMISSION_PERCENT) / 100).toFixed(2));
+    const netBeforeTax  = parseFloat((sellerSubtotal - commissionAmt).toFixed(2));
+    const tds           = parseFloat((netBeforeTax   * TDS_RATE).toFixed(2));
+    const tcs           = parseFloat((sellerSubtotal * TCS_RATE).toFixed(2));
+    const sellerPayout  = parseFloat((netBeforeTax - tds - tcs).toFixed(2));
+
+    return {
+      ...order,                         // id, orderNumber, createdAt, status,
+                                        // paymentMethod, customerUser, _count
+      totalAmount:    sellerSubtotal,   // ✅ seller's item subtotal (field name unchanged)
+      sellerPayout,                     // net after TDS + TCS (new — useful for list)
+      isCustomizable: items.some((item) => item.variant?.product?.isCustomizable === true),
+    };
+  });
 
   return {
     orders: mappedOrders,
@@ -111,6 +142,12 @@ async getBusinessOrders(businessId: string, query: SellerPaginationDto) {
 
 
 async getBusinessOrderById(businessId: string, orderId: string) {
+
+  // ── Constants (must mirror payment.service.ts) ──────────
+  const COMMISSION_GST_RATE = 0.18;  // 18% GST on platform commission
+  const TDS_RATE            = 0.01;  // 1% §194-O — on net payable (after commission)
+  const TCS_RATE            = 0.01;  // 1% §52    — on seller gross turnover
+
   const order = await this.prisma.order.findUnique({
     where: { id: orderId },
     include: {
@@ -119,7 +156,7 @@ async getBusinessOrderById(businessId: string, orderId: string) {
         include: {
           variant: {
             select: {
-              sku: true,
+              sku:    true,
               images: true,
               attributeValues: {
                 select: {
@@ -131,13 +168,10 @@ async getBusinessOrderById(businessId: string, orderId: string) {
                 select: {
                   title:          true,
                   isCustomizable: true,
-                  // customizationConfig available here too if you need the field schema
                 },
               },
             },
           },
-          // ✅ NO customizations relation — these are scalar fields on OrderItem itself:
-          // customizationDetails (Json?) and customizationImages (String[]) are auto-included
         },
       },
       customerUser: {
@@ -154,18 +188,31 @@ async getBusinessOrderById(businessId: string, orderId: string) {
     throw new ForbiddenException(`You do not have permission to view this order.`);
   }
 
-  // ── Financials ────────────────────────────────────────────────────
-  const sellerSubtotal = order.items.reduce((sum, item) => {
-    return sum + Number(item.priceAtTimeOfOrder) * item.quantity;
-  }, 0);
+  // ── Seller Subtotal ──────────────────────────────────────
+  const sellerSubtotal = parseFloat(
+    order.items
+      .reduce((sum, item) => sum + Number(item.priceAtTimeOfOrder) * item.quantity, 0)
+      .toFixed(2),
+  );
 
-  const commissionPercent  = 0; // fetch from PlatformFeeConfig later
-  const commission         = (sellerSubtotal * commissionPercent) / 100;
-  const tds                = sellerSubtotal * 0.01;
-  const tcs                = sellerSubtotal * 0.01;
-  const sellerPayout       = sellerSubtotal - commission - tds - tcs;
-  const commissionGST      = commission * 0.18;
-  const platformNetRevenue = commission - commissionGST;
+  // TODO: fetch commissionPercent from PlatformFeeConfig per category
+  const commissionPercent = 0;
+
+  // ── Correct Financial Calculation ───────────────────────
+  const commissionAmt  = parseFloat(((sellerSubtotal * commissionPercent) / 100).toFixed(2));
+  const netBeforeTax   = parseFloat((sellerSubtotal - commissionAmt).toFixed(2));
+
+  // ✅ TDS: 1% on net-after-commission (NOT on gross)
+  const tds            = parseFloat((netBeforeTax * TDS_RATE).toFixed(2));
+  // ✅ TCS: 1% on seller gross turnover
+  const tcs            = parseFloat((sellerSubtotal * TCS_RATE).toFixed(2));
+
+  const sellerPayout   = parseFloat((netBeforeTax - tds - tcs).toFixed(2));
+
+  // GST that platform owes to govt on its commission
+  const commissionGst  = parseFloat((commissionAmt * COMMISSION_GST_RATE).toFixed(2));
+  // Platform's actual net from this seller after paying GST
+  const platformNet    = parseFloat((commissionAmt - commissionGst).toFixed(2));
 
   const { customerUser, ...restOfOrder } = order;
 
@@ -182,38 +229,38 @@ async getBusinessOrderById(businessId: string, orderId: string) {
       shippingAddress: restOfOrder.selectedAddress,
     },
 
-    items: restOfOrder.items.map(item => ({
-      productTitle: item.variant?.product?.title,
-      sku:          item.variant?.sku,
-      image:        item.variant?.images?.[0] ?? null,
-      attributes:   item.variant?.attributeValues?.map(v => ({
+    items: restOfOrder.items.map((item) => ({
+      productTitle: item.variant?.product?.title ?? null,
+      sku:          item.variant?.sku             ?? null,
+      image:        item.variant?.images?.[0]     ?? null,
+      attributes:   item.variant?.attributeValues?.map((v) => ({
         name:  v.attribute.name,
         value: v.attributeOption.value,
-      })),
+      })) ?? [],
       price:    Number(item.priceAtTimeOfOrder),
       quantity: item.quantity,
       subtotal: Number(item.priceAtTimeOfOrder) * item.quantity,
       note:     item.note ?? null,
 
-      // ── Customization — scalar fields directly on OrderItem ──────
-      isCustomizable:      item.variant?.product?.isCustomizable ?? false,
-      customizationDetails: item.customizationDetails ?? null,  // Json?
-      customizationImages:  item.customizationImages ?? [],     // String[]
+      // ── Customization ─────────────────────────────────────
+      isCustomizable:       item.variant?.product?.isCustomizable ?? false,
+      customizationDetails: item.customizationDetails ?? null,
+      customizationImages:  item.customizationImages  ?? [],
     })),
 
     financials: {
       sellerSubtotal,
       commissionPercent,
-      commission,
-      tds,
-      tcs,
-      sellerPayout,
-      commissionGST,
-      platformNetRevenue,
+      commissionAmt,
+      netBeforeTax,       // sellerSubtotal − commission
+      tds,                // 1% of netBeforeTax  → admin remits to Income Tax
+      tcs,                // 1% of sellerSubtotal → admin remits to GST dept
+      sellerPayout,       // ✅ what seller actually receives
+      commissionGst,      // 18% of commission   → platform remits to GST dept
+      platformNet,        // platform's net profit from this seller
     },
   };
 }
-
 async updateOrderStatus(businessId: string, orderId: string, dto: UpdateSellerOrderDto) {
   return this.prisma.$transaction(async (tx) => {
     // 1. Fetch the full order with all necessary relations

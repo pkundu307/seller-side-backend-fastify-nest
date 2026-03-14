@@ -854,30 +854,50 @@ async getProductsForVerification(query: AdminProductFilterDto) {
 
 
 async getOrderDetails(orderId: string) {
-  function calculateSettlement(orderAmount: number, commissionPercent: number) {
-  const commission = orderAmount * commissionPercent / 100
-  const tds = orderAmount * 0.01
-  const tcs = orderAmount * 0.01
 
-  const sellerPayout = orderAmount - commission - tds - tcs
+  // ── Tax / Fee Constants ──────────────────────────────────
+  const COMMISSION_GST_RATE = 0.18;  // 18% GST on platform commission
+  const TDS_RATE            = 0.01;  // 1%  Income Tax § 194-O  (deducted from seller)
+  const TCS_RATE            = 0.01;  // 1%  GST § 52             (collected on seller gross)
 
-  const commissionGST = commission * 0.18
-  const platformNetRevenue = commission - commissionGST
+  // ── Per-Seller Settlement Calculator ────────────────────
+  function calcSellerSettlement(
+    sellerSubtotal: number,  // sum of their items (priceAtTimeOfOrder × qty)
+    commissionPct:  number,
+  ) {
+    const commissionAmt      = parseFloat(((sellerSubtotal * commissionPct) / 100).toFixed(2));
+    const netBeforeTax       = parseFloat((sellerSubtotal - commissionAmt).toFixed(2));
 
-  return {
-    commission,
-    tds,
-    tcs,
-    sellerPayout,
-    commissionGST,
-    platformNetRevenue
+    // TDS: 1% on (seller gross - commission), deducted before payout → remit to Income Tax
+    const tds                = parseFloat((netBeforeTax * TDS_RATE).toFixed(2));
+    // TCS: 1% on seller gross turnover → remit to GST dept
+    const tcs                = parseFloat((sellerSubtotal * TCS_RATE).toFixed(2));
+
+    const sellerPayout       = parseFloat((netBeforeTax - tds - tcs).toFixed(2));
+
+    // Platform's GST liability on the commission it earned
+    const commissionGst      = parseFloat((commissionAmt * COMMISSION_GST_RATE).toFixed(2));
+    // Net platform revenue from this seller after paying GST
+    const platformNetFromSeller = parseFloat((commissionAmt - commissionGst).toFixed(2));
+
+    return {
+      sellerSubtotal:         parseFloat(sellerSubtotal.toFixed(2)),
+      commissionPct,
+      commissionAmt,          // platform earns this
+      commissionGst,          // platform remits to GST dept
+      tds,                    // admin deducts this, remits to Income Tax dept
+      tcs,                    // admin deducts this, remits to GST dept
+      sellerPayout,           // ✅ admin must transfer THIS to the seller
+      platformNetFromSeller,  // platform's net profit from this seller
+    };
   }
-}
+
+  // ── Fetch Order ──────────────────────────────────────────
   const order = await this.prisma.order.findUnique({
     where: { id: orderId },
     include: {
       customerUser: {
-        select: { id: true, name: true, email: true, phoneNumber: true }
+        select: { id: true, name: true, email: true, phoneNumber: true },
       },
       items: {
         include: {
@@ -885,53 +905,146 @@ async getOrderDetails(orderId: string) {
             include: {
               product: {
                 select: {
-                  id: true,
-                  title: true,
-                  images: true,
-                  businessId: true,
-                  business: { select: { id: true, name: true } }
-                }
-              }
-            }
-          }
-        }
+                  id: true, title: true, images: true, businessId: true,
+                  business: { select: { id: true, name: true } },
+                },
+              },
+            },
+          },
+        },
       },
-      settlements: true,
-      returnRequests: true
-    }
-  })
+      settlements:    true,
+      returnRequests: true,
+    },
+  });
 
-  if (!order) throw new NotFoundException('Order not found')
+  if (!order) throw new NotFoundException('Order not found');
 
-  const orderAmount = Number(order.totalAmount)
+  // ── Base Amounts ─────────────────────────────────────────
+  const orderTotal     = parseFloat(Number(order.totalAmount).toFixed(2));
+  const shippingFee    = parseFloat(Number(order.shippingFee).toFixed(2));
+  const couponDiscount = parseFloat(
+    Number(order.couponDiscount ?? order.discount ?? 0).toFixed(2),
+  );
 
-  const commissionPercent = 0 // later fetch from PlatformFeeConfig
+  // Items subtotal = sum of priceAtTimeOfOrder × qty (already stored per item)
+  const itemsSubtotal  = parseFloat(
+    order.items
+      .reduce((sum, item) => sum + Number(item.priceAtTimeOfOrder) * item.quantity, 0)
+      .toFixed(2),
+  );
 
-  const settlement = calculateSettlement(orderAmount, commissionPercent)
+  // Platform fixed fees (platform fee ₹4 + packaging ₹10 etc.)
+  // Derived — no need to store separately:
+  // orderTotal = itemsSubtotal + shippingFee + platformFixedFees - couponDiscount
+  const platformFixedFees = parseFloat(
+    (orderTotal - itemsSubtotal - shippingFee + couponDiscount).toFixed(2),
+  );
+
+  // TODO: fetch commissionPct from PlatformFeeConfig per category
+  const commissionPct = 0;
+
+  // ── Group Items by Seller ────────────────────────────────
+  const sellerMap = new Map<string, typeof order.items>();
+  for (const item of order.items) {
+    const bizId = item.variant?.product?.businessId ?? 'unknown';
+    if (!sellerMap.has(bizId)) sellerMap.set(bizId, []);
+    sellerMap.get(bizId)!.push(item);
+  }
+
+  // ── Per-Seller Breakdown ─────────────────────────────────
+  const sellerBreakdowns = Array.from(sellerMap.entries()).map(
+    ([businessId, items]) => {
+      const sellerSubtotal = parseFloat(
+        items
+          .reduce((s, i) => s + Number(i.priceAtTimeOfOrder) * i.quantity, 0)
+          .toFixed(2),
+      );
+
+      return {
+        businessId,
+        businessName: items[0]?.variant?.product?.business?.name ?? 'Unknown Seller',
+        items: items.map((i) => ({
+          title:    i.variant?.product?.title   ?? 'N/A',
+          quantity: i.quantity,
+          price:    Number(i.priceAtTimeOfOrder),
+          subtotal: Number(i.priceAtTimeOfOrder) * i.quantity,
+        })),
+        ...calcSellerSettlement(sellerSubtotal, commissionPct),
+      };
+    },
+  );
+
+  // ── Aggregate Across All Sellers ─────────────────────────
+  const totals = sellerBreakdowns.reduce(
+    (acc, s) => ({
+      commission:    acc.commission    + s.commissionAmt,
+      commissionGst: acc.commissionGst + s.commissionGst,
+      tds:           acc.tds           + s.tds,
+      tcs:           acc.tcs           + s.tcs,
+      sellerPayout:  acc.sellerPayout  + s.sellerPayout,
+      platformNet:   acc.platformNet   + s.platformNetFromSeller,
+    }),
+    { commission: 0, commissionGst: 0, tds: 0, tcs: 0, sellerPayout: 0, platformNet: 0 },
+  );
+
+  // ── Platform-Level Financial Summary ─────────────────────
+  const platformSummary = {
+    // ── What came in ───────────────────────
+    collectedFromCustomer:   orderTotal,
+    breakdown: {
+      itemsSubtotal,
+      shippingFeeCollected:  shippingFee,    // pass-through to Xpressbees
+      platformFixedFees,                     // platform fee + packaging = profit
+      couponDiscountAbsorbed: couponDiscount, // borne by platform, reduces net
+    },
+
+    // ── What goes out to govt ───────────────
+    governmentRemittances: {
+      tdsToIncomeTax:   parseFloat(totals.tds.toFixed(2)),    // § 194-O
+      tcsToGst:         parseFloat(totals.tcs.toFixed(2)),    // § 52
+      commissionGst:    parseFloat(totals.commissionGst.toFixed(2)), // 18% GST on commission
+    },
+
+    // ── What admin must pay sellers ─────────
+    // 💸 THIS IS THE KEY NUMBER: total to transfer to all sellers
+    totalToPaySellers:       parseFloat(totals.sellerPayout.toFixed(2)),
+    perSellerPayouts: sellerBreakdowns.map((s) => ({
+      businessId:   s.businessId,
+      businessName: s.businessName,
+      payoutAmount: s.sellerPayout,  // transfer this amount to this seller
+    })),
+
+    // ── Platform's own net profit ───────────
+    platformNetRevenue: parseFloat(
+      (
+        totals.commission        // commission earned
+        - totals.commissionGst   // minus GST on commission
+        + platformFixedFees      // platform fee + packaging kept
+        - couponDiscount         // minus coupon cost absorbed
+        // Note: shippingFee is pass-through to Xpressbees — excluded
+      ).toFixed(2),
+    ),
+  };
 
   return {
-    id: order.id,
-    orderNumber: order.orderNumber,
-    status: order.status,
+    id:            order.id,
+    orderNumber:   order.orderNumber,
+    status:        order.status,
     paymentMethod: order.paymentMethod,
     paymentStatus: order.paymentStatus,
-    createdAt: order.createdAt,
+    createdAt:     order.createdAt,
 
-    orderAmount,
+    platformSummary,    // ← admin financial overview
+    sellerBreakdowns,   // ← per-seller breakdown
 
-    settlement,
-
-    customer: order.customerUser,
+    customer:        order.customerUser,
     shippingAddress: order.selectedAddress,
-
-    items: order.items,
-
-    settlements: order.settlements,
-
-    returnRequests: order.returnRequests
-  }
+    items:           order.items,
+    settlements:     order.settlements,
+    returnRequests:  order.returnRequests,
+  };
 }
-
   /**
    * 3. Update Order (Status or Settlement)
    */
