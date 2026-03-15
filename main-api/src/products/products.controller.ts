@@ -505,4 +505,11 @@ export class ProductsController {
       paginationQuery,
     );
   }
+  @Get('same/:slug')
+getSimilarProducts(
+  @Param('slug') slug: string,
+  @Query('limit') limit?: string,
+) {
+  return this.productsService.getSimilarProducts(slug, limit ? parseInt(limit) : 8);
+}
 }

@@ -1363,4 +1363,78 @@ async updateProduct(
   //     isCustomizable: product.isCustomizable,
   //   };
   // }
+  // src/products/products.service.ts
+
+async getSimilarProducts(slug: string, limit = 8) {
+  // 1. Find source product
+  const product = await this.prisma.product.findUnique({
+    where: { slug, isPublished: true, deletedAt: null },
+    select: {
+      id:         true,
+      categoryId: true,
+      brand:      true,
+      tags:       true,
+    },
+  });
+
+  if (!product) throw new NotFoundException('Product not found');
+
+  // 2. Fetch candidates with include (avoids TS select+relation inference bug)
+  const similar = await this.prisma.product.findMany({
+    where: {
+      AND: [
+        { id:          { not: product.id } },
+        { isPublished: true },
+        { deletedAt:   null },
+        {
+          OR: [
+            { categoryId: product.categoryId },
+            ...(product.brand ? [{ brand: product.brand }] : []),
+            ...(product.tags?.length
+              ? [{ tags: { hasSome: product.tags } }]
+              : []),
+          ],
+        },
+      ],
+    },
+    include: {
+      variants: {
+        where:   { stock: { gt: 0 } },
+        orderBy: { price: 'asc' },
+        take:    1,
+      },
+    },
+    take: limit * 3,
+  });
+
+  // 3. Score + rank + slice
+  return similar
+    .filter((p) => p.variants.length > 0)
+    .map((p) => {
+      let score = 0;
+      if (p.categoryId === product.categoryId)        score += 3;
+      if (product.brand && p.brand === product.brand) score += 2;
+      const overlap = p.tags.filter((t) => product.tags.includes(t)).length;
+      score += overlap;
+
+      return {
+        id:    p.id,
+        title: p.title,
+        slug:  p.slug,
+        images: p.images,
+        brand:  p.brand,
+        score,
+        variant: {
+          id:    p.variants[0].id,
+          price: p.variants[0].price,
+          mrp:   p.variants[0].mrp,
+          stock: p.variants[0].stock,
+          image: p.variants[0].images?.[0] ?? p.images?.[0] ?? null,
+        },
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
 }
