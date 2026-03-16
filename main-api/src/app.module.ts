@@ -1,11 +1,20 @@
-import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { PrismaModule } from './prisma/prisma.module';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
-import { CheckModule } from './check/check.module';
-import { KeepAliveService } from './utils/keep-alive.service';
-import { PrismaService } from './prisma/prisma.service';
 import { ScheduleModule } from '@nestjs/schedule';
+import { CacheModule } from '@nestjs/cache-manager';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+
+import { PrismaModule } from './prisma/prisma.module';
+import { PrismaService } from './prisma/prisma.service';
+
+import { LoggerMiddleware } from './common/middleware/logger.middleware';
+
+import { CheckModule } from './check/check.module';
+import { KeepAliveModule } from './utils/keep-alive.module';
+import { KeepAliveService } from './utils/keep-alive.service';
+
 import { CategoryModule } from './category/category.module';
 import { UserModule } from './user/user.module';
 import { AuthModule } from './auth/auth.module';
@@ -25,7 +34,6 @@ import { HomepageModule } from './homepage/homepage.module';
 import { PaymentModule } from './payment/payment.module';
 import { CouponModule } from './coupon/coupon.module';
 import { SellerModule } from './seller/seller.module';
-import { KeepAliveModule } from './utils/keep-alive.module';
 import { WishlistModule } from './wishlist/wishlist.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SeoModule } from './seo/seo.module';
@@ -35,77 +43,80 @@ import { ProformaInvoiceModule } from './seller/proforma-invoice/proforma-invoic
 
 @Module({
   imports: [
+    // ── Core infra ───────────────────────────────────────────────────────
+    ConfigModule.forRoot({ isGlobal: true }),
+
     ScheduleModule.forRoot(),
-    ConfigModule.forRoot(
-      {
-        isGlobal: true
-      }
-    ),
+
+    // ── Rate limiting (applied globally via APP_GUARD in providers) ───────
+    ThrottlerModule.forRoot([
+      { name: 'short',  ttl: 1000,  limit: 10  },  // 10  req / sec
+      { name: 'medium', ttl: 10000, limit: 50  },  // 50  req / 10 sec
+      { name: 'long',   ttl: 60000, limit: 200 },  // 200 req / min
+    ]),
+
+    // ── In-memory cache (isGlobal = inject CacheManager anywhere) ─────────
+    CacheModule.register({
+      isGlobal: true,
+      ttl: 300_000, // 5 minutes in milliseconds
+    }),
+
+    // ── Data layer ───────────────────────────────────────────────────────
     PrismaModule,
 
-     JwtModule.registerAsync({
-          useFactory: () => ({
-             global: true,
-            secret: "prasanna",
-            signOptions: { expiresIn: '1h' },
-          }),
-        }),
-    
+    // ── Auth ─────────────────────────────────────────────────────────────
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        global: true,
+        secret: configService.get<string>('JWT_SECRET'),
+        signOptions: { expiresIn: '1h' },
+      }),
+    }),
+
+    // ── Feature modules ──────────────────────────────────────────────────
     CheckModule,
-
     KeepAliveModule,
-   
     CategoryModule,
-   
     UserModule,
-   
     AuthModule,
-   
     BusinessModule,
-   
     ProductsModule,
-   
     CustomerUserModule,
-
     QuotationModule,
-   
     CustomerModule,
-   
     AttributesModule,
-   
     AdminModule,
-   
     BannerModule,
-   
     CartModule,
-
     ProformaInvoiceModule,
-   
     CustomizationImageModule,
-   
     ProductSearchModule,
-   
     OrderModule,
-   
     HomepageAdminModule,
-   
     HomepageModule,
-   
     PaymentModule,
-   
     CouponModule,
-   
     SellerModule,
-   
     WishlistModule,
-   
     NotificationsModule,
-   
     SeoModule,
-   
-    BankCashChequeModule    
+    BankCashChequeModule,
   ],
-  providers: [PrismaService],
 
+  providers: [
+    PrismaService,
+    KeepAliveService,
+
+    // ── Apply ThrottlerGuard to every route globally ──────────────────────
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(LoggerMiddleware).forRoutes('*');
+  }
+}

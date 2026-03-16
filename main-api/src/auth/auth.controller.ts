@@ -9,6 +9,7 @@ import { auth } from 'google-auth-library';
 import { ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
+import { Throttle } from '@nestjs/throttler';
 
 @Controller('auth')
 export class AuthController {
@@ -23,6 +24,7 @@ export class AuthController {
 
   @HttpCode(HttpStatus.OK) // Set status to 200 OK for login
   @Post('login')
+  @Throttle({ short: { limit: 5, ttl: 60000 } })
   login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);
   }
@@ -68,6 +70,7 @@ export class AuthController {
     }
   }
   @Post('forgot-password')
+  @Throttle({ short: { limit: 3, ttl: 60000 } }) // 3 per minute  
 @HttpCode(HttpStatus.OK)
 async forgotPassword(@Body() dto: ForgotPasswordDto) {
   return this.authService.forgotPassword(dto);

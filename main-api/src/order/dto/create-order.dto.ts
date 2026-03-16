@@ -1,3 +1,5 @@
+// src/orders/dto/create-order.dto.ts
+
 import { IsEnum, IsNotEmpty, IsOptional, IsNumber, IsObject, IsArray, IsString } from 'class-validator';
 import { PaymentMethod, Prisma } from '@prisma/client';
 
@@ -18,6 +20,14 @@ export class CreateOrderDto {
   @IsOptional()
   @IsNumber()
   shippingFee?: number;
+
+  @IsOptional()
+  @IsNumber()
+  codFee?: number;          // ✅ COD handling fee (flat ₹30)
+
+  @IsOptional()
+  @IsNumber()
+  platformFee?: number;     // ✅ platform commission
 
   @IsOptional()
   @IsNumber()

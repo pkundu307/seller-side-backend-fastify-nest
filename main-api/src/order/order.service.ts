@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { OrderStatus, PaymentStatus, NotificationType } from '@prisma/client';
+import { OrderStatus, PaymentStatus, NotificationType, PlatformChargeType } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 
@@ -13,139 +13,225 @@ function generateOrderNumber() {
 export class OrdersService {
   constructor(private prisma: PrismaService) {}
 
-  async createCashOnDeliveryOrder(customerUserId: string, dto: CreateOrderDto) {
-    // 1. Validate Payment Method
-    if (dto.paymentMethod !== 'cash_on_delivery') {
-      throw new BadRequestException('This endpoint only supports "cash_on_delivery" orders.');
-    }
-    if (!dto.cartItemIds || dto.cartItemIds.length === 0) {
-      throw new BadRequestException('No items selected for checkout.');
-    }
+// src/orders/orders.service.ts — createCashOnDeliveryOrder()
 
-    // 2. Fetch Items & Verify Ownership
-    const cartItems = await this.prisma.cartItem.findMany({
-      where: { customerUserId, id: { in: dto.cartItemIds } },
-      include: {
-        variant: {
-          include: { product: true },
+async createCashOnDeliveryOrder(customerUserId: string, dto: CreateOrderDto) {
+  if (dto.paymentMethod !== 'cash_on_delivery') {
+    throw new BadRequestException('This endpoint only supports "cash_on_delivery" orders.');
+  }
+  if (!dto.cartItemIds || dto.cartItemIds.length === 0) {
+    throw new BadRequestException('No items selected for checkout.');
+  }
+
+  // 1. Fetch & validate cart items
+  const cartItems = await this.prisma.cartItem.findMany({
+    where: { customerUserId, id: { in: dto.cartItemIds } },
+    include: {
+      variant: {
+        include: {
+          product: {
+            include: { business: true },
+          },
         },
+      },
+    },
+  });
+
+  if (cartItems.length !== new Set(dto.cartItemIds).size) {
+    throw new BadRequestException('One or more selected items are invalid.');
+  }
+
+  // 2. Calculate subtotal & collect involved businesses
+  let totalAmount = new Decimal(0);
+  const involvedBusinessIds = new Set<string>();
+
+  for (const item of cartItems) {
+    if (!item.variant) {
+      throw new NotFoundException(`Variant missing for cart item ${item.id}`);
+    }
+    totalAmount = totalAmount.plus(
+      new Decimal(item.variant.price).times(item.quantity),
+    );
+    if (item.variant.product.businessId) {
+      involvedBusinessIds.add(item.variant.product.businessId);
+    }
+  }
+
+  // 3. Add fees
+  const COD_FEE = new Decimal(dto.codFee ?? 30);
+  totalAmount = totalAmount.plus(COD_FEE);
+  if (dto.shippingFee) totalAmount = totalAmount.plus(dto.shippingFee);
+  if (dto.platformFee) totalAmount = totalAmount.plus(dto.platformFee);
+  if (dto.taxAmount)   totalAmount = totalAmount.plus(dto.taxAmount);
+
+  // 4. Subtract discounts
+  if (dto.discount)       totalAmount = totalAmount.minus(dto.discount);
+  if (dto.couponDiscount) totalAmount = totalAmount.minus(dto.couponDiscount);
+
+  if (totalAmount.lessThan(0)) totalAmount = new Decimal(0);
+
+  const orderNum           = generateOrderNumber();
+  const businessIdsArray   = Array.from(involvedBusinessIds);
+  const primaryBusinessId  = businessIdsArray[0] ?? null;
+
+  // 5. Run everything in a transaction
+  const newOrder = await this.prisma.$transaction(async (tx) => {
+    // A. Create order
+    const order = await tx.order.create({
+      data: {
+        customerUserId,
+        totalAmount,
+        selectedAddress: dto.selectedAddress ?? {},
+        paymentMethod:   'cash_on_delivery',
+        paymentStatus:   PaymentStatus.pending,
+        status:          OrderStatus.pending,
+        shippingFee:     dto.shippingFee  ?? 0,
+        taxAmount:       dto.taxAmount    ?? 0,
+        discount:        dto.discount     ?? 0,
+        orderNumber:     orderNum,
+        couponCode:      dto.couponCode     ?? null,
+        couponDiscount:  dto.couponDiscount ?? null,
       },
     });
 
-    if (cartItems.length !== new Set(dto.cartItemIds).size) {
-      throw new BadRequestException('One or more selected items are invalid.');
-    }
-
-    // 3. Calculate Totals & Identify Sellers
-    let totalAmount = new Decimal(0);
-    const involvedBusinessIds = new Set<string>();
-
-    for (const item of cartItems) {
-      if (!item.variant) throw new NotFoundException(`Variant missing for item ${item.id}`);
-      const itemTotal = new Decimal(item.variant.price).times(item.quantity);
-      totalAmount = totalAmount.plus(itemTotal);
-      if (item.variant.product.businessId) {
-        involvedBusinessIds.add(item.variant.product.businessId);
-      }
-    }
-
-    if (dto.shippingFee) totalAmount = totalAmount.plus(dto.shippingFee);
-    if (dto.taxAmount) totalAmount = totalAmount.plus(dto.taxAmount);
-    if (dto.discount) totalAmount = totalAmount.minus(dto.discount);
-    if (dto.couponDiscount) totalAmount = totalAmount.minus(dto.couponDiscount);
-
-    const orderNum = generateOrderNumber();
-
-    // 4. Execute Transaction
-    return this.prisma.$transaction(async (tx) => {
-      // A. Create Order
-      const newOrder = await tx.order.create({
+    // B. Platform commission charge
+    if (dto.platformFee && dto.platformFee > 0 && primaryBusinessId) {
+      await tx.platformCharge.create({
         data: {
-          customerUserId,
-          totalAmount,
-          selectedAddress: dto.selectedAddress ?? {},
-          paymentMethod: 'cash_on_delivery',
-          paymentStatus: PaymentStatus.pending,
-          status: OrderStatus.pending,
-          shippingFee: dto.shippingFee || 0,
-          taxAmount: dto.taxAmount || 0,
-          discount: dto.discount || 0,
-          orderNumber: orderNum,
-          couponCode: dto.couponCode ?? null,
-          couponDiscount: dto.couponDiscount ?? null,
+          orderId:              order.id,
+          businessId:           primaryBusinessId,
+          chargeType:           PlatformChargeType.COMMISSION,
+          description:          'Platform commission on COD order',
+          amount:               dto.platformFee,
+          currency:             'INR',
+          isDeductedFromSeller: false,
+          isRefundable:         false,
         },
       });
+    }
 
-      // B. Redeem Coupon
-      if (dto.couponCode && dto.couponDiscount) {
-        const coupon = await tx.coupon.findUnique({ where: { code: dto.couponCode } });
-        if (coupon) {
-          await tx.couponUsage.create({
-            data: {
-              couponId: coupon.id,
-              customerUserId,
-              orderId: newOrder.id,
-              discountApplied: dto.couponDiscount,
-            },
-          });
-          await tx.coupon.update({
-            where: { id: coupon.id },
-            data: { usedCount: { increment: 1 } },
-          });
-        }
-      }
-
-      // C. Create Order Items
-      const orderItemsData = cartItems.map((item) => ({
-        orderId: newOrder.id,
-        productId: item.productId,
-        variantId: item.variantId,
-        quantity: item.quantity,
-        priceAtTimeOfOrder: item.variant!.price,
-        customizationImages: item.customizationImages,
-        customizationDetails: item.customizationDetails ?? undefined,
-      }));
-      await tx.orderItem.createMany({ data: orderItemsData });
-
-      // D. Clear Cart
-      await tx.cartItem.deleteMany({
-        where: { customerUserId, id: { in: dto.cartItemIds } },
-      });
-
-      // E. Notify Customer
-      await tx.customerNotification.create({
+    // C. COD handling fee charge
+    if (primaryBusinessId) {
+      await tx.platformCharge.create({
         data: {
-          customerUserId,
-          title: 'Order Placed',
-          message: `Order ${orderNum} placed successfully for ₹${totalAmount}.`,
-          type: NotificationType.ORDER,
-          metadata: { orderId: newOrder.id, orderNumber: orderNum },
+          orderId:              order.id,
+          businessId:           primaryBusinessId,
+          chargeType:           PlatformChargeType.ADJUSTMENT,
+          description:          `COD handling fee ₹${COD_FEE.toFixed(2)}`,
+          amount:               COD_FEE,
+          currency:             'INR',
+          isDeductedFromSeller: false,
+          isRefundable:         false,
         },
       });
+    }
 
-      // F. Notify Sellers
-      const businessIdsArray = Array.from(involvedBusinessIds);
-      if (businessIdsArray.length > 0) {
-        const sellers = await tx.user.findMany({
-          where: { businesses: { some: { id: { in: businessIdsArray } } } },
-          select: { id: true },
+    // D. Coupon redemption
+    if (dto.couponCode && dto.couponDiscount) {
+      const coupon = await tx.coupon.findUnique({
+        where: { code: dto.couponCode },
+      });
+      if (coupon) {
+        await tx.couponUsage.create({
+          data: {
+            couponId:        coupon.id,
+            customerUserId,
+            orderId:         order.id,
+            discountApplied: dto.couponDiscount,
+          },
         });
-        for (const seller of sellers) {
-          await tx.sellerNotification.create({
-            data: {
-              userId: seller.id,
-              title: 'New COD Order',
-              message: `You have received a new COD order ${orderNum}.`,
-              type: NotificationType.ORDER,
-              metadata: { orderId: newOrder.id },
-            },
-          });
-        }
+        await tx.coupon.update({
+          where: { id: coupon.id },
+          data:  { usedCount: { increment: 1 } },
+        });
       }
+    }
 
-      return newOrder;
+    // E. Create order items
+    await tx.orderItem.createMany({
+      data: cartItems.map((item) => ({
+        orderId:              order.id,
+        productId:            item.productId,
+        variantId:            item.variantId,
+        quantity:             item.quantity,
+        priceAtTimeOfOrder:   item.variant!.price,
+        customizationImages:  item.customizationImages,
+        customizationDetails: item.customizationDetails ?? undefined,
+      })),
     });
-  }
+
+    // F. Clear selected cart items
+    await tx.cartItem.deleteMany({
+      where: { customerUserId, id: { in: dto.cartItemIds } },
+    });
+
+    // G. Notify customer
+    await tx.customerNotification.create({
+      data: {
+        customerUserId,
+        title:    'Order Placed',
+        message:  `Your order ${orderNum} has been placed for ₹${totalAmount.toFixed(2)} (incl. ₹${COD_FEE.toFixed(2)} COD fee).`,
+        type:     NotificationType.ORDER,
+        metadata: { orderId: order.id, orderNumber: orderNum },
+      },
+    });
+
+    // H. Notify all involved sellers
+    if (businessIdsArray.length > 0) {
+      const sellers = await tx.user.findMany({
+        where:  { businesses: { some: { id: { in: businessIdsArray } } } },
+        select: { id: true },
+      });
+      for (const seller of sellers) {
+        await tx.sellerNotification.create({
+          data: {
+            userId:   seller.id,
+            title:    'New COD Order',
+            message:  `New COD order ${orderNum} received.`,
+            type:     NotificationType.ORDER,
+            metadata: { orderId: order.id },
+          },
+        });
+      }
+    }
+
+    return order;
+  });
+
+  // 6. ✅ Fetch full order with items AFTER transaction (outside tx, safe)
+  const fullOrder = await this.prisma.order.findUnique({
+    where:   { id: newOrder.id },
+    include: {
+      items: {
+        include: {
+          variant: {
+            include: { product: true },
+          },
+        },
+      },
+    },
+  });
+
+  // 7. ✅ Return shaped response — matches frontend OrderData interface exactly
+  return {
+    id:              newOrder.id,
+    orderNumber:     newOrder.orderNumber,
+    createdAt:       newOrder.createdAt.toISOString(),
+    totalAmount:     newOrder.totalAmount.toFixed(2),    // string, not Decimal
+    selectedAddress: newOrder.selectedAddress,
+    couponCode:      newOrder.couponCode     ?? null,
+    couponDiscount:  newOrder.couponDiscount
+                       ? Number(newOrder.couponDiscount)
+                       : null,
+    items: (fullOrder?.items ?? []).map((item) => ({
+      productName: item.variant?.product?.title   ?? 'Product',
+      imageUrl:    item.variant?.product?.images?.[0] ?? '',
+      quantity:    item.quantity,
+      price:       item.priceAtTimeOfOrder.toFixed(2),
+    })),
+  };
+}
+
 
   // API for Success Page
   async getOrderSuccessDetails(customerUserId: string, orderId: string) {
