@@ -71,6 +71,7 @@ export class ExpensesService {
       // Create Expense
       const expense = await tx.expense.create({
         data: {
+          expenseNumber,
           businessId,
           expenseDate: new Date(dto.expenseDate),
           category: dto.category,
