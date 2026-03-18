@@ -157,6 +157,8 @@ model User {
   campaignDocShareLinks    CampaignDocumentShareLink[]
   performedActivities      ActivityLog[]                @relation("PerformedUserActivities")
   walletTransactions       WalletTransaction[]          @relation("WalletPerformedBy")
+  sales                    Sale[]
+  gstFilingDocuments       GstFilingDocument[]
 }
 
 model Permission {
@@ -226,7 +228,7 @@ model Address {
 model Business {
   id                              String                      @id @default(uuid())
   name                            String
-gstNumber String? @unique
+  gstNumber                       String?                     @unique
   address                         String
   city                            String
   state                           String
@@ -247,6 +249,12 @@ gstNumber String? @unique
   itemBatches                     ItemBatching[]
   serialisations                  ItemSerialisation[]
   campaigns                       Campaign[]
+  isGstFilingEnabled              Boolean                     @default(false)
+  gstFilingConsentAt              DateTime? // When owner gave consent
+  gstFilingConsentIp              String?
+  gstPortalUsername               String? // GST portal login
+  gstPortalPasswordEnc            String? // AES-256 encrypted — NEVER plain text
+  gstFilingRequests               GstFilingRequest[]
   gstRegistrationType             String?                     @db.VarChar(32)
   isCompositionDealer             Boolean                     @default(false)
   stateCode                       String?                     @db.VarChar(4)
@@ -273,6 +281,7 @@ gstNumber String? @unique
   kycRejectedAt                   DateTime?
   kycRemarks                      String?
   kycStatus                       SellerKycStatus             @default(PENDING)
+  salesDebitNotes                 SalesDebitNote[]            @relation("BusinessSalesDebitNotes")
   kycSubmittedAt                  DateTime?
   kycVerifiedAt                   DateTime?
   kycDocumentsJson                Json?                       @map("kyc_documents")
@@ -325,7 +334,78 @@ gstNumber String? @unique
   partyActivities                 PartyActivity[]
   invoiceSeries                   InvoiceSeries[]
   uqcMappings                     UqcMapping[]
+  gstTaxPaymentChallans           GstTaxPaymentChallan[]
   platformCharges                 PlatformCharge[]
+  otherIncomes                    OtherIncome[]
+}
+
+enum GstFilingFrequency {
+  MONTHLY
+  QUARTERLY
+  ANNUALLY
+}
+
+enum GstReturnType {
+  GSTR1
+  GSTR3B
+  GSTR4
+  GSTR9
+}
+
+model GstFilingRequest {
+  id          String             @id @default(uuid())
+  businessId  String
+  returnType  GstReturnType
+  periodMonth Int // 1–12
+  periodYear  Int
+  frequency   GstFilingFrequency @default(MONTHLY)
+  dueDate     DateTime? // Legal GST due date
+
+  status GstFilingStatus @default(DRAFT)
+
+  // Platform-side assignment
+  assignedToUserId String?
+  assignedAt       DateTime?
+
+  // Business review & approval
+  sentForReviewAt  DateTime?
+  approvedAt       DateTime?
+  reviewedByUserId String?
+  approvalNotes    String?
+
+  // Filing result
+  filedAt   DateTime?
+  ackNumber String?   @db.VarChar(64) // GST portal ACK no.
+  ackDate   DateTime?
+  arnNumber String?   @db.VarChar(128) // Application Reference Number
+
+  // Financial summary
+  totalOutwardTaxable Decimal?
+  totalOutwardTax     Decimal?
+  totalItcClaimed     Decimal?
+  netTaxPayable       Decimal?
+  lateFee             Decimal? @default(0)
+  interest            Decimal? @default(0)
+
+  // Failure info
+  failureReason   String?
+  portalErrorCode String? @db.VarChar(64)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  business  Business              @relation(fields: [businessId], references: [id])
+  snapshot  GstFilingSnapshot?
+  challan   GstTaxPaymentChallan?
+  documents GstFilingDocument[]
+  auditLogs GstFilingAuditLog[]
+
+  @@unique([businessId, returnType, periodMonth, periodYear])
+  @@index([businessId])
+  @@index([status])
+  @@index([returnType, periodMonth, periodYear])
+  @@map("gst_filing_requests")
 }
 
 model InvoiceSeries {
@@ -638,6 +718,20 @@ model Review {
   product            Product      @relation(fields: [productId], references: [id])
 }
 
+model OtherIncome {
+  id          String   @id @default(uuid())
+  businessId  String
+  date        DateTime
+  description String   @db.VarChar(256)
+  amount      Decimal
+  category    String?  @db.VarChar(128)
+  createdAt   DateTime @default(now())
+  business    Business @relation(fields: [businessId], references: [id])
+
+  @@index([businessId])
+  @@map("other_income")
+}
+
 model Order {
   id                    String        @id @default(uuid())
   totalAmount           Decimal
@@ -702,14 +796,14 @@ model CouponUsage {
 model OrderItem {
   id                   String       @id @default(uuid())
   quantity             Int
-businessId String?
+  businessId           String?
   priceAtTimeOfOrder   Decimal
   note                 String?
   orderId              String
   productId            String
   variantId            String?
-  supplyState     String?
-  supplyStateCode String? @db.VarChar(4)
+  supplyState          String?
+  supplyStateCode      String?      @db.VarChar(4)
   customizationDetails Json?
   customizationImages  String[]
   order                Order        @relation(fields: [orderId], references: [id])
@@ -723,8 +817,8 @@ model CartItem {
   productId            String
   variantId            String?
   customerUserId       String
-  supplyState         String?
-  supplyStateCode String? @db.VarChar(4)
+  supplyState          String?
+  supplyStateCode      String?      @db.VarChar(4)
   customizationDetails Json?
   customizationImages  String[]     @default([])
   customerUser         CustomerUser @relation(fields: [customerUserId], references: [id])
@@ -868,6 +962,7 @@ model Sale {
   panNo                     String                 @db.VarChar(128)
   isDiscountAfterTaxEnabled Boolean
   discountPercent           Decimal
+  salesDebitNotes           SalesDebitNote[]       @relation("SaleSalesDebitNotes")
   placeOfSupplyCode         String?                @db.VarChar(4)
   gstState                  GstState?              @relation(fields: [placeOfSupplyCode], references: [stateCode])
   discountAmount            Decimal
@@ -883,7 +978,10 @@ model Sale {
   roundoffType              String                 @db.VarChar(64)
   roundoffAmount            Decimal
   totalAmount               Decimal
+  createdByUserId           String? // Sales Summary - Category Wise
+  createdByUser             User?                  @relation(fields: [createdByUserId], references: [id])
   isSettled                 Boolean
+  invoiceCategory           String?                @db.VarChar(8) // "B2B" | "B2CL" | "B2CS" | "EXPORT" — ❌ ADD (optional but useful)
   balanceAmount             Decimal
   termCondition             String
   notes                     String
@@ -918,7 +1016,7 @@ model SaleItem {
   quantity               Decimal
   price                  Decimal
   priceType              String   @db.VarChar(64)
-  supplyState     String?      @db.VarChar(128)
+  supplyState            String?  @db.VarChar(128)
   unit                   String   @db.VarChar(128)
   discountPercent        Decimal
   discountAmount         Decimal
@@ -1125,6 +1223,7 @@ model StockActivity {
   invoicePrefix String   @db.VarChar(128)
   invoiceNo     Int
   quantity      Decimal
+  notes         String? // Stock Detail Report
   closingStock  Decimal
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -1206,6 +1305,7 @@ model StaffMember {
   lastOtp                  String?
   otpExpiry                DateTime?
   password                 String?
+  advanceBalance           Decimal                      @default(0) // Outstanding advance given to staff
   pin                      String?
   appointments             Appointment[]
   attendance               Attendance[]
@@ -1241,15 +1341,18 @@ model Attendance {
 }
 
 model SalaryPayout {
-  id             String      @id @default(uuid())
-  staffMemberId  String
-  payoutDate     DateTime
-  amountPaid     Decimal
-  paymentPeriod  String
-  paymentMethod  String
-  transactionRef String?
-  notes          String?
-  staffMember    StaffMember @relation(fields: [staffMemberId], references: [id])
+  id              String      @id @default(uuid())
+  staffMemberId   String
+  payoutDate      DateTime
+  amountPaid      Decimal
+  paymentPeriod   String
+  deductionAmount Decimal     @default(0) // Deductions (leaves, advances)
+  advanceDeducted Decimal     @default(0) // If advance was given earlier
+  netSalary       Decimal?
+  paymentMethod   String
+  transactionRef  String?
+  notes           String?
+  staffMember     StaffMember @relation(fields: [staffMemberId], references: [id])
 
   @@index([staffMemberId])
 }
@@ -1519,6 +1622,11 @@ model Purchase {
   depositAccountId  String?
   tcsAmount         Decimal         @default(0)
   tcsRate           Decimal?
+  originalInvoiceNo String?         @db.VarChar(128) // Purchase Summary, GST Purchase
+  invoiceType       String?         @db.VarChar(64) // GSTR-2 (Regular/Debit Note etc.)
+  supplierStateCode String?         @db.VarChar(4) // GSTR-2 State Code column
+  isImport          Boolean         @default(false) // GSTR-3b Section 4(1)(2)
+  isISD             Boolean         @default(false) // GSTR-3b Section 4(4) ISD
   debitNotes        DebitNote[]
   business          Business        @relation(fields: [businessId], references: [id])
   depositAccount    BankCashCheque? @relation(fields: [depositAccountId], references: [id])
@@ -1541,6 +1649,11 @@ model PurchaseItem {
   taxAmount     Decimal  @default(0)
   discount      Decimal  @default(0)
   totalAmount   Decimal
+  itemCode      String?  @db.VarChar(128) // Item Report By Party
+  cgst          Decimal  @default(0) // GST Purchase, GSTR-2, GSTR-3b ITC
+  sgst          Decimal  @default(0)
+  igst          Decimal  @default(0)
+  cess          Decimal  @default(0)
   createdAt     DateTime @default(now())
   purchase      Purchase @relation(fields: [purchaseId], references: [id])
   variant       Variant  @relation(fields: [variantId], references: [id])
@@ -1559,6 +1672,7 @@ model Expense {
   notes              String?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
+  expenseNumber      String          @db.VarChar(64) // Expense Transaction Report (auto-gen like EXP-0001)
   deleteAt           DateTime?
   isRcmApplicable    Boolean         @default(false)
   itcClaimed         Boolean         @default(true)
@@ -1709,11 +1823,47 @@ model CreditNote {
   noteType            String    @default("C") @db.VarChar(4)
   reasonCode          String?   @db.VarChar(4)
   originalInvoiceDate DateTime?
+  noteCategory        String    @default("CREDIT") // "CREDIT" | "DEBIT" 
   status              String    @default("ACTIVE")
+  cgst                Decimal   @default(0)
+  sgst                Decimal   @default(0)
+  igst                Decimal   @default(0)
+  cessAmount          Decimal   @default(0)
+  rate                Decimal   @default(0) // applicable tax %
+  buyerGstin          String?   @db.VarChar(20)
   taxableAmount       Decimal   @default(0) // ADD THIS FIELD
   createdAt           DateTime  @default(now())
   business            Business  @relation(fields: [businessId], references: [id])
   sale                Sale      @relation(fields: [saleId], references: [id])
+}
+
+model SalesDebitNote {
+  id                  String    @id @default(uuid())
+  businessId          String
+  saleId              String
+  noteNo              String
+  date                DateTime
+  reason              String
+  reasonCode          String?   @db.VarChar(4)
+  amount              Decimal
+  taxableAmount       Decimal   @default(0)
+  cgst                Decimal   @default(0)
+  sgst                Decimal   @default(0)
+  igst                Decimal   @default(0)
+  cessAmount          Decimal   @default(0)
+  rate                Decimal   @default(0)
+  buyerGstin          String?   @db.VarChar(20)
+  placeOfSupplyCode   String?   @db.VarChar(4)
+  originalInvoiceDate DateTime?
+  status              String    @default("ACTIVE")
+
+  // ✅ both sides defined here
+  business Business @relation("BusinessSalesDebitNotes", fields: [businessId], references: [id])
+  sale     Sale     @relation("SaleSalesDebitNotes", fields: [saleId], references: [id])
+
+  @@index([businessId])
+  @@index([saleId])
+  @@map("sales_debit_notes")
 }
 
 model DebitNote {
@@ -1788,6 +1938,8 @@ model TaxEntry {
   isFiled       Boolean   @default(false)
   challanDate   DateTime?
   deletedAt     DateTime?
+  partyGstin    String?   @db.VarChar(15) // TDS/TCS Payable & Receivable
+  taxName       String?   @db.VarChar(128)
   createdAt     DateTime  @default(now())
   business      Business  @relation(fields: [businessId], references: [id])
 }
@@ -1927,6 +2079,7 @@ model Party {
   bankTransactions BankCashChequeTransaction[] @relation("PartyBankTx")
   sales            Sale[]                      @relation("SaleParty")
   purchases        Purchase[]                  @relation("PurchaseParty")
+  campaigns        Campaign[]
 
   @@index([businessId, partyType])
 }
@@ -2060,6 +2213,8 @@ model Campaign {
   documents       CampaignDocument[]
   folders         CampaignFolder[]
   sprints         CampaignSprint[]
+  clientPartyId   String?
+  clientParty     Party?             @relation(fields: [clientPartyId], references: [id])
 
   @@index([businessId])
   @@index([status])
@@ -2126,6 +2281,8 @@ model CampaignTask {
   dueDate           DateTime?
   completedAt       DateTime?
   estimatedMinutes  Int?
+  startDate         DateTime? // For Gantt chart rendering (only dueDate exists now)
+  tags              String[]
   assignedToStaffId String?
   assignedToStaff   StaffMember?             @relation(fields: [assignedToStaffId], references: [id], onDelete: SetNull)
   assignedToUserId  String?
@@ -2163,18 +2320,19 @@ model CampaignTaskDependency {
 }
 
 model CampaignTaskTimeLog {
-  id        String       @id @default(uuid())
-  taskId    String
-  task      CampaignTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  userId    String?
-  user      User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
-  staffId   String?
-  staff     StaffMember? @relation(fields: [staffId], references: [id], onDelete: SetNull)
-  startedAt DateTime
-  endedAt   DateTime?
-  minutes   Int?
-  note      String?
-  createdAt DateTime     @default(now())
+  id         String       @id @default(uuid())
+  taskId     String
+  task       CampaignTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  staffId    String?
+  staff      StaffMember? @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  startedAt  DateTime
+  endedAt    DateTime?
+  minutes    Int?
+  note       String?
+  isBillable Boolean      @default(false) // Client billing / invoice generation
+  createdAt  DateTime     @default(now())
 
   @@index([taskId])
   @@map("campaign_task_time_logs")
@@ -2370,21 +2528,6 @@ model CampaignDocumentShareLink {
   @@map("campaign_document_share_links")
 }
 
-model CampaignDocumentAccessLog {
-  id          String                    @id @default(uuid())
-  shareLinkId String
-  shareLink   CampaignDocumentShareLink @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
-  userId      String?
-  staffId     String?
-  ipAddress   String?                   @db.VarChar(45)
-  userAgent   String?
-  accessedAt  DateTime                  @default(now())
-
-  @@index([shareLinkId])
-  @@index([accessedAt])
-  @@map("campaign_document_access_logs")
-}
-
 enum TicketSenderType {
   CUSTOMER
   SELLER
@@ -2402,6 +2545,167 @@ enum AttendanceStatus {
   ABSENT
   ON_LEAVE
   HALF_DAY
+}
+
+model CampaignDocumentAccessLog {
+  id          String                    @id @default(uuid())
+  shareLinkId String
+  shareLink   CampaignDocumentShareLink @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
+
+  // Optional identifiers
+  userId  String?
+  staffId String?
+
+  // Access metadata
+  ipAddress  String?  @db.VarChar(45) // IPv4/IPv6 max length
+  userAgent  String? // Browser/device info
+  accessedAt DateTime @default(now()) // Timestamp of access
+
+  // Relations
+  // (You can extend with audit logs or related entities if needed)
+
+  @@index([shareLinkId])
+  @@index([accessedAt])
+  @@map("campaign_document_access_logs")
+}
+
+// prisma/schema.prisma
+
+model GstFilingSnapshot {
+  id              String @id @default(uuid())
+  filingRequestId String @unique
+
+  // Frozen JSON blobs — exactly what was submitted to the portal
+  outwardSupplies  Json // B2B, B2CL, B2CS, EXPORT, NIL grouped
+  inwardSupplies   Json? // ITC data
+  hsnSummary       Json?
+  documentSummary  Json?
+  filingRequest    GstFilingRequest @relation(fields: [filingRequestId], references: [id])
+  // ITC breakdown for GSTR-3B Section 4
+  itcFromPurchases Decimal          @default(0)
+  itcFromImport    Decimal          @default(0)
+  itcReversed      Decimal          @default(0)
+  ineligibleItc    Decimal          @default(0)
+
+  // Counts
+  totalInvoiceCount    Int @default(0)
+  totalCreditNoteCount Int @default(0)
+
+  snapshotTakenAt DateTime @default(now())
+
+  // Relations
+  lineItems GstFilingLineItem[]
+
+  @@map("gst_filing_snapshots")
+}
+
+model GstFilingLineItem {
+  id         String @id @default(uuid())
+  snapshotId String
+
+  sourceType String @db.VarChar(32) // SALE | PURCHASE | CREDITNOTE | DEBITNOTE
+  sourceId   String // Original Sale.id / Purchase.id
+
+  // Frozen values at time of snapshot
+  invoiceNo       String            @db.VarChar(128)
+  invoiceDate     DateTime
+  partyName       String            @db.VarChar(256)
+  partyGstin      String?           @db.VarChar(15)
+  placeOfSupply   String            @db.VarChar(128)
+  invoiceCategory String            @db.VarChar(8) // B2B / B2CL / B2CS / EXPORT
+  taxableAmount   Decimal
+  cgst            Decimal           @default(0)
+  sgst            Decimal           @default(0)
+  igst            Decimal           @default(0)
+  cess            Decimal           @default(0)
+  totalAmount     Decimal
+  isReverseCharge Boolean           @default(false)
+  snapshot        GstFilingSnapshot @relation(fields: [snapshotId], references: [id])
+
+  // ...existing fields...
+  @@index([snapshotId])
+  @@index([sourceType, sourceId])
+  @@map("gst_filing_line_items")
+}
+
+// Tax payment challan (PMT-06)
+model GstTaxPaymentChallan {
+  filingRequestId String           @unique
+  challanNo       String?          @db.VarChar(64)
+  challanDate     DateTime?
+  bankReference   String?          @db.VarChar(128)
+  id              String           @id @default(uuid()) 
+  filingRequest   GstFilingRequest @relation(fields: [filingRequestId], references: [id])
+  business        Business         @relation(fields: [businessId], references: [id])
+  businessId      String 
+
+  // ...existing fields...
+  createdAt     DateTime             @default(now()) 
+  updatedAt     DateTime             @updatedAt 
+  // Amounts
+  cgstAmount    Decimal              @default(0)
+  sgstAmount    Decimal              @default(0)
+  igstAmount    Decimal              @default(0)
+  cessAmount    Decimal              @default(0)
+  lateFee       Decimal              @default(0)
+  interest      Decimal              @default(0)
+  totalAmount   Decimal
+  status        ChallanPaymentStatus @default(PENDING)
+  challanPdfUrl String?
+
+  @@index([businessId]) 
+  @@map("gst_tax_payment_challans")
+}
+
+// Filed docs — ACK PDF, summary PDF, challan, raw JSON
+model GstFilingDocument {
+  id String @id @default(uuid()) 
+
+  filingRequest       GstFilingRequest @relation(fields: [filingRequestId], references: [id])
+  // ...existing fields...
+  createdAt           DateTime         @default(now()) 
+  filingRequestId     String
+  documentType        String           @db.VarChar(64)
+  // FILED_JSON | ACK_PDF | CHALLAN_PDF | SUMMARY_PDF | COMPUTATION_SHEET
+  fileName            String           @db.VarChar(256)
+  fileUrl             String
+  isVisibleToBusiness Boolean          @default(true) // Controls what business sees
+  uploadedByUserId    String?
+  uploadedByUser      User?            @relation(fields: [uploadedByUserId], references: [id])
+
+  @@index([filingRequestId]) 
+  @@map("gst_filing_documents")
+}
+
+// Full audit trail of every action
+model GstFilingAuditLog {
+  id                String           @id @default(uuid()) 
+  filingRequestId   String
+  filingRequest     GstFilingRequest @relation(fields: [filingRequestId], references: [id])
+  // ...existing fields...
+  createdAt         DateTime         @default(now()) 
+  action            String           @db.VarChar(128)
+  // CREATED | SENT_FOR_REVIEW | APPROVED | FILED_SUCCESSFULLY | CHALLAN_PAID ...
+  fromStatus        GstFilingStatus?
+  toStatus          GstFilingStatus?
+  performedByUserId String?
+  note              String?
+  metadata          Json?
+
+  @@index([performedByUserId]) 
+  @@index([filingRequestId])
+  @@map("gst_filing_audit_logs")
+}
+
+enum GstFilingStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+  PROCESSING
+  FILED
+  FAILED
+  REJECTED
+  CANCELLED
 }
 
 enum NotificationType {
@@ -2438,6 +2742,12 @@ enum WalletTransactionType {
   LOYALTY_POINTS // Loyalty program credits
   EXPIRY_DEBIT // System auto-debits expired credits
   REVERSAL // Transaction reversed (e.g. order cancelled after cashback)
+}
+
+enum ChallanPaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
 }
 
 enum WalletDirection {

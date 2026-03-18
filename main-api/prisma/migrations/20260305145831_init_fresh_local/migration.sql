@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
 -- CreateEnum
 CREATE TYPE "TicketSenderType" AS ENUM ('CUSTOMER', 'SELLER', 'ADMIN');
 
