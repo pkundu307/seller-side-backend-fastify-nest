@@ -58,11 +58,7 @@ export class ProductsController {
       console.log('[CONTROLLER] Business check passed:', business.name);
 
       const formData = await this.parseMultipartData(req);
-      console.log(
-        '[CONTROLLER] Parsed formData:',
-        JSON.stringify(formData, null, 2),
-      );
-
+    
       console.log('[CONTROLLER] Running validation...');
       this.validateProductData(formData);
       console.log('[CONTROLLER] Validation passed.');
