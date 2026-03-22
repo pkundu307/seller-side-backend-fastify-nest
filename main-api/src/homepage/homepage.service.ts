@@ -1,110 +1,138 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+// src/homepage/homepage.service.ts
+import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import * as NodeCache from 'node-cache';
-
-// Define a type for the cached data for clarity
-type HomepageLayout = Awaited<ReturnType<HomepageService['buildHomepageLayout']>>;
+import { ConfigService } from '@nestjs/config';
+import Redis from 'ioredis';
 
 @Injectable()
 export class HomepageService implements OnModuleInit {
-  // In-memory cache: TTL of 5 minutes (300 seconds).
-  // This means the homepage is fetched from the DB at most once every 5 minutes,
-  // making it extremely fast for subsequent users.
-  private readonly cache = new NodeCache({ stdTTL: 300 });
-  private readonly CACHE_KEY = 'HOMEPAGE_LAYOUT';
+  private readonly logger = new Logger(HomepageService.name);
+  private readonly KEY_LAYOUT      = 'HOMEPAGE_LAYOUT';
+  private readonly KEY_DISTRIBUTED = 'HOMEPAGE_DISTRIBUTED_PRODUCTS';
+  private readonly TTL_24H         = 86400; // seconds
+  private redis: Redis;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma:         PrismaService,
+    private configService:  ConfigService,
+  ) {
+    this.redis = new Redis({
+      host:   this.configService.get<string>('REDIS_HOST', '127.0.0.1'),
+      port:   this.configService.get<number>('REDIS_PORT', 6379),
+      family: 4, // force IPv4
+    });
 
-  // This lifecycle hook ensures the cache is warm when the app starts
-  async onModuleInit() {
-    console.log('Warming up homepage cache...');
-    await this.getHomepage();
+    this.redis.on('connect', () => this.logger.log('✅ Redis connected'));
+    this.redis.on('error',   (err) => this.logger.error('❌ Redis error', err));
   }
 
-  /**
-   * Public method to get the homepage layout.
-   * It tries to get data from the cache first. If not available,
-   * it fetches from the DB, stores it in the cache, and then returns it.
-   */
-  async getHomepage(): Promise<HomepageLayout> {
-    const cachedData = this.cache.get<HomepageLayout>(this.CACHE_KEY);
+  async onModuleInit() {
+    this.logger.log('Warming up Redis cache for Homepage...');
+    setTimeout(async () => {
+      await this.getHomepage();
+      await this.getHomepageDistributed();
+    }, 1000);
+  }
 
-    if (cachedData) {
-      console.log('Serving homepage from cache.');
-      return cachedData;
-    }
+  // ── helpers ──────────────────────────────────────────────────────────────
+  private async cacheGet<T>(key: string): Promise<T | null> {
+    const raw = await this.redis.get(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as T;
+  }
 
-    console.log('Cache miss. Building homepage layout from database.');
+  private async cacheSet(key: string, value: unknown): Promise<void> {
+    await this.redis.set(key, JSON.stringify(value), 'EX', this.TTL_24H);
+  }
+
+  // ── public methods ────────────────────────────────────────────────────────
+  async getHomepage() {
+    const cached = await this.cacheGet(this.KEY_LAYOUT);
+    if (cached) return cached;
+
     const freshData = await this.buildHomepageLayout();
-    this.cache.set(this.CACHE_KEY, freshData);
-    
+    await this.cacheSet(this.KEY_LAYOUT, freshData);
     return freshData;
   }
 
-  /**
-   * Fetches and builds the homepage structure from the database.
-   * This is the core database query.
-   */
+  async getHomepageDistributed() {
+    const cached = await this.cacheGet(this.KEY_DISTRIBUTED);
+    if (cached) return cached;
+
+    this.logger.log('Cache Miss: Rebuilding Category-Distributed Products...');
+
+    const categories = await this.prisma.category.findMany({
+      where: {
+        isActive: true,
+        products: { some: { isPublished: true, deletedAt: null } },
+      },
+      select: { id: true, name: true, slug: true },
+    });
+
+    const distributedData = await Promise.all(
+      categories.map(async (cat) => {
+        const products = await this.prisma.product.findMany({
+          where:   { categoryId: cat.id, isPublished: true, deletedAt: null },
+          take:    10,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true, title: true, images: true,
+            variants: {
+              where:  { status: 'ACTIVE', deletedAt: null },
+              take:   1,
+              select: { price: true, sku: true },
+            },
+          },
+        });
+
+        return {
+          categoryName: cat.name,
+          categoryId:   cat.id,
+          categorySlug: cat.slug,
+          products: products.map((p) => ({
+            id:    p.id,
+            name:  p.title,
+            image: p.images?.[0] || null,
+            price: p.variants?.[0]?.price ? Number(p.variants[0].price) : 0,
+            sku:   p.variants?.[0]?.sku   || 'N/A',
+          })),
+        };
+      }),
+    );
+
+    const result = distributedData.filter((c) => c.products.length > 0);
+    await this.cacheSet(this.KEY_DISTRIBUTED, result);
+    this.logger.log('✅ Successfully saved distributed products to Redis');
+    return result;
+  }
+
   async buildHomepageLayout() {
     return this.prisma.homepageSection.findMany({
       where: {
-        // --- IMPORTANT FILTERS FOR PUBLIC API ---
-        isActive: true, // Only fetch active sections
+        isActive: true,
         AND: [
-          {
-            OR: [
-              { startDate: null },
-              { startDate: { lte: new Date() } }, // Section has started
-            ],
-          },
-          {
-            OR: [
-              { endDate: null },
-              { endDate: { gte: new Date() } }, // Section has not ended
-            ],
-          },
+          { OR: [{ startDate: null }, { startDate: { lte: new Date() } }] },
+          { OR: [{ endDate:   null }, { endDate:   { gte: new Date() } }] },
         ],
       },
-      orderBy: {
-        position: 'asc', // Order sections correctly
-      },
+      orderBy: { position: 'asc' },
       select: {
-        // --- SELECT ONLY THE FIELDS THE CLIENT NEEDS ---
-        id: true,
-        title: true,
-        subtitle: true,
-        type: true,
-        styleConfig: true,
+        id: true, title: true, subtitle: true, type: true, styleConfig: true,
         items: {
-          where: {
-            isActive: true, // Only fetch active items within sections
-          },
-          orderBy: {
-            position: 'asc', // Order items correctly
-          },
+          where:   { isActive: true },
+          orderBy: { position: 'asc' },
           select: {
-            id: true,
-            title: true,
-            subtitle: true,
-            imageUrl: true,
-            videoUrl: true,
-            linkType: true,
-            linkValue: true,
-            styleConfig: true,
+            id: true, title: true, subtitle: true, imageUrl: true,
+            videoUrl: true, linkType: true, linkValue: true, styleConfig: true,
           },
         },
       },
     });
   }
 
-  /**
-   * Method to be called by a webhook or cron job whenever an admin
-   * makes a change, ensuring the cache is always fresh.
-   */
-  public invalidateCache(): void {
-    console.log('Homepage cache invalidated by admin action.');
-    this.cache.del(this.CACHE_KEY);
-    // Optional: Re-warm the cache immediately
-    this.getHomepage(); 
+  async invalidateCache() {
+    await this.redis.del(this.KEY_LAYOUT, this.KEY_DISTRIBUTED);
+    this.logger.warn('Redis Cache Invalidated');
+    return { success: true, message: 'Redis Cache Purged' };
   }
 }

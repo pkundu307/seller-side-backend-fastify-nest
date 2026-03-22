@@ -176,6 +176,7 @@ async updatePosSale(
   ) {
     return this.sellerService.getSalesStats(businessId, query);
   }
+  
   @Get(':businessId/pos/products')
 @ApiOperation({ summary: 'Minified product search for POS dropdown' })
 async getPosProducts(

@@ -35,7 +35,7 @@ export class BusinessController {
     return this.businessService.getBusinessForSettingById(id, user.id);
   }
 
- @UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard)
 @Patch(':id')
 @ApiConsumes('multipart/form-data')
 async update(@Param('id') businessId: string, @Req() req: FastifyRequest) {
@@ -45,21 +45,28 @@ async update(@Param('id') businessId: string, @Req() req: FastifyRequest) {
     throw new BadRequestException('Request must be multipart/form-data.');
   }
 
-  // Fields that are strings in DB but look numeric — never auto-convert these
   const ALWAYS_STRING_FIELDS = new Set([
     'phone', 'postalCode', 'panNumber', 'gstNumber',
     'bankAccountNo', 'bankIfscCode', 'upiId', 'slug',
   ]);
 
-  // Fields sent as JSON strings from frontend
   const JSON_FIELDS = new Set([
     'socialLinks', 'invoiceConfig', 'businessConfig',
+  ]);
+
+  const KYC_FILE_FIELDS = new Set([
+    'kyc_PAN', 'kyc_GST_CERTIFICATE', 'kyc_BANK_PROOF', 'kyc_ADDRESS_PROOF',
   ]);
 
   const dto: UpdateBusinessDto = {} as UpdateBusinessDto;
   let logoBuffer:      Buffer | undefined;
   let bannerBuffer:    Buffer | undefined;
   let signatureBuffer: Buffer | undefined;
+
+  const kycBuffers: Partial<Record<
+    'PAN' | 'GST_CERTIFICATE' | 'BANK_PROOF' | 'ADDRESS_PROOF',
+    { buffer: Buffer; mimetype: string; originalname: string }
+  >> = {};
 
   try {
     for await (const part of req.parts()) {
@@ -70,9 +77,17 @@ async update(@Param('id') businessId: string, @Req() req: FastifyRequest) {
         for await (const chunk of part.file) chunks.push(chunk);
         const buffer = Buffer.concat(chunks);
 
-        if (part.fieldname === 'logo')      logoBuffer      = buffer;
-        if (part.fieldname === 'banner')    bannerBuffer    = buffer;
-        if (part.fieldname === 'signature') signatureBuffer = buffer;
+        if (part.fieldname === 'logo')           logoBuffer      = buffer;
+        else if (part.fieldname === 'banner')    bannerBuffer    = buffer;
+        else if (part.fieldname === 'signature') signatureBuffer = buffer;
+        else if (KYC_FILE_FIELDS.has(part.fieldname)) {
+          const kycType = part.fieldname.replace('kyc_', '') as keyof typeof kycBuffers;
+          kycBuffers[kycType] = {
+            buffer,
+            mimetype:     part.mimetype,
+            originalname: part.filename ?? 'document',
+          };
+        }
 
       // ── Text Fields ──
       } else if ('value' in part) {
@@ -80,7 +95,6 @@ async update(@Param('id') businessId: string, @Req() req: FastifyRequest) {
         const value = part.value     as string;
 
         if (JSON_FIELDS.has(key)) {
-          // Parse JSON objects
           try {
             (dto as any)[key] = JSON.parse(value);
           } catch {
@@ -91,14 +105,12 @@ async update(@Param('id') businessId: string, @Req() req: FastifyRequest) {
         } else if (value === 'false') {
           (dto as any)[key] = false;
         } else if (
-          !ALWAYS_STRING_FIELDS.has(key) &&  // Skip known string fields
+          !ALWAYS_STRING_FIELDS.has(key) &&
           !isNaN(Number(value)) &&
           value.trim() !== ''
         ) {
-          // Safe to convert to number (e.g. invoiceStartNumber)
           (dto as any)[key] = Number(value);
         } else {
-          // Default: keep as string
           (dto as any)[key] = value;
         }
       }
@@ -113,7 +125,12 @@ async update(@Param('id') businessId: string, @Req() req: FastifyRequest) {
     businessId,
     user.id,
     dto,
-    { logo: logoBuffer, banner: bannerBuffer, signature: signatureBuffer },
+    {
+      logo:      logoBuffer,
+      banner:    bannerBuffer,
+      signature: signatureBuffer,
+      kycFiles:  Object.keys(kycBuffers).length > 0 ? kycBuffers : undefined,
+    },
   );
 }
 }

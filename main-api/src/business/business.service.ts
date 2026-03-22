@@ -187,6 +187,88 @@ async createBusiness(dto: CreateBusinessDto, ownerId: string) {
   // UPDATE OPERATIONS
   // ========================================================
   
+
+async getBusinessForSettingById(businessId: string, userId: string) {
+  const business = await this.prisma.business.findUnique({
+    where: { id: businessId },
+    include: {
+      owner: {
+        select: { id: true, name: true, email: true, image: true },
+      },
+      bankAccounts: {
+        where:   { isEnabled: true },
+        orderBy: { isDefault: 'desc' },
+        select: {
+          id:             true,
+          accountName:    true,
+          accountType:    true,
+          bankName:       true,
+          bankAccountNo:  true,
+          bankIfscCode:   true,
+          upiId:          true,
+          closingBalance: true,
+          isDefault:      true,
+          isEnabled:      true,
+        },
+      },
+      warehouses: {
+        select: {
+          id:        true,
+          name:      true,
+          isDefault: true,
+          address:   true,
+        },
+      },
+      // KYC documents with full status info
+      kycDocuments: {
+        orderBy: { uploadedAt: 'desc' },
+        select: {
+          id:          true,
+          type:        true,
+          documentUrl: true,
+          status:      true,
+          remarks:     true,
+          uploadedAt:  true,
+          verifiedAt:  true,
+        },
+      },
+      // Roles summary
+      roles: {
+        select: {
+          id:          true,
+          name:        true,
+          isDefault:   true,
+          description: true,
+        },
+      },
+    },
+  });
+
+  if (!business) throw new NotFoundException('Business not found');
+
+  // Security: Owner OR authorized BusinessUser
+  if (business.ownerId !== userId) {
+    const isAuthorized = await this.prisma.businessUser.findUnique({
+      where: {
+        userId_businessId: { userId, businessId },
+      },
+    });
+    if (!isAuthorized) {
+      throw new ForbiddenException('You do not have access to this business.');
+    }
+  }
+
+  // Strip sensitive fields before returning
+  const {
+    stripeCustomerId,
+    bankDetails,
+    gstPortalPasswordEnc,
+    gstPortalUsername,
+    ...safeData
+  } = business as any;
+
+  return safeData;
+}
 async updateBusiness(
   businessId: string,
   userId: string,
@@ -195,6 +277,10 @@ async updateBusiness(
     logo?:      Buffer;
     banner?:    Buffer;
     signature?: Buffer;
+    kycFiles?:  Partial<Record<
+      'PAN' | 'GST_CERTIFICATE' | 'BANK_PROOF' | 'ADDRESS_PROOF',
+      { buffer: Buffer; mimetype: string; originalname: string }
+    >>;
   }
 ) {
   // 1. Verify Ownership & Existence
@@ -207,6 +293,10 @@ async updateBusiness(
 
   const uploadedUrlsForRollback: string[] = [];
   const updates: any = { ...dto };
+
+  // Remove nested objects — handled separately below
+  delete updates.invoiceConfig;
+  delete updates.kycDocuments;
 
   try {
     // 2. Flatten invoiceConfig into top-level DB columns
@@ -224,8 +314,6 @@ async updateBusiness(
       if (fiscalYearStart       !== undefined) updates.fiscalYearStart       = fiscalYearStart;
       if (invoiceNotes          !== undefined) updates.invoiceNotes          = invoiceNotes;
       if (invoiceTerms          !== undefined) updates.invoiceTerms          = invoiceTerms;
-
-      delete updates.invoiceConfig;
     }
 
     // 3. Remove deprecated / non-Prisma fields
@@ -239,7 +327,7 @@ async updateBusiness(
       }
     }
 
-    // 5. Strip ALL remaining empty strings — don't overwrite DB values with ""
+    // 5. Strip ALL remaining empty strings
     for (const key of Object.keys(updates)) {
       if (updates[key] === '') {
         delete updates[key];
@@ -300,7 +388,98 @@ async updateBusiness(
       console.log('[UPDATE_BUSINESS] ✅ Signature uploaded:', updates.authorizedSignatorySignatureUrl);
     }
 
-    // 9. Perform DB Update
+    // 9. Handle KYC Documents
+    const KYC_TYPES = ['PAN', 'GST_CERTIFICATE', 'BANK_PROOF', 'ADDRESS_PROOF'] as const;
+    type KycType = typeof KYC_TYPES[number];
+
+    // Mime type → file extension map
+    const EXT_MAP: Record<string, string> = {
+      'image/jpeg':      'jpg',
+      'image/jpg':       'jpg',
+      'image/png':       'png',
+      'image/webp':      'webp',
+      'application/pdf': 'pdf',
+    };
+
+    const kycUrlMap: Partial<Record<KycType, string>> = {};
+
+    // 9a. URL-based KYC docs from DTO (pre-uploaded by client)
+    if (dto.kycDocuments) {
+      for (const type of KYC_TYPES) {
+        const url = (dto.kycDocuments as any)[type];
+        if (url?.trim()) kycUrlMap[type] = url.trim();
+      }
+    }
+
+    // 9b. File buffer KYC uploads with correct mime type & extension
+    if (files?.kycFiles) {
+      for (const type of KYC_TYPES) {
+        const fileData = files.kycFiles[type];
+        if (fileData) {
+          const { buffer, mimetype, originalname } = fileData;
+
+          // Derive correct extension from actual mime type
+          const ext      = EXT_MAP[mimetype] ?? originalname.split('.').pop() ?? 'bin';
+          const filename = `kyc-${type.toLowerCase()}-${businessId}.${ext}`;
+
+          console.log(`[UPDATE_BUSINESS] 🔄 Uploading KYC doc: ${type} | mime: ${mimetype} | file: ${filename}`);
+
+          const url = await this.s3Service.uploadImage(
+            buffer,
+            filename,
+            mimetype,   // ← actual mime type, not hardcoded
+            'kyc',
+          );
+          kycUrlMap[type] = url;
+          uploadedUrlsForRollback.push(url);
+          console.log(`[UPDATE_BUSINESS] ✅ KYC ${type} uploaded:`, url);
+        }
+      }
+    }
+
+    // 9c. Manual findFirst + create/update (no @@unique constraint needed)
+    if (Object.keys(kycUrlMap).length > 0) {
+      console.log('[UPDATE_BUSINESS] 🔄 Saving KYC documents...');
+
+      await Promise.all(
+        (Object.entries(kycUrlMap) as [KycType, string][]).map(async ([type, documentUrl]) => {
+          const existing = await this.prisma.sellerKycDocument.findFirst({
+            where: { businessId, type },
+          });
+
+          if (existing) {
+            await this.prisma.sellerKycDocument.update({
+              where: { id: existing.id },
+              data: {
+                documentUrl,
+                status:     'PENDING',
+                remarks:    null,
+                verifiedAt: null,
+                uploadedAt: new Date(),
+              },
+            });
+          } else {
+            await this.prisma.sellerKycDocument.create({
+              data: {
+                businessId,
+                type,
+                documentUrl,
+                status: 'PENDING',
+              },
+            });
+          }
+        })
+      );
+
+      // Reset overall business KYC status to PENDING
+      updates.kycStatus      = 'PENDING';
+      updates.kycSubmittedAt = new Date();
+      updates.kycRejectedAt  = null;
+      updates.kycRemarks     = null;
+      console.log('[UPDATE_BUSINESS] ✅ KYC documents saved, business kycStatus → PENDING');
+    }
+
+    // 10. Perform DB Update
     console.log('[UPDATE_BUSINESS] 🔄 Saving to database...');
     const updatedBusiness = await this.prisma.business.update({
       where: { id: businessId },
@@ -325,64 +504,4 @@ async updateBusiness(
     throw error;
   }
 }
-
-
-// ─────────────────────────────────────────────
-
-async getBusinessForSettingById(businessId: string, userId: string) {
-  const business = await this.prisma.business.findUnique({
-    where: { id: businessId },
-    include: {
-      owner: {
-        select: { id: true, name: true, email: true },
-      },
-      bankAccounts: {
-        where:   { isEnabled: true },
-        orderBy: { isDefault: 'desc' },
-        select: {
-          id:             true,
-          accountName:    true,
-          accountType:    true,
-          bankName:       true,
-          bankAccountNo:  true,
-          bankIfscCode:   true,
-          upiId:          true,
-          closingBalance: true,
-          isDefault:      true,
-          isEnabled:      true,
-        },
-      },
-      warehouses: {
-        select: {
-          id:        true,
-          name:      true,
-          isDefault: true,
-        },
-      },
-    },
-  });
-
-  if (!business) throw new NotFoundException('Business not found');
-
-  // Security: Owner OR authorized BusinessUser
-  if (business.ownerId !== userId) {
-    const isAuthorized = await this.prisma.businessUser.findUnique({
-      where: {
-        userId_businessId: { userId, businessId },
-      },
-    });
-    if (!isAuthorized) {
-      throw new ForbiddenException('You do not have access to this business.');
-    }
-  }
-
-  // Strip sensitive fields before returning
-  const { stripeCustomerId, bankDetails, ...safeData } = business as any;
-
-  return safeData;
-}
-
-
-
-
 }

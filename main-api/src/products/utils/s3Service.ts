@@ -15,7 +15,7 @@ export class S3Service {
   private readonly accountId: string;
 
   // Allowed folders (Security + validation)
-  private readonly allowedFolders = ['products', 'banners', 'avatars', 'categories', 'others','cart','assets','homepage-items','reviews','business'];
+  private readonly allowedFolders = ['products', 'banners', 'avatars', 'categories', 'others','cart','assets','homepage-items','reviews','business','kyc'];
 
   constructor() {
     const secretAccessKey = process.env.R2_SECRET_KEY;

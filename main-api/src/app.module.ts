@@ -1,3 +1,4 @@
+// src/app.module.ts
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -5,16 +6,14 @@ import { JwtModule } from '@nestjs/jwt';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { redisStore } from 'cache-manager-ioredis-yet';
 
 import { PrismaModule } from './prisma/prisma.module';
 import { PrismaService } from './prisma/prisma.service';
-
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
-
 import { CheckModule } from './check/check.module';
 import { KeepAliveModule } from './utils/keep-alive.module';
 import { KeepAliveService } from './utils/keep-alive.service';
-
 import { CategoryModule } from './category/category.module';
 import { UserModule } from './user/user.module';
 import { AuthModule } from './auth/auth.module';
@@ -45,20 +44,49 @@ import { ProformaInvoiceModule } from './seller/proforma-invoice/proforma-invoic
   imports: [
     // ── Core infra ───────────────────────────────────────────────────────
     ConfigModule.forRoot({ isGlobal: true }),
-
     ScheduleModule.forRoot(),
 
-    // ── Rate limiting (applied globally via APP_GUARD in providers) ───────
+    // ── Rate limiting ────────────────────────────────────────────────────
     ThrottlerModule.forRoot([
-      { name: 'short',  ttl: 1000,  limit: 10  },  // 10  req / sec
-      { name: 'medium', ttl: 10000, limit: 50  },  // 50  req / 10 sec
-      { name: 'long',   ttl: 60000, limit: 200 },  // 200 req / min
+      { name: 'short',  ttl: 1000,  limit: 10  },
+      { name: 'medium', ttl: 10000, limit: 50  },
+      { name: 'long',   ttl: 60000, limit: 200 },
     ]),
 
-    // ── In-memory cache (isGlobal = inject CacheManager anywhere) ─────────
-    CacheModule.register({
+    // ── Redis Cache ──────────────────────────────────────────────────────
+    // cache-manager-ioredis-yet v7: store must be AWAITED in useFactory.
+    // Passing it as a reference (store: redisStore) silently falls back to
+    // in-memory, which is why KEYS * returns empty in Redis.
+    CacheModule.registerAsync({
       isGlobal: true,
-      ttl: 300_000, // 5 minutes in milliseconds
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: async (configService: ConfigService) => {
+        const host = configService.get<string>('REDIS_HOST', '127.0.0.1');
+        const port = configService.get<number>('REDIS_PORT', 6379);
+
+        console.log(`🚀 [REDIS] Connecting to ${host}:${port}`);
+
+        // ✅ MUST await redisStore() — calling it as a factory, not a reference
+     const store = await redisStore({
+  socket: {
+    host:   host,
+    port:   Number(port),
+    family: 4,      // force IPv4, prevents ::1 fallback
+  },
+  ttl: 86400,
+});
+
+        // Wire up error logging on the underlying ioredis client
+        store.client.on('connect', () =>
+          console.log(`✅ [REDIS] Connected to ${host}:${port}`),
+        );
+        store.client.on('error', (err) =>
+          console.error('❌ [REDIS] Client error:', err),
+        );
+
+        return { store };
+      },
     }),
 
     // ── Data layer ───────────────────────────────────────────────────────
@@ -107,8 +135,6 @@ import { ProformaInvoiceModule } from './seller/proforma-invoice/proforma-invoic
   providers: [
     PrismaService,
     KeepAliveService,
-
-    // ── Apply ThrottlerGuard to every route globally ──────────────────────
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,

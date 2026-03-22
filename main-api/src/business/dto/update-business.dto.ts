@@ -2,12 +2,12 @@
 
 import {
   IsOptional, IsString, IsBoolean, IsInt,
-  IsNumber, Min, ValidateNested, IsEmail,
+  Min, ValidateNested, IsEmail,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
-// ── Nested DTOs ──
+// ── Nested DTOs ────────────────────────────────────────────────────────────────
 
 class SocialLinksDto {
   @IsOptional() @IsString() facebook?: string;
@@ -18,16 +18,37 @@ class SocialLinksDto {
 }
 
 class InvoiceConfigDto {
-  @IsOptional() @IsString()  invoicePrefix?: string;
-  @IsOptional() @IsString()  purchaseInvoicePrefix?: string;
-  @IsOptional() @IsInt() @Min(1) invoiceStartNumber?: number;
-  @IsOptional() @IsInt() @Min(1) purchaseStartNumber?: number;
-  @IsOptional() @IsString()  fiscalYearStart?: string;   // "April"
-  @IsOptional() @IsString()  invoiceNotes?: string;
-  @IsOptional() @IsString()  invoiceTerms?: string;
+  @IsOptional() @IsString()       invoicePrefix?: string;
+  @IsOptional() @IsString()       purchaseInvoicePrefix?: string;
+  @IsOptional() @IsInt() @Min(1)  invoiceStartNumber?: number;
+  @IsOptional() @IsInt() @Min(1)  purchaseStartNumber?: number;
+  @IsOptional() @IsString()       fiscalYearStart?: string;
+  @IsOptional() @IsString()       invoiceNotes?: string;
+  @IsOptional() @IsString()       invoiceTerms?: string;
 }
 
-// ── Main DTO ──
+// ── KYC Documents ─────────────────────────────────────────────────────────────
+// Field names match SellerKycDocumentType enum values in Prisma.
+// Each value should be a URL of the uploaded document.
+class KycDocumentsDto {
+  @ApiPropertyOptional({ description: 'URL of PAN card document' })
+  @IsOptional() @IsString()
+  PAN?: string;
+
+  @ApiPropertyOptional({ description: 'URL of GST Registration Certificate' })
+  @IsOptional() @IsString()
+  GST_CERTIFICATE?: string;
+
+  @ApiPropertyOptional({ description: 'URL of Bank Proof (cancelled cheque / passbook)' })
+  @IsOptional() @IsString()
+  BANK_PROOF?: string;
+
+  @ApiPropertyOptional({ description: 'URL of Address Proof (utility bill / rent agreement)' })
+  @IsOptional() @IsString()
+  ADDRESS_PROOF?: string;
+}
+
+// ── Main DTO ───────────────────────────────────────────────────────────────────
 
 export class UpdateBusinessDto {
 
@@ -45,10 +66,10 @@ export class UpdateBusinessDto {
   @ApiPropertyOptional() @IsOptional() @IsString()  country?: string;
   @ApiPropertyOptional() @IsOptional() @IsString()  postalCode?: string;
 
-  // ── Legal (gstNumber intentionally excluded — read-only, needs support ticket) ──
+  // ── Legal ──
   @ApiPropertyOptional() @IsOptional() @IsString()  legalName?: string;
   @ApiPropertyOptional() @IsOptional() @IsString()  panNumber?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString()  businessType?: string;  // "Proprietorship", "LLP"
+  @ApiPropertyOptional() @IsOptional() @IsString()  businessType?: string;
   @ApiPropertyOptional() @IsOptional() @IsString()  category?: string;
   @ApiPropertyOptional() @IsOptional() @IsString()  industryType?: string;
 
@@ -64,18 +85,27 @@ export class UpdateBusinessDto {
   @Type(() => SocialLinksDto)
   socialLinks?: SocialLinksDto;
 
-  // ── Invoice Config (NEW) ──
+  // ── Invoice Config ──
   @ApiPropertyOptional()
   @IsOptional()
   @ValidateNested()
   @Type(() => InvoiceConfigDto)
   invoiceConfig?: InvoiceConfigDto;
 
-  // ── Preferences (NEW) ──
-  @ApiPropertyOptional() @IsOptional() @IsString()  currency?: string;    // "INR", "USD"
-  @ApiPropertyOptional() @IsOptional() @IsString()  timezone?: string;    // "Asia/Kolkata"
-  @ApiPropertyOptional() @IsOptional() @IsString()  dateFormat?: string;  // "DD/MM/YYYY"
-  @ApiPropertyOptional() @IsOptional() @IsString()  language?: string;    // "en", "hi"
+  // ── KYC Documents ──
+  // Seller provides document URLs. Each provided type gets upserted
+  // into SellerKycDocument table with status reset to PENDING.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => KycDocumentsDto)
+  kycDocuments?: KycDocumentsDto;
+
+  // ── Preferences ──
+  @ApiPropertyOptional() @IsOptional() @IsString()  currency?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString()  timezone?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString()  dateFormat?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString()  language?: string;
 
   // ── Platform Toggles (owner only) ──
   @ApiPropertyOptional() @IsOptional() @IsBoolean() isPayoutEnabled?: boolean;

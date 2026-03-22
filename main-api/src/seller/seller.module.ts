@@ -11,6 +11,7 @@ import { ProformaInvoiceModule } from './proforma-invoice/proforma-invoice.modul
 import { ExpensesModule } from './expenses/expenses.module';
 import { PaymentOutModule } from './payment-out/payment-out.module';
 import { PartyModule } from './party/party.module';
+import { Gstr1Module } from './reports/gstr1/gstr1.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { PartyModule } from './party/party.module';
     forwardRef(() => PaymentInModule),
     forwardRef(() => ProformaInvoiceModule),
     forwardRef(() => ReportsModule),
+     forwardRef(() => Gstr1Module),
     forwardRef(() => PaymentOutModule),
        ExpensesModule,
        PartyModule
