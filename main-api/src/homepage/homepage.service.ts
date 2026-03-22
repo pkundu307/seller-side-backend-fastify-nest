@@ -55,7 +55,7 @@ export class HomepageService implements OnModuleInit {
     return freshData;
   }
 
-  async getHomepageDistributed() {
+async getHomepageDistributed() {
     const cached = await this.cacheGet(this.KEY_DISTRIBUTED);
     if (cached) return cached;
 
@@ -76,11 +76,14 @@ export class HomepageService implements OnModuleInit {
           take:    10,
           orderBy: { createdAt: 'desc' },
           select: {
-            id: true, title: true, images: true,
+            id:     true,
+            title:  true,
+            images: true,
+            slug:   true,           // ← product slug for URL routing
             variants: {
               where:  { status: 'ACTIVE', deletedAt: null },
               take:   1,
-              select: { price: true, sku: true },
+              select: { price: true },
             },
           },
         });
@@ -94,7 +97,7 @@ export class HomepageService implements OnModuleInit {
             name:  p.title,
             image: p.images?.[0] || null,
             price: p.variants?.[0]?.price ? Number(p.variants[0].price) : 0,
-            sku:   p.variants?.[0]?.sku   || 'N/A',
+            slug:  p.slug,          // ← was sku, now product slug
           })),
         };
       }),
