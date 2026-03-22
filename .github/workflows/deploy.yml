@@ -1,40 +1,31 @@
-name: Deploy Jottosop to VPS
+# .github/workflows/deploy.yml
+name: Deploy to VPS
 
 on:
   push:
     branches:
-      - production  # Triggers only on push to production branch
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Deploy to VPS via SSH
-        uses: appleboy/ssh-action@master
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.VPS_IP }}
+          host:     ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          key:      ${{ secrets.VPS_SSH_KEY }}
           script: |
-            # 1. Navigate to code folder and pull latest changes
-            cd ~/seller-side-backend-fastify-nest
-            git checkout production
-            git pull origin production
+            cd /root/seller-side-backend-fastify-nest
+            git pull origin main
 
-            # 2. Navigate to infrastructure folder
             cd /opt/jottosop
+            docker-compose stop main-api
+            docker-compose rm -f main-api
+            docker rmi jottosop-main-api --force || true
+            docker-compose build --no-cache main-api
+            docker-compose up -d main-api
 
-            # 3. Rebuild and Re-up the main API (and other services if changed)
-            # --build ensures Docker sees the new code pulled by git
-            docker compose up --build -d main-api jottosop_notifications
-
-            # 4. Run database migrations/sync
-            docker exec jottosop_api npx prisma db push
-            docker exec jottosop_api npx prisma generate
-
-
-            # 5. Cleanup: Remove old/unused images to save VPS disk space (50GB limit)
-            docker image prune -f
+            sleep 5
+            docker logs jottosop_api --tail 30
