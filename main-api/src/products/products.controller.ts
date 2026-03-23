@@ -18,7 +18,7 @@ import {
 import { FastifyRequest } from 'fastify'; // Import MultipartFile for clarity
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ProductsService } from './products.service';
-import { PaginationQueryDto } from './dto/pagination-query.dto';
+import { CategoryPageQueryDto, PaginationQueryDto } from './dto/pagination-query.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import {
   ApiBearerAuth,
@@ -487,20 +487,14 @@ export class ProductsController {
     return this.productsService.getProductDetailsForCustomer(productId);
   }
 
-  @Get('category-page/:slug')
-  @ApiOperation({
-    summary: 'Get data for a category page (handles parent/child logic)',
-  })
-  @ApiParam({ name: 'slug', description: 'The unique slug of the category' })
-  async getCategoryPageData(
-    @Param('slug') slug: string,
-    @Query() paginationQuery: PaginationQueryDto,
-  ) {
-    return this.productsService.getCategoryPageDataBySlug(
-      slug,
-      paginationQuery,
-    );
-  }
+@Get('category-page/:slug')
+@ApiOperation({ summary: 'Get category data with advanced filtering' })
+async getCategoryPageData(
+  @Param('slug') slug: string,
+  @Query() query: CategoryPageQueryDto,
+) {
+  return this.productsService.getCategoryPageDataBySlug(slug, query);
+}
   @Get('same/:slug')
 getSimilarProducts(
   @Param('slug') slug: string,

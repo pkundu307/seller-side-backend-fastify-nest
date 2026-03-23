@@ -2,7 +2,7 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from './utils/s3Service';
-import { PaginationQueryDto } from './dto/pagination-query.dto';
+import { CategoryPageQueryDto, PaginationQueryDto } from './dto/pagination-query.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductPaginationDto } from './dto/product-pagination.dto';
 import { Prisma, VariantStatus } from '@prisma/client';
@@ -1236,87 +1236,99 @@ async updateProduct(
   }
 
 
- async getCategoryPageDataBySlug(
-    categorySlug: string,
-    paginationQuery: PaginationQueryDto, // DTO with optional page/limit
-  ) {
-    // 1. Find the category by its slug, including its direct children
-    const category = await this.prisma.category.findUnique({
-      where: { slug: categorySlug },
-      include: { children: { select: { id: true, name: true, slug: true } } },
-    });
+async getCategoryPageDataBySlug(
+  categorySlug: string,
+  query: CategoryPageQueryDto,
+) {
+  const { page = 1, limit = 10, priceRange, attributes } = query;
+  const skip = (page - 1) * limit;
 
-    if (!category) {
-      throw new NotFoundException(`Category with slug "${categorySlug}" not found.`);
-    }
+  const category = await this.prisma.category.findUnique({
+    where: { slug: categorySlug },
+    include: {
+      children: { select: { id: true, name: true, slug: true } },
+      attributes: {
+        include: { options: { select: { value: true } } },
+      },
+    },
+  });
 
-    const isParentCategory = category.children.length > 0;
+  if (!category) throw new NotFoundException('Category not found');
 
-    // --- CASE 1: IT'S A PARENT CATEGORY ---
-    if (isParentCategory) {
-      // For each child category, fetch up to 5 of its featured products
-      const childrenWithProducts = await Promise.all(
-        category.children.map(async (child) => {
-          const products = await this.prisma.product.findMany({
-            where: {
-              categoryId: child.id,
-              isFeatured: true,
-              isPublished: true,
-            },
-            take: 5,
-            orderBy: { createdAt: 'desc' },
-            select: this.getFeaturedProductSelect(), // Reusable select object
-          });
+  // 1. Initialize the variant filter object separately to avoid "undefined" errors
+  const variantFilter: Prisma.VariantWhereInput = {
+    status: 'ACTIVE',
+    deletedAt: null,
+  };
 
-          return {
-            ...child,
-            products: products.map(this.processProduct), // Process each product
-          };
-        })
-      );
-
-      return {
-        type: 'parent_category',
-        category: { id: category.id, name: category.name, slug: category.slug },
-        children: childrenWithProducts,
-      };
-    }
-
-    // --- CASE 2: IT'S A CHILD CATEGORY (or a category with no children) ---
-    else {
-      const { page = 1, limit = 10 } = paginationQuery;
-      const skip = (page - 1) * limit;
-      
-      const products = await this.prisma.product.findMany({
-        where: {
-          categoryId: category.id, // Only look in this specific category
-          isFeatured: true,
-          isPublished: true,
-        },
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        select: this.getFeaturedProductSelect(),
-      });
-
-      const totalProducts = await this.prisma.product.count({
-        where: { categoryId: category.id, isFeatured: true, isPublished: true },
-      });
-
-      return {
-        type: 'child_category',
-        category: { id: category.id, name: category.name, slug: category.slug },
-        products: products.map(this.processProduct),
-        pagination: {
-          total: totalProducts,
-          page,
-          limit,
-          lastPage: Math.ceil(totalProducts / limit),
-        },
-      };
-    }
+  // 2. Apply Price Filter to the variant object
+  if (priceRange) {
+    const rangeMap = {
+      '0-500': { gte: 0, lte: 500 },
+      '500-1k': { gte: 500, lte: 1000 },
+      '1k-5k': { gte: 1000, lte: 5000 },
+      '5k-10k': { gte: 5000, lte: 10000 },
+      '10k-20k': { gte: 10000, lte: 20000 },
+    };
+    variantFilter.price = rangeMap[priceRange];
   }
 
+  // 3. Apply Attribute Cross-Filtering to the variant object
+  if (attributes) {
+    const filterPairs = attributes.split(',').map((p) => p.split(':'));
+    
+    // Use AND to ensure one variant matches ALL selected attributes
+    variantFilter.AND = filterPairs.map(([attrName, attrValue]) => ({
+      attributeValues: {
+        some: {
+          attribute: { name: attrName },
+          attributeOption: { value: attrValue },
+        },
+      },
+    }));
+  }
+
+  // 4. Build the final Product Where clause
+  const where: Prisma.ProductWhereInput = {
+    categoryId: category.id,
+    isPublished: true,
+    deletedAt: null,
+    variants: {
+      some: variantFilter, // Assign the fully built object here
+    },
+  };
+
+  // 5. Execute Queries
+  const [products, total] = await Promise.all([
+    this.prisma.product.findMany({
+      where,
+      skip,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      select: this.getFeaturedProductSelect(),
+    }),
+    this.prisma.product.count({ where }),
+  ]);
+
+  return {
+    category: {
+      id: category.id,
+      name: category.name,
+      slug: category.slug,
+      availableFilters: category.attributes.map((a) => ({
+        name: a.name,
+        options: a.options.map((o) => o.value),
+      })),
+    },
+    products: products.map(this.processProduct),
+    pagination: {
+      total,
+      page,
+      limit,
+      lastPage: Math.ceil(total / limit),
+    },
+  };
+}
   /**
    * Reusable select object to get all the necessary product fields.
    */
