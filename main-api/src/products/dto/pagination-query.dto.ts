@@ -16,7 +16,11 @@ export class PaginationQueryDto {
   limit?: number = 10;
 }
 
-
+export class BusinessProductQueryDto extends PaginationQueryDto {
+  @IsOptional()
+  @IsString()
+  search?: string;
+}
 
 export class CategoryPageQueryDto {
   @IsOptional()

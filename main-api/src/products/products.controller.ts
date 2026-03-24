@@ -18,7 +18,7 @@ import {
 import { FastifyRequest } from 'fastify'; // Import MultipartFile for clarity
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ProductsService } from './products.service';
-import { CategoryPageQueryDto, PaginationQueryDto } from './dto/pagination-query.dto';
+import { BusinessProductQueryDto, CategoryPageQueryDto, PaginationQueryDto } from './dto/pagination-query.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import {
   ApiBearerAuth,
@@ -238,12 +238,12 @@ export class ProductsController {
   async getProductsForBusiness(
     @Param('businessId') businessId: string,
     @Req() req: FastifyRequest,
-    @Query() paginationQuery: PaginationQueryDto,
+    @Query() query: BusinessProductQueryDto, // ✅ Updated DTO
   ) {
     const user = req.user as any;
     return this.productsService.getProductsByBusiness(
       businessId,
-      paginationQuery,
+      query,
       user.id,
     );
   }

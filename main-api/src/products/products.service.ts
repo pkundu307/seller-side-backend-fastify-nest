@@ -2,7 +2,7 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from './utils/s3Service';
-import { CategoryPageQueryDto, PaginationQueryDto } from './dto/pagination-query.dto';
+import { BusinessProductQueryDto, CategoryPageQueryDto, PaginationQueryDto } from './dto/pagination-query.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductPaginationDto } from './dto/product-pagination.dto';
 import { Prisma, VariantStatus } from '@prisma/client';
@@ -465,55 +465,103 @@ async createProduct(businessId: string, formData: any) {
   /**
    * Fetches a paginated list of products for a given business, optimized for list views.
    */
-  async getProductsByBusiness(businessId: string, paginationQuery: PaginationQueryDto, userId: string) {
-    const { page = 1, limit = 10 } = paginationQuery;
-    const skip = (Number(page) - 1) * Number(limit);
+async getProductsByBusiness(
+  businessId: string, 
+  query: BusinessProductQueryDto, 
+  userId: string
+) {
+  const { page = 1, limit = 10, search } = query;
+  const skip = (Number(page) - 1) * Number(limit);
 
-    const business = await this.prisma.business.findUnique({
-      where: { id: businessId },
-      select: { ownerId: true },
-    });
+  // 1. Ownership & Existence Check
+  const business = await this.prisma.business.findUnique({
+    where: { id: businessId },
+    select: { ownerId: true },
+  });
 
-    if (!business) throw new NotFoundException(`Business with ID "${businessId}" not found`);
-    if (business.ownerId !== userId) throw new ForbiddenException('You do not have permission to access products for this business.');
-
-    const whereClause = { businessId: businessId };
-    const [products, total] = await this.prisma.$transaction([
-      this.prisma.product.findMany({
-        where: whereClause,
-        select: {
-          id: true,
-          title: true,
-          slug: true,
-          images: true,
-          isPublished: true,
-          category: { select: { id: true, name: true } },
-          variants: { where: { isDefault: true }, select: { price: true, stock: true }, take: 1 },
-        },
-        skip,
-        take: Number(limit),
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.product.count({ where: whereClause }),
-    ]);
-  
-    
-
-    const formattedProducts = products.map(p => ({
-      id: p.id,
-      title: p.title,
-      slug: p.slug,
-      images: p.images,
-      isPublished: p.isPublished,
-      category:p.category,
-      price: p.variants.length > 0 ? p.variants[0].price : null,
-      stock: p.variants.length > 0 ? p.variants[0].stock : null,
-    }));
-    
-    const totalPages = Math.ceil(total / limit);
-    return { data: formattedProducts, pagination: { total, page: Number(page), limit: Number(limit), totalPages, hasNextPage: Number(page) < totalPages, hasPrevPage: Number(page) > 1 } };
+  if (!business) throw new NotFoundException(`Business with ID "${businessId}" not found`);
+  if (business.ownerId !== userId) {
+    throw new ForbiddenException('You do not have permission to access products for this business.');
   }
 
+  // 2. Build Dynamic Where Clause
+  const whereClause: Prisma.ProductWhereInput = {
+    businessId: businessId,
+    deletedAt: null, // Always filter out deleted items
+  };
+
+  if (search) {
+    whereClause.OR = [
+      {
+        title: { contains: search, mode: 'insensitive' },
+      },
+      {
+        category: {
+          name: { contains: search, mode: 'insensitive' },
+        },
+      },
+      {
+        variants: {
+          some: {
+            sku: { contains: search, mode: 'insensitive' }
+          }
+        }
+      }
+    ];
+  }
+
+  // 3. Execution (Transaction for consistent pagination count)
+  const [products, total] = await this.prisma.$transaction([
+    this.prisma.product.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        images: true,
+        isPublished: true,
+        isFeatured: true,
+        category: { select: { id: true, name: true } },
+        variants: { 
+          where: { isDefault: true, deletedAt: null }, 
+          select: { price: true, stock: true }, 
+          take: 1 
+        },
+      },
+      skip,
+      take: Number(limit),
+      orderBy: { createdAt: 'desc' },
+    }),
+    this.prisma.product.count({ where: whereClause }),
+  ]);
+
+  // 4. Formatting (Keeping response structure identical)
+  const formattedProducts = products.map(p => ({
+    id: p.id,
+    title: p.title,
+    slug: p.slug,
+    images: p.images,
+    isPublished: p.isPublished,
+    isFeatured: p.isFeatured,
+    category: p.category,
+    price: p.variants.length > 0 ? p.variants[0].price : null,
+    stock: p.variants.length > 0 ? p.variants[0].stock : null,
+  }));
+
+  const totalPages = Math.ceil(total / Number(limit));
+
+  return { 
+    data: formattedProducts, 
+    pagination: { 
+      total, 
+      page: Number(page), 
+      limit: Number(limit), 
+      totalPages, 
+      hasNextPage: Number(page) < totalPages, 
+      hasPrevPage: Number(page) > 1 
+    } 
+  };
+}
   /**
    * Fetches a single product with all its detailed variant and attribute information.
    */
