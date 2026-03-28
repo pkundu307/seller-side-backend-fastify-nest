@@ -8,8 +8,8 @@ RUN go build -o backup-service main.go
 FROM alpine:latest
 WORKDIR /app
 
-# ✅ CRITICAL: Install postgresql-client (and gzip/ca-certificates)
-RUN apk add --no-cache postgresql17-client gzip ca-certificates
+# ✅ Standardized package name for broader compatibility
+RUN apk add --no-cache postgresql-client gzip ca-certificates
 
 COPY --from=builder /app/backup-service .
 

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings" // ✅ Added for URL cleaning
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -16,7 +17,6 @@ import (
 )
 
 func main() {
-	// 1. Load Configuration
 	dbURL := os.Getenv("DATABASE_URL")
 	r2AccountID := os.Getenv("R2_ACCOUNT_ID")
 	r2AccessKey := os.Getenv("R2_ACCESS_KEY")
@@ -29,10 +29,8 @@ func main() {
 
 	log.Println("🚀 Backup Service Started. Schedule: Daily at 03:00 AM UTC")
 
-	// 2. Schedule Loop
 	for {
 		now := time.Now()
-		// Calculate time until next run (e.g., 03:00 AM)
 		nextRun := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, time.UTC)
 		if now.After(nextRun) {
 			nextRun = nextRun.Add(24 * time.Hour)
@@ -56,10 +54,12 @@ func performBackup(dbURL, accountID, accessKey, secretKey, bucket string) error 
 	fileName := fmt.Sprintf("backup_%s.sql.gz", timestamp)
 	localPath := "/tmp/" + fileName
 
-	// Step A: Run pg_dump
-	// We use the full DATABASE_URL directly.
-	// We add --no-owner and --clean to make the backup more portable
-	cmdStr := fmt.Sprintf("pg_dump --dbname='%s' --no-owner --clean | gzip > %s", dbURL, localPath)
+	// ✅ FIX 1: Strip Prisma-specific query parameters (?schema=public)
+	// pg_dump strictly requires a clean URI
+	cleanURL := strings.Split(dbURL, "?")[0]
+
+	// ✅ FIX 2: Use --dbname flag and wrap in quotes to handle special characters
+	cmdStr := fmt.Sprintf("pg_dump --dbname='%s' --no-owner --clean | gzip > %s", cleanURL, localPath)
 	cmd := exec.Command("sh", "-c", cmdStr)
 
 	var stderr bytes.Buffer
@@ -70,16 +70,16 @@ func performBackup(dbURL, accountID, accessKey, secretKey, bucket string) error 
 		return fmt.Errorf("pg_dump failed: %v | stderr: %s", err, stderr.String())
 	}
 
-	// ✅ CHECK: Verify the file is not empty
+	// ✅ FIX 3: Verify the file size (20 bytes = empty gzip header)
 	fileInfo, err := os.Stat(localPath)
 	if err != nil {
 		return err
 	}
-	if fileInfo.Size() < 100 { // A real backup will be much larger than 100 bytes
-		return fmt.Errorf("backup file is too small (%d bytes), likely failed", fileInfo.Size())
+	if fileInfo.Size() < 200 {
+		return fmt.Errorf("backup failed: produced file is too small (%d bytes), check logs for URI errors", fileInfo.Size())
 	}
 
-	log.Printf("Backup file created: %s (%d bytes)", fileName, fileInfo.Size())
+	log.Printf("✅ Backup file created: %s (%d bytes)", fileName, fileInfo.Size())
 
 	// Step B: Upload to R2
 	log.Println("Upload: Sending to Cloudflare R2...")
@@ -88,7 +88,7 @@ func performBackup(dbURL, accountID, accessKey, secretKey, bucket string) error 
 		return err
 	}
 	defer file.Close()
-	defer os.Remove(localPath) // Cleanup
+	defer os.Remove(localPath)
 
 	r2Resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
 		return aws.Endpoint{
@@ -108,10 +108,9 @@ func performBackup(dbURL, accountID, accessKey, secretKey, bucket string) error 
 	client := s3.NewFromConfig(cfg)
 
 	_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String("db-backups/" + fileName),
-		Body:   file,
-		// Optional: Set ContentType to show correctly in R2 UI
+		Bucket:      aws.String(bucket),
+		Key:         aws.String("db-backups/" + fileName),
+		Body:        file,
 		ContentType: aws.String("application/gzip"),
 	})
 
