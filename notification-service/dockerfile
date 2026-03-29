@@ -1,29 +1,41 @@
 # ---- Build Stage ----
-# Use the official Go image to build the application
-FROM golang:1.21-alpine AS builder
+# Using a specific stable Go version
+FROM golang:1.24-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git
 
 WORKDIR /app
 
-# Copy the dependency files
+# Copy go.mod and go.sum first to leverage Docker cache
 COPY go.mod go.sum ./
-
-# Download dependencies
 RUN go mod download
 
-# Copy the source code
+# Copy the entire source code
 COPY . .
 
-# Build the Go app.
-# CGO_ENABLED=0 is important for creating a static binary.
-# -o /app/main creates the output binary named 'main' inside the /app directory.
+# Build the binary
+# CGO_ENABLED=0 ensures a static binary that doesn't need external C libraries
 RUN CGO_ENABLED=0 GOOS=linux go build -o /app/main .
 
 # ---- Production Stage ----
-# Use a minimal, non-root image for the final container. 'scratch' is the smallest possible.
-FROM scratch
+# Using alpine (instead of scratch) because we need the OS to store SSL/TLS certificates
+FROM alpine:latest
 
-# Copy the compiled binary from the builder stage
-COPY --from=builder /app/main /main
+# Install CA Certificates so Go can verify SSL connections (e.g., Zoho SMTP)
+RUN apk add --no-cache ca-certificates
 
-# The command to run when the container starts
-ENTRYPOINT ["/main"]
+WORKDIR /app
+
+# Copy the binary from the builder stage
+COPY --from=builder /app/main .
+
+# Ensure the executable has permissions
+RUN chmod +x /app/main
+
+# Set non-root user for security (Optional but recommended)
+RUN adduser -D jottosop
+USER jottosop
+
+# Start the application
+ENTRYPOINT ["/app/main"]
