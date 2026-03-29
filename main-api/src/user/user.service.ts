@@ -10,11 +10,12 @@ import * as bcrypt from 'bcrypt';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto'; // <-- 1. IMPORT THIS
 import { JwtService } from '@nestjs/jwt';
-
+import { NotificationService } from 'src/notifications/notifications.service';
 @Injectable()
 export class UserService {
   constructor(private readonly prisma: PrismaService,
         private readonly jwtService: JwtService,
+  private readonly notificationService: NotificationService, // ✅ Add this line
 
   ) {}
 
@@ -23,7 +24,7 @@ export class UserService {
         console.log('--- INSIDE SERVICE ---', createUserDto);
     console.log('--- PASSWORD PROPERTY ---', createUserDto.password);
 
-    const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+    const hashedPassword = await bcrypt.hash(createUserDto.password, saltRounds);
     console.log(hashedPassword);
     
     try {
@@ -35,7 +36,7 @@ export class UserService {
     password: hashedPassword,
   },
   select: {
-    // id: true,
+    id: true,
     email: true,
     name: true,
     role: true,
@@ -43,7 +44,11 @@ export class UserService {
   },
 });
 
-
+        await this.notificationService.sendWelcomeEmail({
+      id: user.id,
+      email: user.email,
+      name: user.name||'',
+    });
       return user;
     } catch (error) {
       if (

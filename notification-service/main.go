@@ -20,6 +20,7 @@ type NotificationPayload struct {
 	NotificationID string          `json:"notificationId"`
 	Title          string          `json:"title"`
 	Message        string          `json:"message"`
+	HtmlBody       string          `json:"htmlBody"` // ✅ Added to support professional HTML
 	Type           string          `json:"type"`
 	Metadata       json.RawMessage `json:"metadata,omitempty"`
 }
@@ -35,13 +36,10 @@ func main() {
 		log.Println("Warning: .env file not found. Relying on system environment variables.")
 	}
 
-	// --- THIS IS THE CRITICAL CHANGE ---
-	// Define constants for the correct SMTP server for a FREE organization account in the INDIA data center.
 	const (
-		smtpHost = "smtp.zoho.in" // Use the free server for the .in data center
+		smtpHost = "smtp.zoho.in"
 		smtpPort = "587"
 	)
-	// --- END OF CHANGE ---
 
 	var (
 		rabbitMQURL  = os.Getenv("RABBITMQ_URL")
@@ -49,28 +47,26 @@ func main() {
 		smtpPassword = os.Getenv("ZOHO_APP_PASSWORD")
 	)
 
-	log.Println("Starting Notification Service...")
+	log.Println("🚀 Notification Service Starting...")
 
 	if rabbitMQURL == "" || smtpUser == "" || smtpPassword == "" {
 		log.Fatalln("Error: Missing required environment variables.")
 	}
-	log.Printf("Connecting to Zoho with User: [%s] on Host: [%s]", smtpUser, smtpHost)
 
-	// --- RabbitMQ connection logic (no changes) ---
+	// RabbitMQ connection logic
 	var conn *amqp.Connection
 	for i := 0; i < 5; i++ {
 		conn, err = amqp.Dial(rabbitMQURL)
 		if err == nil {
 			break
 		}
-		log.Printf("Failed to connect to RabbitMQ, retrying in 5 seconds... (%v)", err)
+		log.Printf("Failed to connect to RabbitMQ, retrying... (%v)", err)
 		time.Sleep(5 * time.Second)
 	}
 	if err != nil {
 		log.Fatalf("Could not connect to RabbitMQ: %s", err)
 	}
 	defer conn.Close()
-	log.Println("Successfully connected to RabbitMQ")
 
 	ch, err := conn.Channel()
 	if err != nil {
@@ -88,45 +84,61 @@ func main() {
 		log.Fatalf("Failed to register a consumer: %s", err)
 	}
 
-	forever := make(chan bool)
-
 	go func() {
 		for d := range msgs {
 			var wrapper MessageWrapper
-			err := json.Unmarshal(d.Body, &wrapper)
-			if err != nil {
+			if err := json.Unmarshal(d.Body, &wrapper); err != nil {
 				log.Printf("Error decoding message: %s. Rejecting.", err)
 				d.Reject(false)
 				continue
 			}
 
 			payload := wrapper.Data
-			log.Printf("Received notification %s for %s <%s>", payload.NotificationID, payload.RecipientType, payload.RecipientEmail)
-
 			err = sendEmail(payload, smtpHost, smtpPort, smtpUser, smtpPassword)
 			if err != nil {
-				log.Printf("Failed to send email for notification %s: %s. Nacking to retry.", payload.NotificationID, err)
-				d.Nack(false, true)
+				log.Printf("❌ Failed email to %s: %s", payload.RecipientEmail, err)
+				d.Nack(false, true) // Retry
 				continue
 			}
 
-			log.Printf("Successfully sent email to %s for notification %s", payload.RecipientEmail, payload.NotificationID)
+			log.Printf("✅ Email sent to %s for %s", payload.RecipientEmail, payload.Title)
 			d.Ack(false)
 		}
 	}()
 
 	log.Println(" [*] Waiting for messages. To exit press CTRL+C")
-	<-forever
+	select {}
 }
 
-// --- Email Sending Logic (Updated to accept config as arguments) ---
 func sendEmail(payload NotificationPayload, host, port, user, pass string) error {
+	var body string
+	contentType := "text/plain"
 
-	emailBody := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s", user, payload.RecipientEmail, payload.Title, payload.Message)
+	// ✅ Logic: If HTML body is present, use it and set correct headers
+	if payload.HtmlBody != "" {
+		contentType = "text/html"
+		body = payload.HtmlBody
+	} else {
+		body = payload.Message
+	}
+
+	// Build the MIME email message
+	header := make(map[string]string)
+	header["From"] = user
+	header["To"] = payload.RecipientEmail
+	header["Subject"] = payload.Title
+	header["MIME-Version"] = "1.0"
+	header["Content-Type"] = fmt.Sprintf("%s; charset=\"utf-8\"", contentType)
+
+	message := ""
+	for k, v := range header {
+		message += fmt.Sprintf("%s: %s\r\n", k, v)
+	}
+	message += "\r\n" + body
 
 	auth := smtp.PlainAuth("", user, pass, host)
 
-	err := smtp.SendMail(host+":"+port, auth, user, []string{payload.RecipientEmail}, []byte(emailBody))
+	err := smtp.SendMail(host+":"+port, auth, user, []string{payload.RecipientEmail}, []byte(message))
 	if err != nil {
 		return fmt.Errorf("smtp error: %w", err)
 	}
