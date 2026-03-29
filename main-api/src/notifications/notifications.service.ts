@@ -151,12 +151,11 @@ export class NotificationService {
   }
 async sendWelcomeEmail(user: { id: string; email: string; name: string }) {
   try {
-    // ✅ Use __dirname to find the file inside the 'dist' folder in production
-    const templatePath = join(__dirname, 'mail-templates', 'welcome-seller.html');
+    // ✅ FIX: Point directly to where the file actually exists in the container
+    const templatePath = join(process.cwd(), 'dist', 'notifications', 'mail-templates', 'welcome-seller.html');
 
-    // Safety check: log path to terminal for debugging if it fails again
     if (!existsSync(templatePath)) {
-      console.log(`Template not found at: ${templatePath}`);
+      this.logger.error(`❌ Template NOT found at: ${templatePath}`);
       return;
     }
 
@@ -173,7 +172,9 @@ async sendWelcomeEmail(user: { id: string; email: string; name: string }) {
       type: 'SYSTEM',
     };
 
+    // ✅ Now this will actually execute because the error above is gone
     this.rabbitClient.emit('notification_created', payload);
+    this.logger.log(`🚀 Welcome email event emitted for ${user.email}`);
 
     await this.prisma.sellerNotification.create({
       data: {
@@ -184,11 +185,9 @@ async sendWelcomeEmail(user: { id: string; email: string; name: string }) {
       },
     });
 
-    return { success: true };
   } catch (error) {
-    console.error('Email Template Error:', error);
+    this.logger.error('Email Template Error:', error);
   }
 }
-
 
 }
