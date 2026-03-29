@@ -4,8 +4,7 @@ import { CustomerUser, NotificationType, Prisma, User } from '@prisma/client';
 import { ClientProxy } from '@nestjs/microservices';
 import { RABBITMQ_SERVICE } from 'src/rabbitmq/rabbitmq.module';
 import { join } from 'path';
-import { readFileSync } from 'fs';
-
+import { readFileSync, existsSync } from 'fs';
 
 interface NotificationPayload {
   recipientId: string;
@@ -150,46 +149,46 @@ export class NotificationService {
       },
     };
   }
- async sendWelcomeEmail(user: { id: string; email: string; name: string }) {
-    try {
-      // 1. Locate the template
-      // We use process.cwd() to find the file relative to the project root
-      const templatePath = join(process.cwd(), 'src', 'notifications', 'mail-templates', 'welcome-seller.html');
-      let htmlContent = readFileSync(templatePath, 'utf8');
+async sendWelcomeEmail(user: { id: string; email: string; name: string }) {
+  try {
+    // ✅ Use __dirname to find the file inside the 'dist' folder in production
+    const templatePath = join(__dirname, 'mail-templates', 'welcome-seller.html');
 
-      // 2. Inject user data
-      htmlContent = htmlContent.replace('{{name}}', user.name);
-
-      // 3. Prepare RabbitMQ Payload for the Go Service
-      const payload = {
-        recipientId: user.id,
-        recipientEmail: user.email,
-        recipientType: 'seller',
-        title: 'Welcome to Jottosop Business!',
-        message: 'Your business profile is ready. Check your email for platform benefits.',
-        htmlBody: htmlContent, // Passed to your Go SMTP consumer
-        type: 'SYSTEM',
-      };
-
-      // 4. Emit to Queue
-      this.rabbitClient.emit('notification_created', payload);
-
-      // 5. Save Internal Notification (for Dashboard Bell Icon)
-      await this.prisma.sellerNotification.create({
-        data: {
-          userId: user.id,
-          title: 'Namaste! Welcome to Jottosop',
-          message: 'Your registration is successful. Start by adding your first product.',
-          type: 'SYSTEM',
-        },
-      });
-
-      return { success: true };
-    } catch (error) {
-      console.error('Email Template Error:', error);
-      // Fallback to plain text if HTML template fails to load
+    // Safety check: log path to terminal for debugging if it fails again
+    if (!existsSync(templatePath)) {
+      console.log(`Template not found at: ${templatePath}`);
+      return;
     }
+
+    let htmlContent = readFileSync(templatePath, 'utf8');
+    htmlContent = htmlContent.replace('{{name}}', user.name);
+
+    const payload = {
+      recipientId: user.id,
+      recipientEmail: user.email,
+      recipientType: 'seller',
+      title: 'Welcome to Jottosop Business!',
+      message: 'Your business profile is ready. Check your email.',
+      htmlBody: htmlContent,
+      type: 'SYSTEM',
+    };
+
+    this.rabbitClient.emit('notification_created', payload);
+
+    await this.prisma.sellerNotification.create({
+      data: {
+        userId: user.id,
+        title: 'Namaste! Welcome to Jottosop',
+        message: 'Your registration is successful.',
+        type: 'SYSTEM',
+      },
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Email Template Error:', error);
   }
+}
 
 
 }
