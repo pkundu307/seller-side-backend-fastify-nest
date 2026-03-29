@@ -155,7 +155,7 @@ async sendWelcomeEmail(user: { id: string; email: string; name: string }) {
     const templatePath = join(process.cwd(), 'dist', 'notifications', 'mail-templates', 'welcome-seller.html');
 
     if (!existsSync(templatePath)) {
-      this.logger.error(`❌ Template NOT found at: ${templatePath}`);
+      console.log(`❌ Template NOT found at: ${templatePath}`);
       return;
     }
 
@@ -174,7 +174,7 @@ async sendWelcomeEmail(user: { id: string; email: string; name: string }) {
 
     // ✅ Now this will actually execute because the error above is gone
     this.rabbitClient.emit('notification_created', payload);
-    this.logger.log(`🚀 Welcome email event emitted for ${user.email}`);
+    console.log(`🚀 Welcome email event emitted for ${user.email}`);
 
     await this.prisma.sellerNotification.create({
       data: {
@@ -186,7 +186,7 @@ async sendWelcomeEmail(user: { id: string; email: string; name: string }) {
     });
 
   } catch (error) {
-    this.logger.error('Email Template Error:', error);
+    console.log('Email Template Error:', error);
   }
 }
 
