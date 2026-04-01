@@ -1,13 +1,13 @@
 import {
   Controller, Post, Body, Get, UseGuards,
-  Req, HttpCode, HttpStatus, Patch, Param, BadRequestException,
+  Req, HttpCode, HttpStatus, Patch, Param, BadRequestException, Query,
 } from '@nestjs/common';
 import { BusinessService }    from './business.service';
 import { JwtAuthGuard }       from 'src/auth/jwt-auth.guard';
 import { CreateBusinessDto }  from './dto/create-business.dto';
 import { UpdateBusinessDto }  from './dto/update-business.dto';
 import { FastifyRequest }     from 'fastify';
-import { ApiConsumes }        from '@nestjs/swagger';
+import { ApiConsumes, ApiOperation, ApiParam, ApiQuery, ApiResponse } from '@nestjs/swagger';
 
 @Controller('business')
 export class BusinessController {
@@ -132,5 +132,23 @@ async update(@Param('id') businessId: string, @Req() req: FastifyRequest) {
       kycFiles:  Object.keys(kycBuffers).length > 0 ? kycBuffers : undefined,
     },
   );
+}
+
+@Get(':businessId/products')
+@ApiOperation({ summary: 'Public: Fetch all products of a business by business ID' })
+@ApiParam({ name: 'businessId', example: 'uuid-here', description: 'Business ID' })
+@ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number' })
+@ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page' })
+@ApiResponse({ status: 200, description: 'Returns business products with pagination' })
+@ApiResponse({ status: 404, description: 'Business not found' })
+async getBusinessProducts(
+  @Param('businessId') businessId: string,
+  @Query('page') page?: string,
+  @Query('limit') limit?: string,
+) {
+  return this.businessService.getBusinessProducts(businessId, {
+    page: page ? parseInt(page) : 1,
+    limit: limit ? parseInt(limit) : 12,
+  });
 }
 }

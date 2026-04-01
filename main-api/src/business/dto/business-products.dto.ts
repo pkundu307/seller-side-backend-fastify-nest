@@ -1,7 +1,6 @@
 import { IsArray, IsNumber, IsObject, IsString } from 'class-validator';
-import { Type } from 'class-transformer';
 
-export class BusinessProductDto {
+export class ProductDto {
   @IsString()
   id: string;
 
@@ -13,9 +12,6 @@ export class BusinessProductDto {
 
   @IsString()
   slug: string;
-
-  @IsString()
-  businessName: string;
 
   @IsNumber()
   numberOfReviews: number;
@@ -47,9 +43,23 @@ export class PaginationDto {
   lastPage: number;
 }
 
+export class BusinessDto {
+  @IsString()
+  name: string;
+
+  @IsString()
+  state: string;
+
+  @IsString()
+  logo: string | null;
+}
+
 export class BusinessProductsResponseDto {
+  @IsObject()
+  business: BusinessDto;
+
   @IsArray()
-  products: BusinessProductDto[];
+  products: ProductDto[];
 
   @IsObject()
   pagination: PaginationDto;
