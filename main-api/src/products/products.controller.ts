@@ -469,24 +469,7 @@ export class ProductsController {
       paginationQuery,
     );
   }
-
-  @Get('public/:productId')
-  @ApiOperation({
-    summary: 'Customer: Get comprehensive details of a single product by ID',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Returns full details of a published product.',
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Product not found or not published.',
-  })
-  async getProductDetailsForCustomer(@Param('productId') productId: string) {
-    return this.productsService.getProductDetailsForCustomer(productId);
-  }
-
-  @Get('public/business/:businessId')
+ @Get('public/business/:businessId')
   @ApiOperation({ summary: 'Public: Fetch all products of a business by business ID' })
   @ApiParam({ name: 'businessId', example: 'uuid-here', description: 'Business ID' })
   @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number' })
@@ -504,6 +487,23 @@ export class ProductsController {
     });
   }
 
+  @Get('public/:productId')
+  @ApiOperation({
+    summary: 'Customer: Get comprehensive details of a single product by ID',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Returns full details of a published product.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Product not found or not published.',
+  })
+  async getProductDetailsForCustomer(@Param('productId') productId: string) {
+    return this.productsService.getProductDetailsForCustomer(productId);
+  }
+
+ 
 @Get('category-page/:slug')
 @ApiOperation({ summary: 'Get category data with advanced filtering' })
 async getCategoryPageData(
