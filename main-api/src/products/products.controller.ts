@@ -22,14 +22,13 @@ import { BusinessProductQueryDto, CategoryPageQueryDto, PaginationQueryDto } fro
 import { CreateProductDto } from './dto/create-product.dto';
 import {
   ApiBearerAuth,
-  ApiOperation,
-  ApiParam,
-  ApiResponse,
+
 } from '@nestjs/swagger';
 import { UpdateProductDto, UpdateVariantDto } from './dto/update-product.dto';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { ProductPaginationDto } from './dto/product-pagination.dto';
+import { ApiTags, ApiOperation, ApiParam, ApiResponse, ApiQuery } from '@nestjs/swagger';
 
 @Controller('products')
 export class ProductsController {
@@ -485,6 +484,24 @@ export class ProductsController {
   })
   async getProductDetailsForCustomer(@Param('productId') productId: string) {
     return this.productsService.getProductDetailsForCustomer(productId);
+  }
+
+  @Get('public/business/:businessId')
+  @ApiOperation({ summary: 'Public: Fetch all products of a business by business ID' })
+  @ApiParam({ name: 'businessId', example: 'uuid-here', description: 'Business ID' })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page' })
+  @ApiResponse({ status: 200, description: 'Returns business products with pagination' })
+  @ApiResponse({ status: 404, description: 'Business not found' })
+  async getBusinessProducts(
+    @Param('businessId') businessId: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.productsService.getBusinessProducts(businessId, {
+      page: page ? parseInt(page) : 1,
+      limit: limit ? parseInt(limit) : 12,
+    });
   }
 
 @Get('category-page/:slug')

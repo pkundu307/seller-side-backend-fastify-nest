@@ -466,8 +466,8 @@ async createProduct(businessId: string, formData: any) {
    * Fetches a paginated list of products for a given business, optimized for list views.
    */
 async getProductsByBusiness(
-  businessId: string, 
-  query: BusinessProductQueryDto, 
+  businessId: string,
+  query: BusinessProductQueryDto,
   userId: string
 ) {
   const { page = 1, limit = 10, search } = query;
@@ -522,10 +522,10 @@ async getProductsByBusiness(
         isPublished: true,
         isFeatured: true,
         category: { select: { id: true, name: true } },
-        variants: { 
-          where: { isDefault: true, deletedAt: null }, 
-          select: { price: true, stock: true }, 
-          take: 1 
+        variants: {
+          where: { isDefault: true, deletedAt: null },
+          select: { price: true, stock: true },
+          take: 1
         },
       },
       skip,
@@ -550,16 +550,101 @@ async getProductsByBusiness(
 
   const totalPages = Math.ceil(total / Number(limit));
 
-  return { 
-    data: formattedProducts, 
-    pagination: { 
-      total, 
-      page: Number(page), 
-      limit: Number(limit), 
-      totalPages, 
-      hasNextPage: Number(page) < totalPages, 
-      hasPrevPage: Number(page) > 1 
-    } 
+  return {
+    data: formattedProducts,
+    pagination: {
+      total,
+      page: Number(page),
+      limit: Number(limit),
+      totalPages,
+      hasNextPage: Number(page) < totalPages,
+      hasPrevPage: Number(page) > 1
+    }
+  };
+}
+
+/**
+ * Fetches all published products for a business (public, customer-facing).
+ */
+async getBusinessProducts(businessId: string, query: { page: number; limit: number }) {
+  const { page = 1, limit = 12 } = query;
+  const skip = (page - 1) * limit;
+
+  // 1. Check business exists
+  const business = await this.prisma.business.findUnique({
+    where: { id: businessId },
+    select: { id: true, name: true, state: true, logoUrl: true },
+  });
+
+  if (!business) {
+    throw new NotFoundException(`Business with ID "${businessId}" not found`);
+  }
+
+  // 2. Fetch products with pagination
+  const [products, total] = await Promise.all([
+    this.prisma.product.findMany({
+      where: {
+        businessId,
+        isPublished: true,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        slug: true,
+        images: true,
+        isCustomizable: true,
+        _count: { select: { reviews: true } },
+        variants: {
+          where: { isDefault: true, deletedAt: null },
+          select: { price: true, mrp: true },
+          take: 1,
+        },
+      },
+      skip,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+    }),
+    this.prisma.product.count({
+      where: {
+        businessId,
+        isPublished: true,
+        deletedAt: null,
+      },
+    }),
+  ]);
+
+  // 3. Format response
+  const formattedProducts = products.map((p) => {
+    const variant = p.variants?.[0] ?? null;
+
+    return {
+      id: p.id,
+      title: p.title,
+      description: p.description,
+      slug: p.slug,
+      numberOfReviews: p._count?.reviews ?? 0,
+      price: variant?.price?.toString() ?? '0',
+      mrp: variant?.mrp?.toString() ?? '0',
+      images: p.images ?? [],
+      isCustomizable: p.isCustomizable.toString(),
+    };
+  });
+
+  return {
+    business: {
+      name: business.name,
+      state: business.state,
+      logo: business.logoUrl,
+    },
+    products: formattedProducts,
+    pagination: {
+      total,
+      page,
+      limit,
+      lastPage: Math.ceil(total / limit),
+    },
   };
 }
   /**
@@ -1180,12 +1265,10 @@ async updateProduct(
           select: {
             id: true,
             name: true, // Business owner's company name
-            gstNumber: true, // Potentially useful for customers
             address: true,
             city: true,
             state: true,
             country: true,
-            phone: true,
             isVerified: true,
           },
         },
