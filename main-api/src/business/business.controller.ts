@@ -148,7 +148,7 @@ async getBusinessProducts(
 ) {
   return this.businessService.getBusinessProducts(businessId, {
     page: page ? parseInt(page) : 1,
-    limit: limit ? parseInt(limit) : 12,
+    limit: limit ? parseInt(limit) : 150,
   });
 }
 }

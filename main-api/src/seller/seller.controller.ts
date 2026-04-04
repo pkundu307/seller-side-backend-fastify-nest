@@ -12,7 +12,7 @@ import { SalePaginationDto } from './dto/sale-pagination.dto';
 import { GetSalesStatsDto } from './dto/get-sales-stats.dto';
 import { GetPosCustomersDto } from './dto/get-pos-customers.dto';
 import { UpdatePosSaleDto } from './dto/update-pos-sale.dto';
-import { PdfService } from './pdf.service';
+import { PdfService } from './pdf/pdf.service';
 import { DashboardFilterDto } from './dto/dashboard-filter.dto';
 import { SellerReplyTicketDto, SellerTicketQueryDto, UpdateTicketStatusDto } from './dto/seller-ticket.dto';
 
@@ -197,33 +197,24 @@ async getBusinessCustomers(
 
 
   // 2. Download Invoice PDF (Fastify Version)
-   @Get(':businessId/sales/:saleId/pdf')
-  @ApiOperation({ summary: 'Generate PDF Invoice for a Sale' })
+@Get(':businessId/sales/:saleId/pdf')
+  @ApiOperation({ summary: 'Generate PDF Invoice' })
   async generateSalePdf(
     @Req() req: UserRequest,
     @Param('businessId', ParseUUIDPipe) businessId: string,
     @Param('saleId', ParseUUIDPipe) saleId: string,
     @Res() res: FastifyReply,
   ) {
-    // 1. Security Check
     await this.sellerService.verifyBusinessOwnership(req.user.id, businessId);
-
-    // 2. Fetch Data (Includes Business Info now)
     const sale = await this.sellerService.getBusinessSaleById(businessId, saleId);
 
-    // 3. Generate PDF
-    // Cast sale to 'any' if TypeScript complains about strict type matching 
-    // or ensure getBusinessSaleById return type matches FullSale
-    const buffer = await this.pdfService.generateSaleInvoicePdf(sale as any);
+    const buffer = await this.pdfService.generateSaleInvoicePdf(sale);
 
-    // 4. Send Response
     res.header('Content-Type', 'application/pdf');
     res.header(
       'Content-Disposition',
       `attachment; filename=Invoice-${sale.invoicePrefix}-${sale.invoiceNo}.pdf`,
     );
-    res.header('Content-Length', buffer.length.toString());
-
     res.send(buffer);
   }
 

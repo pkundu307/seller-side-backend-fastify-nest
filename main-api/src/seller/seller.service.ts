@@ -5,7 +5,7 @@ import { BankCashCheque, OrderStatus, PaymentMethod, Prisma, PrismaClient } from
 import { UpdateSellerOrderDto } from './dto/update-order.dtp';
 import { CreatePosSaleDto, PosPaymentMode } from './dto/create-pos-sale.dto';
 import { UpdatePosSaleDto } from './dto/update-pos-sale.dto';
-import { PdfService } from './pdf.service';
+import { PdfService } from './pdf/pdf.service';
 import { SalePaginationDto } from './dto/sale-pagination.dto';
 import { GetSalesStatsDto } from './dto/get-sales-stats.dto';
 import { GetPosCustomersDto } from './dto/get-pos-customers.dto';

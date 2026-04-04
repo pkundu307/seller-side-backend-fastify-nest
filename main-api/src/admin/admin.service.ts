@@ -12,6 +12,9 @@ import { SettlementStatus } from '@prisma/client';
 import { AdminReplyTicketDto, AdminTicketQueryDto, AdminUpdateTicketStatusDto } from './dto/admin-ticket.dto';
 import { AdminOrderFilterDto, UpdateOrderAdminDto } from './dto/admin-order.dto';
 import { CreatePlatformFeeDto, UpdatePlatformFeeDto } from './dto/platform-fee.dto';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { NotificationService } from 'src/notifications/notifications.service';
 interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
   brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
@@ -23,6 +26,7 @@ interface ParsedHomepageFiles {
 @Injectable()
 export class AdminService {
     constructor(
+        private readonly notificationService: NotificationService,
     private prisma: PrismaService,
     private s3Service: S3Service, // Make sure S3Service is provided in AdminModule
   ) {}
@@ -337,27 +341,95 @@ async updatePlatformFee(id: string, dto: UpdatePlatformFeeDto) {
     return businesses;
   }
 
-    async updateBusinessVerification(
-    businessId: string,
-    dto: UpdateBusinessVerificationDto,
-  ) {
-    // First, ensure the business actually exists
-    const businessExists = await this.prisma.business.findUnique({
-      where: { id: businessId },
-    });
+async updateBusinessVerification(
+  businessId: string,
+  dto: UpdateBusinessVerificationDto,
+) {
+  // ── 1. Ensure business exists ──────────────────────────
+  const business = await this.prisma.business.findUnique({
+    where:   { id: businessId },
+    include: {
+      owner: {                           // ✅ fetch the owner's email + name
+        select: { id: true, email: true, name: true },
+      },
+    },
+  });
 
-    if (!businessExists) {
-      throw new NotFoundException(`Business with ID "${businessId}" not found.`);
+  if (!business) {
+    throw new NotFoundException(`Business with ID "${businessId}" not found.`);
+  }
+
+  // ── 2. Perform the update ──────────────────────────────
+  const updated = await this.prisma.business.update({
+    where: { id: businessId },
+    data:  { isVerified: dto.isVerified },
+  });
+
+  // ── 3. Send verified/unverified email ─
+  if (business.owner) {
+    if (dto.isVerified) {
+      await this.notificationService.createForSeller(
+        { id: business.owner.id, email: business.owner.email },
+        '🎉 Your Business is Verified — Start Selling on Jottosop!',
+        'Your business has been verified. You can now list products and start selling.',
+      );
+    } else {
+      await this.sendBusinessUnverifiedEmail({
+        id:    business.owner.id,
+        email: business.owner.email,
+        name:  business.owner.name || business.name || 'Business Owner',
+      });
+    }
+  }
+
+  return updated;
+}
+
+// ─────────────────────────────────────────────────────────
+// Send Business Unverified Email
+// ─────────────────────────────────────────────────────────
+private async sendBusinessUnverifiedEmail(user: {
+  id:    string;
+  email: string;
+  name:  string;
+}) {
+  try {
+    const templatePath = join(
+      process.cwd(),
+      'main-api', 'src', 'notifications', 'mail-templates', 'business-unverified.html',
+    );
+
+    if (!existsSync(templatePath)) {
+      console.warn(`[Admin] ❌ Template NOT found at: ${templatePath}`);
+      return;
     }
 
-    // If it exists, perform the update
-    return this.prisma.business.update({
-      where: { id: businessId },
+    let htmlContent = readFileSync(templatePath, 'utf8');
+    htmlContent = htmlContent.replace('{{name}}', user.name);
+
+    await this.notificationService.createForSeller(
+      { id: user.id, email: user.email },
+      '⚠️ Your Business Verification Has Been Revoked',
+      'Your business verification has been removed. Please review your account.',
+    );
+
+    // In-app notification with HTML
+    await this.prisma.sellerNotification.create({
       data: {
-        isVerified: dto.isVerified,
+        userId:  user.id,
+        title:   '⚠️ Business Verification Revoked',
+        message: 'Your business verification has been removed. Please review your account.',
+        type:    'SYSTEM',
+        metadata: { htmlBody: htmlContent } as Prisma.JsonObject,
       },
     });
+
+    console.log(`[Admin] 🚀 Business unverified email emitted for ${user.email}`);
+
+  } catch (error) {
+    console.error('[Admin] Failed to send business unverified email:', error);
   }
+}
 
 async getProductsForVerification(query: AdminProductFilterDto) {
     // FIX: Provide explicit defaults here to satisfy TypeScript

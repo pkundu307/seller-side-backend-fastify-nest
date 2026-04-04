@@ -10,7 +10,7 @@ import { UpdateQuotationDto }    from './dto/update-quotation.dto';
 import { ConvertQuotationDto }   from './dto/convert-quotation.dto';
 import { ApiOperation, ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { QuotationStatus }       from '@prisma/client';
-import { PdfService }            from '../pdf.service';
+import { PdfService } from '../pdf/pdf.service';
 import { FastifyReply }          from 'fastify';
 
 @ApiTags('Seller Quotations')

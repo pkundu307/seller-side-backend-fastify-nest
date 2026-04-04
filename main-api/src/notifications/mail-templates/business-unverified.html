@@ -1,0 +1,191 @@
+<!-- src/notifications/mail-templates/business-unverified.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
+    .container { max-width: 600px; background: #ffffff; margin: 0 auto; border-radius: 30px; padding: 40px; box-shadow: 20px 20px 60px #d9d9d9, -20px -20px 60px #ffffff; }
+    .logo { text-align: center; margin-bottom: 30px; }
+    .logo img { width: 180px; }
+
+    .status-badge {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      background: linear-gradient(135deg, #fff5f5, #fed7d7);
+      border: 1.5px solid #fc8181; border-radius: 20px;
+      padding: 16px 24px; margin-bottom: 28px; text-align: center;
+    }
+    .badge-icon  { font-size: 30px; }
+    .badge-text  { font-size: 18px; font-weight: 700; color: #9b2c2c; }
+    .badge-sub   { font-size: 12px; color: #c53030; margin-top: 2px; }
+
+    .welcome-text { color: #1a202c; font-size: 22px; font-weight: bold; text-align: center; margin-bottom: 8px; }
+    .subtitle {
+      color: #4a5568; text-align: center; margin-bottom: 28px;
+      font-size: 14.5px; line-height: 1.7;
+    }
+
+    .reason-card {
+      background: #fff5f5; border: 1.5px solid #feb2b2;
+      border-radius: 20px; padding: 20px 24px; margin-bottom: 20px;
+    }
+    .reason-title { font-size: 15px; font-weight: 700; color: #9b2c2c; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+    .reason-list  { margin: 0; padding-left: 20px; color: #742a2a; font-size: 13.5px; line-height: 2.2; }
+
+    .rules-card {
+      background: #fffbeb; border: 1.5px solid #f6c90e;
+      border-radius: 20px; padding: 20px 24px; margin-bottom: 20px;
+    }
+    .rules-title { font-size: 15px; font-weight: 700; color: #92400e; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+    .rules-list  { margin: 0; padding-left: 20px; color: #78350f; font-size: 13.5px; line-height: 2.2; }
+
+    .contact-card {
+      background: linear-gradient(135deg, #ebf8ff, #e0f2fe);
+      border: 1.5px solid #90cdf4; border-radius: 20px;
+      padding: 22px 24px; margin: 24px 0;
+    }
+    .contact-title { font-size: 15px; font-weight: 700; color: #1e40af; margin-bottom: 10px; }
+    .contact-row   { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+    .contact-icon  { font-size: 20px; flex-shrink: 0; margin-top: 2px; }
+    .contact-label { font-size: 12px; color: #3b82f6; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+    .contact-value { font-size: 14px; color: #1e3a8a; font-weight: 600; }
+    .contact-note  { font-size: 12px; color: #3b82f6; margin-top: 2px; }
+
+    .appeal-note {
+      background: #f0fff4; border: 1.5px solid #9ae6b4;
+      border-radius: 16px; padding: 16px 20px; margin-bottom: 20px;
+      font-size: 13.5px; color: #276749; line-height: 1.8;
+    }
+
+    .cta-button {
+      display: block; width: fit-content; margin: 28px auto 10px;
+      padding: 14px 32px; background: #1e40af;
+      color: #ffffff !important; text-decoration: none;
+      border-radius: 15px; font-weight: bold; font-size: 14px;
+      box-shadow: 0 10px 20px rgba(30,64,175,0.2);
+      text-align: center;
+    }
+    .cta-sub { text-align: center; font-size: 12px; color: #a0aec0; margin-bottom: 6px; }
+
+    .footer { margin-top: 36px; border-top: 1px solid #eee; padding-top: 20px; text-align: center; }
+    .contact-info { font-size: 13px; color: #718096; line-height: 1.8; }
+    .bottom-img   { width: 100%; border-radius: 20px; margin-top: 20px; }
+    .red          { color: #c53030; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- Logo -->
+    <div class="logo">
+      <img src="https://pub-5b521def0bfc46dd9037956c478b8c67.r2.dev/team/logo.png" alt="Jottosop Logo">
+    </div>
+
+    <!-- Status Badge -->
+    <div class="status-badge">
+      <span class="badge-icon">⚠️</span>
+      <div>
+        <div class="badge-text">Business Verification Revoked</div>
+        <div class="badge-sub">Your selling access has been temporarily suspended</div>
+      </div>
+    </div>
+
+    <!-- Greeting -->
+    <div class="welcome-text">Dear {{name}},</div>
+    <div class="subtitle">
+      We regret to inform you that your business registration on Jottosop has been
+      <span class="red">suspended due to a violation</span> of our platform's
+      Rules & Regulations.<br><br>
+      Your products have been unlisted and order processing has been paused
+      until the matter is resolved.
+    </div>
+
+    <!-- Possible Reasons -->
+    <div class="reason-card">
+      <div class="reason-title">🚫 Possible Reasons for Suspension</div>
+      <ul class="reason-list">
+        <li>Listing of prohibited, counterfeit, or misleading products</li>
+        <li>Violation of Jottosop's Seller Code of Conduct</li>
+        <li>Fraudulent transactions or chargebacks</li>
+        <li>Incomplete or incorrect KYC / business documentation</li>
+        <li>Non-compliance with applicable Indian laws (Consumer Protection Act, IT Act)</li>
+        <li>Multiple customer complaints or dispute escalations</li>
+      </ul>
+    </div>
+
+    <!-- Rules Reminder -->
+    <div class="rules-card">
+      <div class="rules-title">📋 Jottosop Seller Rules & Regulations (Key Points)</div>
+      <ul class="rules-list">
+        <li>All listed products must be genuine and accurately described</li>
+        <li>Sellers must honour orders once accepted — cancellations affect your rating</li>
+        <li>GSTIN / PAN must be valid and match government records</li>
+        <li>No direct contact with buyers outside the Jottosop platform</li>
+        <li>Shipping must be dispatched within the committed timeline</li>
+      </ul>
+    </div>
+
+    <!-- Appeal Info -->
+    <div class="appeal-note">
+      ✅ <strong>This action may be appealable.</strong> If you believe this suspension was made in error
+      or you have resolved the underlying issue, you are welcome to raise a formal appeal.
+      Our team reviews all appeals within <strong>3–5 business days</strong>.
+    </div>
+
+    <!-- Contact Card -->
+    <div class="contact-card">
+      <div class="contact-title">📬 Contact Us to Appeal or Seek Clarification</div>
+
+      <div class="contact-row">
+        <span class="contact-icon">✉️</span>
+        <div>
+          <div class="contact-label">Email (Registered Mail Only)</div>
+          <div class="contact-value">support@jottosop.in</div>
+          <div class="contact-note">Send from your registered email address with subject: <strong>"Business Suspension Appeal – {{name}}"</strong></div>
+        </div>
+      </div>
+
+      <div class="contact-row">
+        <span class="contact-icon">💬</span>
+        <div>
+          <div class="contact-label">WhatsApp Support</div>
+          <div class="contact-value">+91 89109 88290</div>
+          <div class="contact-note">Available Mon–Sat, 10 AM – 6 PM IST. Please mention your registered business name.</div>
+        </div>
+      </div>
+
+      <div class="contact-row">
+        <span class="contact-icon">🌐</span>
+        <div>
+          <div class="contact-label">Help Centre</div>
+          <div class="contact-value">jottosop.in/help</div>
+          <div class="contact-note">Browse FAQs, policies, and suspension guidelines.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CTA -->
+    <a href="mailto:support@jottosop.in?subject=Business Suspension Appeal – {{name}}" class="cta-button">
+      ✉️ Write to Support Now
+    </a>
+    <p class="cta-sub">Use your registered email address for faster resolution</p>
+
+    <!-- Footer -->
+    <div class="footer">
+      <p class="contact-info">
+        <strong>Jottosop Seller Support Team</strong><br>
+        Email: support@jottosop.in<br>
+        WhatsApp: <strong>+91 89109 88290</strong><br><br>
+        <em>This is an automated notification. Please do not reply directly to this email.</em>
+      </p>
+      <img
+        src="https://pub-5b521def0bfc46dd9037956c478b8c67.r2.dev/team/Gemini_Generated_Image_8zkdo68zkdo68zkd.png"
+        class="bottom-img"
+        alt="Jottosop"
+      >
+    </div>
+
+  </div>
+</body>
+</html>

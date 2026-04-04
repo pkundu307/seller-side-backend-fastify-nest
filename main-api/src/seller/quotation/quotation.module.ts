@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { QuotationService } from './quotation.service';
 import { QuotationController } from './quotation.controller';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { PdfService } from '../pdf.service';
+import { PdfService } from '../pdf/pdf.service';
 @Module({
   controllers: [QuotationController],
   providers: [QuotationService, PrismaService,PdfService],

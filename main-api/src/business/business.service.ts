@@ -528,6 +528,7 @@ async getBusinessProducts(businessId: string, query: { page: number; limit: numb
       where: {
         businessId,
         isPublished: true,
+        isFeatured: false,
         deletedAt: null,
       },
       select: {
