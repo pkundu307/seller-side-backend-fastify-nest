@@ -189,5 +189,39 @@ async sendWelcomeEmail(user: { id: string; email: string; name: string }) {
     console.log('Email Template Error:', error);
   }
 }
+async sendBusinessVerificationEmail(user: { id: string; email: string; name: string }, isVerified: boolean) {
+  try {
+    const templateName = isVerified ? 'business-verified.html' : 'business-unverified.html';
+    const templatePath = join(process.cwd(), 'dist', 'notifications', 'mail-templates', templateName);
 
+    if (!existsSync(templatePath)) return;
+
+    let htmlContent = readFileSync(templatePath, 'utf8');
+    htmlContent = htmlContent.replace(/{{name}}/g, user.name);
+
+    const payload = {
+      recipientId: user.id,
+      recipientEmail: user.email,
+      recipientType: 'seller',
+      title: isVerified ? '🎉 Business Verified' : '⚠️ Business Verification Revoked',
+      message: isVerified ? 'Your business is verified.' : 'Your verification was revoked.',
+      htmlBody: htmlContent,
+      type: 'SYSTEM',
+    };
+
+    this.rabbitClient.emit('notification_created', payload);
+
+    await this.prisma.sellerNotification.create({
+      data: {
+        userId: user.id,
+        title: isVerified ? '🎉 Business Verified' : '⚠️ Business Verification Revoked',
+        message: isVerified ? 'Your business is verified.' : 'Verification revoked.',
+        type: 'SYSTEM',
+        metadata: { htmlBody: htmlContent } as any,
+      },
+    });
+  } catch (error) {
+    console.error('Business Verification Email Error:', error);
+  }
+}
 }

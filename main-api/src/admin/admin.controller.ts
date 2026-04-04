@@ -3,7 +3,7 @@ import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { MultipartFile } from 'fastify-multipart';
 
@@ -408,4 +408,22 @@ private async parseBannerMultipartData(
   ) {
     return this.adminService.updateOrderAdmin(id, dto);
   }
+
+@Get('customers')
+@Roles('admin')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@ApiBearerAuth()
+@ApiOperation({ summary: 'Fetch all customer users with pagination and optional search' })
+@ApiQuery({ name: 'page',   required: false, type: Number, example: 1 })
+@ApiQuery({ name: 'limit',  required: false, type: Number, example: 50 })
+@ApiQuery({ name: 'search', required: false, type: String, example: 'john@example.com' }) // ✅
+async getCustomers(
+  @Query('page')   page:   number = 1,
+  @Query('limit')  limit:  number = 50,
+  @Query('search') search?: string,   // ✅
+) {
+  const safeLimit = Math.min(Number(limit), 100);
+  return this.adminService.getCustomerUsers(Number(page), safeLimit, search);
+}
+
 }
