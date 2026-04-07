@@ -10,6 +10,7 @@ import { AddToCartDto } from './dto/add-to-cart.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
 import { Prisma } from '@prisma/client';
 import { getStateCode } from 'src/utils/state-codes'; // ✅ Import the utility helper
+import { restOfIndiaRate } from 'src/payment/utils/xpressbees-calculator';
 
 @Injectable()
 export class CartService {
@@ -21,36 +22,81 @@ export class CartService {
   /** ---------------------------------------------------------
    * 📦 Fetch Cart Items
    * --------------------------------------------------------- */
-  async getCartItems(customerUserId: string) {
-    return this.prisma.cartItem.findMany({
-      where: { customerUserId },
-      include: {
-        variant: {
-          include: {
-            product: {
-              include: {
-                business: {
-                  select: {
-                    id: true,
-                    name: true,
-                    state: true,
-                    stateCode: true,
-                  },
+// src/cart/cart.service.ts
+
+async getCartItems(customerUserId: string) {
+  const items = await this.prisma.cartItem.findMany({
+    where: { customerUserId },
+    include: {
+      variant: {
+        include: {
+          product: {
+            include: {
+              business: {
+                select: {
+                  id: true,
+                  name: true,
+                  state: true,
+                  stateCode: true,
                 },
               },
             },
-            attributeValues: {
-              include: {
-                attribute: true,
-                attributeOption: true,
-              },
+          },
+          attributeValues: {
+            include: {
+              attribute: true,
+              attributeOption: true,
             },
           },
         },
       },
-      orderBy: { id: 'desc' },
-    });
-  }
+    },
+    orderBy: { id: 'desc' },
+  });
+
+  // ── Shipping Manipulation ──────────────────────────────
+  return items.map((item) => {
+    const variant = item.variant;
+    if (!variant) return item;
+
+    const basePrice = Number(variant.price);
+    const baseMrp   = Number(variant.mrp);
+
+    if (basePrice <= 399) {
+      return {
+        ...item,
+        variant: {
+          ...variant,
+          shippingIncluded:     false,
+          shippingCharge:       0,
+          freeShippingEligible: false,
+        },
+      };
+    }
+
+    const actualG = Number(variant.weightInGrams ?? 500);
+    const l       = parseFloat(variant.length?.toString() ?? '0');
+    const w       = parseFloat(variant.width?.toString()  ?? '0');
+    const h       = parseFloat(variant.height?.toString() ?? '0');
+
+    const volG        = (l > 0 && w > 0 && h > 0) ? (l * w * h) / 5 : 0;
+    const chargeableG = Math.ceil(Math.max(actualG, volG) / 500) * 500;
+    const shippingCharge = restOfIndiaRate(chargeableG);
+
+    return {
+      ...item,
+      variant: {
+        ...variant,
+        price:                String(basePrice + shippingCharge),
+        mrp:                  String(baseMrp   + shippingCharge),
+        shippingIncluded:     true,
+        shippingCharge,
+        freeShippingEligible: true,
+      },
+    };
+  });
+  // ──────────────────────────────────────────────────────
+}
 
   /** ---------------------------------------------------------
    * ➕ Add Item to Cart

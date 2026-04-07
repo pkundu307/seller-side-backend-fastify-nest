@@ -7,7 +7,7 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductPaginationDto } from './dto/product-pagination.dto';
 import { Prisma, VariantStatus } from '@prisma/client';
 import {  StockMethod } from '@prisma/client';
-
+import { restOfIndiaRate } from '../payment/utils/xpressbees-calculator';
 @Injectable()
 export class ProductsService {
   constructor(
@@ -148,28 +148,69 @@ private getFeaturedProductSelect() {
         { isDefault: Prisma.SortOrder.desc },
         { createdAt: Prisma.SortOrder.asc  },
       ],
-      select: { price: true, mrp: true, images: true },
+      select: {
+        price:         true,
+        mrp:           true,
+        images:        true,
+        weightInGrams: true, // ← added
+        length:        true, // ← added
+        width:         true, // ← added
+        height:        true, // ← added
+      },
     },
   };
 }
 
+
 private processProduct(product: any) {
-  const mainImages    = product.images ?? [];
-  const variantImages = product.variants?.[0]?.images ?? [];
+  const mainImages     = product.images ?? [];
+  const variantImages  = product.variants?.[0]?.images ?? [];
   const combinedImages = [...mainImages, ...variantImages].slice(0, 2);
   const defaultVariant = product.variants?.[0] ?? null;
 
+  // ── Shipping Manipulation ──────────────────────────────
+  let finalPrice        = defaultVariant?.price;
+  let finalMrp          = defaultVariant?.mrp;
+  let shippingIncluded  = false;
+  let shippingCharge    = 0;
+  let freeShipping      = false;
+
+  if (defaultVariant) {
+    const basePrice = Number(defaultVariant.price);
+    const baseMrp   = Number(defaultVariant.mrp);
+
+    if (basePrice > 399) {
+      const actualG = Number(defaultVariant.weightInGrams ?? 500);
+      const l       = parseFloat(defaultVariant.length?.toString()  ?? '0');
+      const w       = parseFloat(defaultVariant.width?.toString()   ?? '0');
+      const h       = parseFloat(defaultVariant.height?.toString()  ?? '0');
+
+      const volG        = (l > 0 && w > 0 && h > 0) ? (l * w * h) / 5 : 0;
+      const chargeableG = Math.ceil(Math.max(actualG, volG) / 500) * 500;
+
+      shippingCharge   = restOfIndiaRate(chargeableG);
+      finalPrice       = String(basePrice + shippingCharge);
+      finalMrp         = String(baseMrp   + shippingCharge);
+      shippingIncluded = true;
+      freeShipping     = true;
+    }
+  }
+  // ──────────────────────────────────────────────────────
+
   return {
-    id:              product.id,
-    title:           product.title,
-    description:     product.description,
-    slug:            product.slug,
-    businessName:    product.business?.name,
-    numberOfReviews: product._count?.reviews ?? 0,
-    price:           defaultVariant?.price,
-    mrp:             defaultVariant?.mrp,
-    images:          combinedImages,
-    isCustomizable:  product.isCustomizable,
+    id:                  product.id,
+    title:               product.title,
+    description:         product.description,
+    slug:                product.slug,
+    businessName:        product.business?.name,
+    numberOfReviews:     product._count?.reviews ?? 0,
+    price:               finalPrice,
+    mrp:                 finalMrp,
+    images:              combinedImages,
+    isCustomizable:      product.isCustomizable,
+    shippingIncluded,
+    shippingCharge,
+    freeShippingEligible: freeShipping,
   };
 }
 
@@ -354,29 +395,29 @@ async createProduct(businessId: string, formData: any) {
       async (tx) => {
 
         // 8a. Create product + variants
-        const created = await tx.product.create({
-          data: {
-            title:               formData.title,
-            description:         formData.description,
-            slug,
-            images:              finalProductImages,
-            productType:         formData.productType    ?? 'STANDARD',
-            brand:               formData.brand          || undefined,
-            tags:                Array.isArray(formData.tags) ? formData.tags : [],
-            metaTitle:           formData.metaTitle       || undefined,
-            metaDescription:     formData.metaDescription || undefined,
-            isCustomizable:      formData.isCustomizable  ?? false,
-            customizationConfig: formData.customizationConfig
-                                   ? JSON.parse(formData.customizationConfig)
-                                   : undefined,
-            isFeatured:          formData.isFeatured  ?? false,
-            publishDate:         formData.publishDate  ? new Date(formData.publishDate) : undefined,
-            isPublished:         false,
-            business:            { connect: { id: businessId } },
-            category:            { connect: { id: categoryId } },
-            variants:            { create: variantsToCreate },
-          },
-        });
+    const created = await tx.product.create({
+  data: {
+    title:               formData.title,
+    description:         formData.description,
+    slug,
+    images:              finalProductImages,
+    productType:         formData.productType    ?? 'STANDARD',
+    brand:               formData.brand          || undefined,
+    tags:                Array.isArray(formData.tags) ? formData.tags : [],
+    metaTitle:           formData.metaTitle       || undefined,
+    metaDescription:     formData.metaDescription || undefined,
+    
+    // ✅ FIX: Convert string "true"/"false" to actual boolean
+    isCustomizable:      formData.isCustomizable === 'true' || formData.isCustomizable === true,
+    isFeatured:          formData.isFeatured === 'true' || formData.isFeatured === true,
+    
+    publishDate:         formData.publishDate  ? new Date(formData.publishDate) : undefined,
+    isPublished:         false,
+    business:            { connect: { id: businessId } },
+    category:            { connect: { id: categoryId } },
+    variants:            { create: variantsToCreate },
+  },
+});
 
         // 8b. Seed WarehouseStock + StockActivity for variants with stock > 0
         if (defaultWarehouse) {
@@ -1170,100 +1211,138 @@ async updateProduct(
   }
 
   
- async getProductDetailsForCustomer(productId: string) {
-    const product = await this.prisma.product.findUnique({
-      where: {
-        slug: productId,
-        isPublished: true, // Only return published products to customers
+// src/products/products.service.ts
+
+async getProductDetailsForCustomer(productId: string) {
+  const product = await this.prisma.product.findUnique({
+    where: {
+      slug: productId,
+      isPublished: true,
+    },
+    include: {
+      business: {
+        select: {
+          id: true,
+          name: true,
+          address: true,
+          city: true,
+          state: true,
+          country: true,
+          isVerified: true,
+        },
       },
-      include: {
-        business: {
-          select: {
-            id: true,
-            name: true, // Business owner's company name
-            address: true,
-            city: true,
-            state: true,
-            country: true,
-            isVerified: true,
-          },
-        },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            // You might want to include parent categories for breadcrumbs
-            parent: {
-              select: {
-                id: true,
-                name: true,
-                slug: true,
-              },
+      category: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          parent: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
             },
           },
         },
-        variants: {
-          include: {
-            attributeValues: {
-              include: {
-                attributeOption: {
-                  select: {
-                    id: true,
-                    value: true,
-                    slug: true,
-                  },
+      },
+      variants: {
+        include: {
+          attributeValues: {
+            include: {
+              attributeOption: {
+                select: {
+                  id: true,
+                  value: true,
+                  slug: true,
                 },
-                attribute: {
-                  select: {
-                    id: true,
-                    name: true,
-                  },
+              },
+              attribute: {
+                select: {
+                  id: true,
+                  name: true,
                 },
               },
             },
-            // Optionally include cartItems and orderItems count if relevant for a product page (e.g., "X people have this in cart")
-            // _count: {
-            //   select: {
-            //     cartItems: true,
-            //     orderItems: true,
-            //   },
-            // },
           },
-          orderBy: [
-            { isDefault: 'desc' }, // Prioritize default variant
-            { createdAt: 'asc' }, // Fallback
-          ],
         },
-        reviews: {
-          // Limit and order reviews for a product page for performance/readability
-          take: 10, // Fetch top 10 recent reviews, adjust as needed
-          orderBy: { createdAt: 'desc' },
-          select: {
-            id: true,
-            customerUserId: true,
-            rating: true,
-            comment: true,
-            createdAt: true,
-             images: true,
-              customerUser: {
+        orderBy: [
+          { isDefault: 'desc' },
+          { createdAt: 'asc' },
+        ],
+      },
+      reviews: {
+        take: 10,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          customerUserId: true,
+          rating: true,
+          comment: true,
+          createdAt: true,
+          images: true,
+          customerUser: {
             select: {
               name: true,
-              picture: true, // Included picture for the user avatar
+              picture: true,
             },
-          },
           },
         },
       },
-    });
+    },
+  });
 
-    if (!product) {
-      throw new NotFoundException(`Product with ID ${productId} not found or not published.`);
-    }
-
-    return product;
+  if (!product) {
+    throw new NotFoundException(
+      `Product with ID ${productId} not found or not published.`,
+    );
   }
 
+  // ─── Shipping Manipulation ───────────────────────────────
+  const manipulatedVariants = product.variants.map((variant) => {
+    const basePrice = Number(variant.price);
+    const baseMrp   = Number(variant.mrp);
+
+    // Only manipulate if price > 399
+    if (basePrice <= 399) {
+      return {
+        ...variant,
+        shippingIncluded:     false,
+        shippingCharge:       0,
+        freeShippingEligible: false,
+      };
+    }
+
+    // ── Chargeable Weight ──────────────────────────────────
+    const actualG = variant.weightInGrams ?? 500;
+
+ const l = parseFloat(variant.length?.toString()  ?? '0');
+const w = parseFloat(variant.width?.toString()   ?? '0');
+const h = parseFloat(variant.height?.toString()  ?? '0');
+    const volG = (l > 0 && w > 0 && h > 0)
+      ? (l * w * h) / 5
+      : 0;
+
+    const chargeableG = Math.ceil(Math.max(actualG, volG) / 500) * 500;
+
+    // ── REST_OF_INDIA Rate ─────────────────────────────────
+    const shippingCharge = restOfIndiaRate(chargeableG);
+
+    return {
+      ...variant,
+      price:                String(basePrice + shippingCharge),
+      mrp:                  String(baseMrp   + shippingCharge),
+      shippingIncluded:     true,
+      shippingCharge,
+      freeShippingEligible: true,
+    };
+  });
+  // ─────────────────────────────────────────────────────────
+
+  return {
+    ...product,
+    variants: manipulatedVariants,
+  };
+}
 
   /**
    * Private helper to get all descendant category IDs for a given parent.
@@ -1339,6 +1418,7 @@ async getCategoryPageDataBySlug(
   const where: Prisma.ProductWhereInput = {
     categoryId: category.id,
     isPublished: true,
+    isFeatured: true,
     deletedAt: null,
     variants: {
       some: variantFilter, // Assign the fully built object here
@@ -1424,8 +1504,9 @@ async getCategoryPageDataBySlug(
   // }
   // src/products/products.service.ts
 
+// src/products/products.service.ts
+
 async getSimilarProducts(slug: string, limit = 8) {
-  // 1. Find source product
   const product = await this.prisma.product.findUnique({
     where: { slug, isPublished: true, deletedAt: null },
     select: {
@@ -1438,7 +1519,6 @@ async getSimilarProducts(slug: string, limit = 8) {
 
   if (!product) throw new NotFoundException('Product not found');
 
-  // 2. Fetch candidates with include (avoids TS select+relation inference bug)
   const similar = await this.prisma.product.findMany({
     where: {
       AND: [
@@ -1461,12 +1541,23 @@ async getSimilarProducts(slug: string, limit = 8) {
         where:   { stock: { gt: 0 } },
         orderBy: { price: 'asc' },
         take:    1,
+        // ← added for shipping calculation
+        select: {
+          id:            true,
+          price:         true,
+          mrp:           true,
+          stock:         true,
+          images:        true,
+          weightInGrams: true,
+          length:        true,
+          width:         true,
+          height:        true,
+        },
       },
     },
     take: limit * 3,
   });
 
-  // 3. Score + rank + slice
   return similar
     .filter((p) => p.variants.length > 0)
     .map((p) => {
@@ -1476,19 +1567,48 @@ async getSimilarProducts(slug: string, limit = 8) {
       const overlap = p.tags.filter((t) => product.tags.includes(t)).length;
       score += overlap;
 
+      // ── Shipping Manipulation ────────────────────────────
+      const v         = p.variants[0];
+      const basePrice = Number(v.price);
+      const baseMrp   = Number(v.mrp);
+
+      let finalPrice       = String(basePrice);
+      let finalMrp         = String(baseMrp);
+      let shippingIncluded = false;
+      let shippingCharge   = 0;
+
+      if (basePrice > 399) {
+        const actualG = Number(v.weightInGrams ?? 500);
+        const l       = parseFloat(v.length?.toString() ?? '0');
+        const w       = parseFloat(v.width?.toString()  ?? '0');
+        const h       = parseFloat(v.height?.toString() ?? '0');
+
+        const volG        = (l > 0 && w > 0 && h > 0) ? (l * w * h) / 5 : 0;
+        const chargeableG = Math.ceil(Math.max(actualG, volG) / 500) * 500;
+
+        shippingCharge   = restOfIndiaRate(chargeableG);
+        finalPrice       = String(basePrice + shippingCharge);
+        finalMrp         = String(baseMrp   + shippingCharge);
+        shippingIncluded = true;
+      }
+      // ────────────────────────────────────────────────────
+
       return {
-        id:    p.id,
-        title: p.title,
-        slug:  p.slug,
+        id:     p.id,
+        title:  p.title,
+        slug:   p.slug,
         images: p.images,
         brand:  p.brand,
         score,
         variant: {
-          id:    p.variants[0].id,
-          price: p.variants[0].price,
-          mrp:   p.variants[0].mrp,
-          stock: p.variants[0].stock,
-          image: p.variants[0].images?.[0] ?? p.images?.[0] ?? null,
+          id:                  v.id,
+          price:               finalPrice,
+          mrp:                 finalMrp,
+          stock:               v.stock,
+          image:               v.images?.[0] ?? p.images?.[0] ?? null,
+          shippingIncluded,
+          shippingCharge,
+          freeShippingEligible: shippingIncluded,
         },
       };
     })

@@ -15,6 +15,7 @@ export class OrdersService {
 
 // src/orders/orders.service.ts — createCashOnDeliveryOrder()
 
+
 async createCashOnDeliveryOrder(customerUserId: string, dto: CreateOrderDto) {
   if (dto.paymentMethod !== 'cash_on_delivery') {
     throw new BadRequestException('This endpoint only supports "cash_on_delivery" orders.');
@@ -41,42 +42,51 @@ async createCashOnDeliveryOrder(customerUserId: string, dto: CreateOrderDto) {
     throw new BadRequestException('One or more selected items are invalid.');
   }
 
-  // 2. Calculate subtotal & collect involved businesses
-  let totalAmount = new Decimal(0);
+  // 2. Collect involved businesses
   const involvedBusinessIds = new Set<string>();
-
   for (const item of cartItems) {
     if (!item.variant) {
       throw new NotFoundException(`Variant missing for cart item ${item.id}`);
     }
-    totalAmount = totalAmount.plus(
-      new Decimal(item.variant.price).times(item.quantity),
-    );
     if (item.variant.product.businessId) {
       involvedBusinessIds.add(item.variant.product.businessId);
     }
   }
 
-  // 3. Add fees
-  const COD_FEE = new Decimal(dto.codFee ?? 30);
-  totalAmount = totalAmount.plus(COD_FEE);
-  if (dto.shippingFee) totalAmount = totalAmount.plus(dto.shippingFee);
-  if (dto.platformFee) totalAmount = totalAmount.plus(dto.platformFee);
-  if (dto.taxAmount)   totalAmount = totalAmount.plus(dto.taxAmount);
+  // 3. Build total from frontend-sent values (manipulated prices already baked in)
+  //    dto.discount = couponDiscount + bakedShippingDiscount combined
+  const shippingFee  = new Decimal(dto.shippingFee  ?? 0);
+  const platformFee  = new Decimal(dto.platformFee  ?? 0);
+  const taxAmount    = new Decimal(dto.taxAmount    ?? 0);
+  const codFee       = new Decimal(dto.codFee       ?? 30);
+  const discount     = new Decimal(dto.discount     ?? 0); // combined discount
+  const packagingFee = new Decimal(8.5);                   // match frontend constant
 
-  // 4. Subtract discounts
-  if (dto.discount)       totalAmount = totalAmount.minus(dto.discount);
-  if (dto.couponDiscount) totalAmount = totalAmount.minus(dto.couponDiscount);
+  // Subtotal from DB raw prices (for record keeping only)
+  let dbSubtotal = new Decimal(0);
+  for (const item of cartItems) {
+    dbSubtotal = dbSubtotal.plus(
+      new Decimal(item.variant!.price).times(item.quantity),
+    );
+  }
+
+  // Frontend-equivalent total calculation
+  let totalAmount = dbSubtotal
+    .plus(shippingFee)
+    .plus(codFee)
+    .plus(packagingFee)
+    .plus(platformFee)
+    .plus(taxAmount)
+    .minus(discount); // ← single combined discount
 
   if (totalAmount.lessThan(0)) totalAmount = new Decimal(0);
 
-  const orderNum           = generateOrderNumber();
-  const businessIdsArray   = Array.from(involvedBusinessIds);
-  const primaryBusinessId  = businessIdsArray[0] ?? null;
+  const orderNum          = generateOrderNumber();
+  const businessIdsArray  = Array.from(involvedBusinessIds);
+  const primaryBusinessId = businessIdsArray[0] ?? null;
 
-  // 5. Run everything in a transaction
+  // 4. Run everything in a transaction
   const newOrder = await this.prisma.$transaction(async (tx) => {
-    // A. Create order
     const order = await tx.order.create({
       data: {
         customerUserId,
@@ -85,24 +95,23 @@ async createCashOnDeliveryOrder(customerUserId: string, dto: CreateOrderDto) {
         paymentMethod:   'cash_on_delivery',
         paymentStatus:   PaymentStatus.pending,
         status:          OrderStatus.pending,
-        shippingFee:     dto.shippingFee  ?? 0,
-        taxAmount:       dto.taxAmount    ?? 0,
-        discount:        dto.discount     ?? 0,
+        shippingFee:     shippingFee,
+        taxAmount:       taxAmount,
+        discount:        discount,   // store combined discount
         orderNumber:     orderNum,
         couponCode:      dto.couponCode     ?? null,
-        couponDiscount:  dto.couponDiscount ?? null,
+        couponDiscount:  dto.couponDiscount ?? null, // store coupon-only for display
       },
     });
 
-    // B. Platform commission charge
-    if (dto.platformFee && dto.platformFee > 0 && primaryBusinessId) {
+    if (platformFee.greaterThan(0) && primaryBusinessId) {
       await tx.platformCharge.create({
         data: {
           orderId:              order.id,
           businessId:           primaryBusinessId,
           chargeType:           PlatformChargeType.COMMISSION,
           description:          'Platform commission on COD order',
-          amount:               dto.platformFee,
+          amount:               platformFee,
           currency:             'INR',
           isDeductedFromSeller: false,
           isRefundable:         false,
@@ -110,15 +119,14 @@ async createCashOnDeliveryOrder(customerUserId: string, dto: CreateOrderDto) {
       });
     }
 
-    // C. COD handling fee charge
     if (primaryBusinessId) {
       await tx.platformCharge.create({
         data: {
           orderId:              order.id,
           businessId:           primaryBusinessId,
           chargeType:           PlatformChargeType.ADJUSTMENT,
-          description:          `COD handling fee ₹${COD_FEE.toFixed(2)}`,
-          amount:               COD_FEE,
+          description:          `COD handling fee ₹${codFee.toFixed(2)}`,
+          amount:               codFee,
           currency:             'INR',
           isDeductedFromSeller: false,
           isRefundable:         false,
@@ -126,7 +134,6 @@ async createCashOnDeliveryOrder(customerUserId: string, dto: CreateOrderDto) {
       });
     }
 
-    // D. Coupon redemption
     if (dto.couponCode && dto.couponDiscount) {
       const coupon = await tx.coupon.findUnique({
         where: { code: dto.couponCode },
@@ -147,36 +154,32 @@ async createCashOnDeliveryOrder(customerUserId: string, dto: CreateOrderDto) {
       }
     }
 
-    // E. Create order items
     await tx.orderItem.createMany({
       data: cartItems.map((item) => ({
         orderId:              order.id,
         productId:            item.productId,
         variantId:            item.variantId,
         quantity:             item.quantity,
-        priceAtTimeOfOrder:   item.variant!.price,
+        priceAtTimeOfOrder:   item.variant!.price, // raw DB price for records
         customizationImages:  item.customizationImages,
         customizationDetails: item.customizationDetails ?? undefined,
       })),
     });
 
-    // F. Clear selected cart items
     await tx.cartItem.deleteMany({
       where: { customerUserId, id: { in: dto.cartItemIds } },
     });
 
-    // G. Notify customer
     await tx.customerNotification.create({
       data: {
         customerUserId,
         title:    'Order Placed',
-        message:  `Your order ${orderNum} has been placed for ₹${totalAmount.toFixed(2)} (incl. ₹${COD_FEE.toFixed(2)} COD fee).`,
+        message:  `Your order ${orderNum} has been placed for ₹${totalAmount.toFixed(2)} (incl. ₹${codFee.toFixed(2)} COD fee).`,
         type:     NotificationType.ORDER,
         metadata: { orderId: order.id, orderNumber: orderNum },
       },
     });
 
-    // H. Notify all involved sellers
     if (businessIdsArray.length > 0) {
       const sellers = await tx.user.findMany({
         where:  { businesses: { some: { id: { in: businessIdsArray } } } },
@@ -198,40 +201,35 @@ async createCashOnDeliveryOrder(customerUserId: string, dto: CreateOrderDto) {
     return order;
   });
 
-  // 6. ✅ Fetch full order with items AFTER transaction (outside tx, safe)
   const fullOrder = await this.prisma.order.findUnique({
     where:   { id: newOrder.id },
     include: {
       items: {
         include: {
-          variant: {
-            include: { product: true },
-          },
+          variant: { include: { product: true } },
         },
       },
     },
   });
 
-  // 7. ✅ Return shaped response — matches frontend OrderData interface exactly
   return {
     id:              newOrder.id,
     orderNumber:     newOrder.orderNumber,
     createdAt:       newOrder.createdAt.toISOString(),
-    totalAmount:     newOrder.totalAmount.toFixed(2),    // string, not Decimal
+    totalAmount:     newOrder.totalAmount.toFixed(2),
     selectedAddress: newOrder.selectedAddress,
     couponCode:      newOrder.couponCode     ?? null,
     couponDiscount:  newOrder.couponDiscount
                        ? Number(newOrder.couponDiscount)
                        : null,
     items: (fullOrder?.items ?? []).map((item) => ({
-      productName: item.variant?.product?.title   ?? 'Product',
+      productName: item.variant?.product?.title       ?? 'Product',
       imageUrl:    item.variant?.product?.images?.[0] ?? '',
       quantity:    item.quantity,
       price:       item.priceAtTimeOfOrder.toFixed(2),
     })),
   };
 }
-
 
   // API for Success Page
   async getOrderSuccessDetails(customerUserId: string, orderId: string) {

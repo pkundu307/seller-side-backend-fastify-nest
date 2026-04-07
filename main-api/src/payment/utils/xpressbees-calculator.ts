@@ -35,7 +35,7 @@ function allBengalRate(g: number): number {
   return 820 + Math.ceil((g - 20000) / 1000) * 25;
 }
 
-function restOfIndiaRate(g: number): number {
+export function restOfIndiaRate(g: number): number {
   if (g <= 500)  return 70;
   if (g <= 1000) return 90;
   if (g <= 10000) return 90 + Math.ceil((g - 1000) / 500) * 40;
