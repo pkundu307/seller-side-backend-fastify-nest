@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
+        .container { max-width: 600px; background: #ffffff; margin: 0 auto; border-radius: 30px; padding: 40px; box-shadow: 20px 20px 60px #d9d9d9, -20px -20px 60px #ffffff; }
+        .logo { text-align: center; margin-bottom: 30px; }
+        .logo img { width: 180px; }
+        .title { color: #1a202c; font-size: 24px; font-weight: bold; text-align: center; margin-bottom: 10px; }
+        .subtitle { color: #4a5568; text-align: center; margin-bottom: 30px; }
+        .order-info { background: #f7fafc; padding: 20px; border-radius: 20px; margin-bottom: 20px; border: 1px solid #e2e8f0; }
+        .info-row { display: flex; justify-content: space-between; margin-bottom: 10px; }
+        .info-label { color: #718096; font-size: 14px; }
+        .info-value { color: #2d3748; font-weight: bold; font-size: 14px; }
+        .divider { height: 1px; background: #e2e8f0; margin: 15px 0; }
+        .item-card { background: #ffffff; padding: 15px; border-radius: 15px; margin-bottom: 15px; border: 1px solid #edf2f7; box-shadow: 5px 5px 10px #e2e8f0, -5px -5px 10px #ffffff; }
+        .item-name { color: #2d3748; font-weight: bold; font-size: 15px; margin-bottom: 5px; }
+        .item-price { color: #2d3748; font-weight: bold; font-size: 14px; }
+        .item-qty { color: #718096; font-size: 13px; }
+        .total-row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+        .total-label { color: #718096; font-size: 14px; }
+        .total-value { color: #2d3748; font-weight: bold; font-size: 14px; }
+        .grand-total { background: #000000; color: #ffffff !important; padding: 15px 20px; border-radius: 15px; margin-top: 15px; }
+        .address-box { background: #f7fafc; padding: 15px; border-radius: 15px; margin-bottom: 20px; border: 1px solid #e2e8f0; }
+        .address-title { color: #2d3748; font-weight: bold; margin-bottom: 10px; font-size: 14px; }
+        .address-text { color: #4a5568; font-size: 13px; line-height: 1.6; }
+        .cta-button { display: block; width: fit-content; margin: 20px auto; padding: 15px 35px; background: #000000; color: #ffffff !important; text-decoration: none; border-radius: 15px; font-weight: bold; }
+        .footer { margin-top: 30px; border-top: 1px solid #eee; pt: 20px; text-align: center; }
+        .contact-info { font-size: 13px; color: #718096; line-height: 1.6; }
+        .highlight { color: #e53e3e; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <img src="https://pub-5b521def0bfc46dd9037956c478b8c67.r2.dev/team/logo.png" alt="Jottosop Logo">
+        </div>
+
+        <div class="title">New Order Received! 🎉</div>
+        <div class="subtitle">You have a new order for your products</div>
+
+        <div class="order-info">
+            <div class="info-row">
+                <span class="info-label">Order Number</span>
+                <span class="info-value">{{orderNumber}}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Order Time</span>
+                <span class="info-value">{{orderTime}}</span>
+            </div>
+            <div class="divider"></div>
+            <div class="total-row grand-total">
+                <span class="total-label">Total Amount</span>
+                <span class="total-value">₹{{totalAmount}}</span>
+            </div>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+            <div class="address-title">📦 Delivery Address</div>
+            <div class="address-box">
+                <div class="address-text">{{address}}</div>
+            </div>
+        </div>
+
+        <div style="margin-bottom: 20px;">
+            <div class="address-title">🛍️ Products in this Order</div>
+            {{items}}
+        </div>
+
+        <a href="https://diary.jottosop.in/orders" class="cta-button">Manage Order</a>
+
+        <div class="footer">
+            <p class="contact-info">
+                <strong>Need help? We're here for you.</strong><br>
+                Email: support@jottosop.in<br>
+                Phone/WhatsApp: +91 89109 88290
+            </p>
+        </div>
+    </div>
+</body>
+</html>

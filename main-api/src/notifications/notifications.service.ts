@@ -109,10 +109,19 @@ export class NotificationService {
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
+        select: {
+          id: true,
+          customerUserId: true,
+          title: true,
+          message: true,
+          type: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       }),
       this.prisma.customerNotification.count({ where: { customerUserId } }),
     ]);
-    
+
     return {
       notifications,
       pagination: {
@@ -135,6 +144,15 @@ export class NotificationService {
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
+        select: {
+          id: true,
+          userId: true,
+          title: true,
+          message: true,
+          type: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       }),
       this.prisma.sellerNotification.count({ where: { userId } }),
     ]);

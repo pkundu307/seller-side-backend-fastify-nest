@@ -1,9 +1,12 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { OrderStatus, PaymentStatus, NotificationType, PlatformChargeType } from '@prisma/client';
+import { OrderStatus, PaymentStatus, NotificationType, PlatformChargeType, User, CustomerUser, Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { CancelOrderDto } from './dto/cancel-order.dto';
+import { NotificationService } from 'src/notifications/notifications.service';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 
 function generateOrderNumber() {
   return `ORD-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -11,7 +14,10 @@ function generateOrderNumber() {
 
 @Injectable()
 export class OrdersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationService: NotificationService,
+  ) {}
 
 // src/orders/orders.service.ts — createCashOnDeliveryOrder()
 
@@ -170,6 +176,21 @@ async createCashOnDeliveryOrder(customerUserId: string, dto: CreateOrderDto) {
       where: { customerUserId, id: { in: dto.cartItemIds } },
     });
 
+    // Fetch customer details for email
+    const customer = await tx.customerUser.findUnique({
+      where: { id: customerUserId },
+      select: { id: true, email: true, name: true },
+    });
+
+    // Fetch seller details for emails
+    const sellers = businessIdsArray.length > 0
+      ? await tx.user.findMany({
+          where:  { businesses: { some: { id: { in: businessIdsArray } } } },
+          select: { id: true, email: true, name: true },
+        })
+      : [];
+
+    // Create in-app notifications (existing workflow - unchanged)
     await tx.customerNotification.create({
       data: {
         customerUserId,
@@ -180,21 +201,162 @@ async createCashOnDeliveryOrder(customerUserId: string, dto: CreateOrderDto) {
       },
     });
 
-    if (businessIdsArray.length > 0) {
-      const sellers = await tx.user.findMany({
-        where:  { businesses: { some: { id: { in: businessIdsArray } } } },
-        select: { id: true },
+    for (const seller of sellers) {
+      await tx.sellerNotification.create({
+        data: {
+          userId:   seller.id,
+          title:    'New COD Order',
+          message:  `New COD order ${orderNum} received.`,
+          type:     NotificationType.ORDER,
+          metadata: { orderId: order.id },
+        },
       });
-      for (const seller of sellers) {
+    }
+
+    // Send HTML emails (new - using NotificationService)
+    const orderTime = new Date().toLocaleString('en-IN', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+
+    const addressLines = [
+      dto.selectedAddress?.street ?? '',
+      dto.selectedAddress?.city ?? '',
+      dto.selectedAddress?.state ?? '',
+      dto.selectedAddress?.postalCode ?? '',
+    ]
+      .filter(Boolean)
+      .join(', ');
+
+    // Build customer items HTML
+    const customerItemsHtml = cartItems.map((item) => {
+      const productName = item.variant?.product?.title ?? 'Product';
+      const sellerName = item.variant?.product?.business?.name ?? 'Seller';
+      const imageUrl = item.variant?.product?.images?.[0] ?? '';
+      const quantity = item.quantity;
+      const price = Number(item.variant!.price).toFixed(2);
+
+      return `
+        <div class="item-card">
+          <div class="item-name">${productName}</div>
+          <div class="item-seller">by ${sellerName}</div>
+          ${imageUrl ? `<img src="${imageUrl}" style="width:60px;height:60px;border-radius:10px;margin-top:10px;">` : ''}
+          <div class="item-meta">
+            <span class="item-qty">Qty: ${quantity}</span>
+            <span class="item-price">₹${price}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Build seller-specific items HTML (grouped by business)
+    const sellerItemsMap = new Map<string, typeof cartItems>();
+    for (const item of cartItems) {
+      const bizId = item.variant?.product?.businessId ?? 'unknown';
+      if (!sellerItemsMap.has(bizId)) sellerItemsMap.set(bizId, []);
+      sellerItemsMap.get(bizId)!.push(item);
+    }
+
+    const sellerItemsHtmlTemplate = (businessId: string, sellerName: string) => {
+      const items = sellerItemsMap.get(businessId) || [];
+      return items.map((item) => {
+        const productName = item.variant?.product?.title ?? 'Product';
+        const quantity = item.quantity;
+        const price = Number(item.variant!.price).toFixed(2);
+
+        return `
+          <div class="item-card">
+            <div class="item-name">${productName}</div>
+            <div class="item-qty">Qty: ${quantity} × ₹${price} = ₹${(Number(price) * quantity).toFixed(2)}</div>
+          </div>
+        `;
+      }).join('');
+    };
+
+    // Send customer email
+    if (customer) {
+      try {
+        const templatePath = join(
+          process.cwd(),
+          'main-api', 'src', 'notifications', 'mail-templates', 'order-placed-customer.html',
+        );
+
+        if (existsSync(templatePath)) {
+          let htmlContent = readFileSync(templatePath, 'utf8');
+          htmlContent = htmlContent
+            .replace('{{orderNumber}}', orderNum)
+            .replace('{{orderTime}}', orderTime)
+            .replace('{{totalAmount}}', totalAmount.toFixed(2))
+            .replace('{{address}}', addressLines)
+            .replace('{{items}}', customerItemsHtml);
+
+          await this.notificationService.createForSeller(
+            { id: customer.id, email: customer.email },
+            'Order Placed Successfully! 🎉',
+            `Your order ${orderNum} has been placed for ₹${totalAmount.toFixed(2)}`,
+          );
+
+          // Store HTML in metadata for in-app notification
+          await tx.customerNotification.create({
+            data: {
+              customerUserId: customer.id,
+              title:          'Order Placed Successfully! 🎉',
+              message:        `Your order ${orderNum} has been placed for ₹${totalAmount.toFixed(2)}.`,
+              type:           NotificationType.ORDER,
+              metadata:       { htmlBody: htmlContent, orderId: order.id, orderNumber: orderNum } as Prisma.JsonObject,
+            },
+          });
+        }
+      } catch (error) {
+        console.error('[Order] Failed to send customer order email:', error);
+      }
+    }
+
+    // Send seller emails (one per seller with their specific products)
+    for (const seller of sellers) {
+      try {
+        const templatePath = join(
+          process.cwd(),
+          'main-api', 'src', 'notifications', 'mail-templates', 'new-order-seller.html',
+        );
+
+        if (!existsSync(templatePath)) continue;
+
+        const sellerBiz = await tx.business.findFirst({
+          where: { ownerId: seller.id },
+          select: { id: true, name: true },
+        });
+
+        const sellerItemsHtml = sellerItemsHtmlTemplate(
+          sellerBiz?.id ?? businessIdsArray[0] ?? '',
+          sellerBiz?.name ?? 'Seller',
+        );
+
+        let htmlContent = readFileSync(templatePath, 'utf8');
+        htmlContent = htmlContent
+          .replace('{{orderNumber}}', orderNum)
+          .replace('{{orderTime}}', orderTime)
+          .replace('{{totalAmount}}', totalAmount.toFixed(2))
+          .replace('{{address}}', addressLines)
+          .replace('{{items}}', sellerItemsHtml);
+
+        await this.notificationService.createForSeller(
+          { id: seller.id, email: seller.email },
+          'New Order Received! 🎉',
+          `New order ${orderNum} received for your products.`,
+        );
+
         await tx.sellerNotification.create({
           data: {
             userId:   seller.id,
-            title:    'New COD Order',
-            message:  `New COD order ${orderNum} received.`,
+            title:    'New Order Received! 🎉',
+            message:  `New order ${orderNum} received for your products.`,
             type:     NotificationType.ORDER,
-            metadata: { orderId: order.id },
+            metadata: { htmlBody: htmlContent, orderId: order.id } as Prisma.JsonObject,
           },
         });
+      } catch (error) {
+        console.error(`[Order] Failed to send seller email for ${seller.id}:`, error);
       }
     }
 
