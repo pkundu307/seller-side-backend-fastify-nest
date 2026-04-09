@@ -60,60 +60,38 @@ export class SeoService {
       take: 5000, // Google limit per feed
     });
 
-    const feedItems = products.map((product) => {
-      const variant = product.variants[0];
-      const price = variant ? Number(variant.price).toFixed(2) : '0.00';
-      const stock = variant?.stock ?? 0;
-      const availability = stock > 0 ? 'in_stock' : 'out_of_stock';
-      const imageUrl = this.escapeXml(product.images?.[0] || '');
-      const additionalImages = product.images?.slice(1).map(img => this.escapeXml(img)) || [];
-      const condition = 'new';
-      const gtin = variant?.sku || '';
-      const mpn = variant?.sku || '';
-      const productType = product.category?.name || 'Other';
-      const gcategory = this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''));
-      const customLabel = product.brand ? `brand:${this.escapeXml(product.brand)}` : '';
+const feedItems = products.map((product) => {
+  const variant = product.variants[0];
+  const price = variant ? Number(variant.price).toFixed(2) : '0.00';
+  const availability = (variant?.stock ?? 0) > 0 ? 'in_stock' : 'out_of_stock';
+  
+  // 1. CLEAN IMAGES: Filter out data:base64 images
+  const allImages = product.images?.filter(img => img.startsWith('http')) || [];
+  const imageUrl = this.escapeXml(allImages[0] || '');
+  const additionalImages = allImages.slice(1, 10).map(img => this.escapeXml(img));
 
-      return `
+  // 2. MAPPING: Ensure categories are mapped (use 'Other' if no mapping found)
+  const productType = this.escapeXml(product.category?.name || 'General');
+  const gcategory = this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''));
+
+  return `
     <item>
       <g:id>${product.id}</g:id>
       <g:title>${this.escapeXml(product.title)}</g:title>
-      <g:description>${this.escapeXml(product.description || product.metaDescription || '').replace(/\n/g, ' ')}</g:description>
+      <g:description>${this.escapeXml((product.description || product.metaDescription || '').substring(0, 5000)).replace(/\n/g, ' ')}</g:description>
       <g:link>${baseUrl}/product/${product.slug}</g:link>
       <g:image_link>${imageUrl}</g:image_link>
       ${additionalImages.map(url => `<g:additional_image_link>${url}</g:additional_image_link>`).join('\n      ')}
       <g:price>${price} INR</g:price>
-      <g:sale_price>${price} INR</g:sale_price>
       <g:availability>${availability}</g:availability>
-      <g:condition>${condition}</g:condition>
-      <g:product_type>${this.escapeXml(productType)}</g:product_type>
-      <g:google_shopping_category>${gcategory}</g:google_shopping_category>
+      <g:condition>new</g:condition>
+      <g:product_type>${productType}</g:product_type>
+      <g:google_shopping_category>${gcategory || 'Other'}</g:google_shopping_category>
       <g:brand>${this.escapeXml(product.brand || 'Unbranded')}</g:brand>
-      ${gtin ? `<g:gtin>${this.escapeXml(gtin)}</g:gtin>` : ''}
-      ${mpn ? `<g:mpn>${this.escapeXml(mpn)}</g:mpn>` : ''}
-      <g:custom_label_0>${customLabel}</g:custom_label_0>
-      <g:seller_name>${this.escapeXml(product.business.name)}</g:seller_name>
-      <g:seller_id>${product.business.id}</g:seller_id>
-      <g:shipping>
-        <g:country>IN</g:country>
-        <g:region>*</g:region>
-        <g:service>
-          <g:service_name>Standard Shipping</g:service_name>
-          <g:service_type>flat_rate</g:service_type>
-          <g:price>100.00 INR</g:price>
-          <g:delivery_time>ft:3:5</g:delivery_time>
-        </g:service>
-      </g:shipping>
-      <g:tax>
-        <g:country>IN</g:country>
-        <g:rate>18</g:rate>
-        <g:state>*</g:state>
-      </g:tax>
+      ${variant?.sku ? `<g:gtin>${this.escapeXml(variant.sku)}</g:gtin>` : ''}
       <g:identifier_exists>false</g:identifier_exists>
-      <g:additional_image_link>${imageUrl}</g:additional_image_link>
     </item>`;
-    }).join('\n');
-
+}).join('\n');
     return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
   <channel>
