@@ -20,112 +20,68 @@ export class SeoService {
   }
 
   // --- Google Shopping Feed Generator ---
-  async generateGoogleShoppingFeed() {
-    const baseUrl = this.getMerchantBaseUrl();
+async generateGoogleShoppingFeed() {
+  const baseUrl = this.getMerchantBaseUrl();
 
-    const products = await this.prisma.product.findMany({
-      where: {
-        isPublished: true,
-        isFeatured: true,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        title: true,
-        description: true,
-        images: true,
-        brand: true,
-        slug: true,
-        metaDescription: true,
-        category: { select: { id: true, name: true, slug: true } },
-        variants: {
-          where: { isDefault: true },
-          select: { price: true, stock: true, sku: true },
-          take: 1,
-        },
-        business: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            city: true,
-            state: true,
-            country: true,
-            isVerified: true,
-            logoUrl: true,
-            websiteUrl: true,
-          },
-        },
-      },
-      take: 5000, // Google limit per feed
-    });
+  // 1. Fetch products
+  const products = await this.prisma.product.findMany({
+    where: { isPublished: true, isFeatured: true, deletedAt: null },
+    select: {
+      id: true, title: true, description: true, images: true, brand: true, slug: true,
+      category: { select: { name: true } },
+      variants: { where: { isDefault: true }, select: { price: true, stock: true, sku: true }, take: 1 },
+      business: { select: { name: true, id: true } },
+    },
+    take: 5000,
+  });
 
-const feedItems = products.map((product) => {
-  const variant = product.variants[0];
-  const price = variant ? Number(variant.price).toFixed(2) : '0.00';
-  const availability = (variant?.stock ?? 0) > 0 ? 'in_stock' : 'out_of_stock';
+  // 2. Build items as an array, then join (faster than map-join)
+  const items: string[] = [];
   
-  // 1. CLEAN IMAGES: Filter out data:base64 images
-  const allImages = product.images?.filter(img => img.startsWith('http')) || [];
-  const imageUrl = this.escapeXml(allImages[0] || '');
-  const additionalImages = allImages.slice(1, 10).map(img => this.escapeXml(img));
+  for (const product of products) {
+    const variant = product.variants[0];
+    if (!variant) continue; // Skip products without variants
 
-  // 2. MAPPING: Ensure categories are mapped (use 'Other' if no mapping found)
-  const productType = this.escapeXml(product.category?.name || 'General');
-  const gcategory = this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''));
+    const price = Number(variant.price).toFixed(2);
+    const availability = (variant.stock ?? 0) > 0 ? 'in_stock' : 'out_of_stock';
+    
+    // Filter out data:base64 images immediately
+    const validImages = product.images?.filter(img => img?.startsWith('http')) || [];
+    if (validImages.length === 0) continue; // Skip products with no valid images
 
-  return `
+    const imageUrl = this.escapeXml(validImages[0]);
+    const additionalImages = validImages.slice(1, 10).map(img => `<g:additional_image_link>${this.escapeXml(img)}</g:additional_image_link>`).join('\n      ');
+
+    items.push(`
     <item>
       <g:id>${product.id}</g:id>
       <g:title>${this.escapeXml(product.title)}</g:title>
-      <g:description>${this.escapeXml((product.description || product.metaDescription || '').substring(0, 5000)).replace(/\n/g, ' ')}</g:description>
+      <g:description>${this.escapeXml((product.description || '').substring(0, 5000)).replace(/\n/g, ' ')}</g:description>
       <g:link>${baseUrl}/product/${product.slug}</g:link>
       <g:image_link>${imageUrl}</g:image_link>
-      ${additionalImages.map(url => `<g:additional_image_link>${url}</g:additional_image_link>`).join('\n      ')}
+      ${additionalImages}
       <g:price>${price} INR</g:price>
       <g:availability>${availability}</g:availability>
       <g:condition>new</g:condition>
-      <g:product_type>${productType}</g:product_type>
-      <g:google_shopping_category>${gcategory || 'Other'}</g:google_shopping_category>
+      <g:product_type>${this.escapeXml(product.category?.name || 'General')}</g:product_type>
+      <g:google_shopping_category>${this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''))}</g:google_shopping_category>
       <g:brand>${this.escapeXml(product.brand || 'Unbranded')}</g:brand>
-      ${variant?.sku ? `<g:gtin>${this.escapeXml(variant.sku)}</g:gtin>` : ''}
+      <g:gtin>${this.escapeXml(variant.sku || product.id)}</g:gtin>
       <g:identifier_exists>false</g:identifier_exists>
-    </item>`;
-}).join('\n');
-    return `<?xml version="1.0" encoding="UTF-8"?>
+    </item>`);
+  }
+
+  // 3. Construct clean XML
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
   <channel>
     <title>Jottosop Products</title>
     <link>${baseUrl}</link>
     <description>Product feed from Jottosop</description>
-    <language>en-us</language>
-    <last_build_date>${new Date().toUTCString()}</last_build_date>
-    <item>
-      <title>Store Information</title>
-      <link>${baseUrl}</link>
-      <description>
-        <g:seller_name>Jottosop</g:seller_name>
-        <g:seller_id>jottosop-main</g:seller_id>
-        <g:customer_service_phone>+91 89109 88290</g:customer_service_phone>
-        <g:email>support@jottosop.in</g:email>
-        <g:return_policy>30 days return policy</g:return_policy>
-        <g:shipping_rate>
-          <g:country>IN</g:country>
-          <g:region>*</g:region>
-          <g:service>
-            <g:service_name>Standard Shipping</g:service_name>
-            <g:service_type>flat_rate</g:service_type>
-            <g:price>100.00 INR</g:price>
-            <g:delivery_time>ft:3:5</g:delivery_time>
-          </g:service>
-        </g:shipping_rate>
-      </description>
-    </item>
-    ${feedItems}
+    ${items.join('\n')}
   </channel>
 </rss>`;
-  }
-
+}
   private mapCategoryToGoogle(categoryName: string): string {
     const categoryMap: Record<string, string> = {
       'Electronics': 'Electronics > Audio > Headphones',
