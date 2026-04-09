@@ -78,7 +78,7 @@ export class SeoService {
     <item>
       <g:id>${product.id}</g:id>
       <g:title>${this.escapeXml(product.title)}</g:title>
-      <g:description>${this.escapeXml(product.description || product.metaDescription || '')}</g:description>
+      <g:description>${this.escapeXml(product.description || product.metaDescription || '').replace(/\n/g, ' ')}</g:description>
       <g:link>${baseUrl}/product/${product.slug}</g:link>
       <g:image_link>${imageUrl}</g:image_link>
       ${additionalImages.map(url => `<g:additional_image_link>${url}</g:additional_image_link>`).join('\n      ')}
@@ -165,12 +165,16 @@ export class SeoService {
   }
 
   private escapeXml(text: string): string {
-    return text
+    if (!text) return '';
+    return String(text)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;');
+      .replace(/'/g, '&apos;')
+      .replace(/\n/g, ' ')
+      .replace(/\r/g, ' ')
+      .replace(/\t/g, ' ');
   }
 
   async generateSitemap(): Promise<string> {
