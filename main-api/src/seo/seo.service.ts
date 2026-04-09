@@ -65,14 +65,14 @@ export class SeoService {
       const price = variant ? Number(variant.price).toFixed(2) : '0.00';
       const stock = variant?.stock ?? 0;
       const availability = stock > 0 ? 'in_stock' : 'out_of_stock';
-      const imageUrl = product.images?.[0] || '';
-      const additionalImages = product.images?.slice(1) || [];
+      const imageUrl = this.escapeXml(product.images?.[0] || '');
+      const additionalImages = product.images?.slice(1).map(img => this.escapeXml(img)) || [];
       const condition = 'new';
       const gtin = variant?.sku || '';
       const mpn = variant?.sku || '';
       const productType = product.category?.name || 'Other';
-      const gcategory = this.mapCategoryToGoogle(product.category?.name || '');
-      const customLabel = product.brand ? `brand:${product.brand}` : '';
+      const gcategory = this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''));
+      const customLabel = product.brand ? `brand:${this.escapeXml(product.brand)}` : '';
 
       return `
     <item>
@@ -89,8 +89,8 @@ export class SeoService {
       <g:product_type>${this.escapeXml(productType)}</g:product_type>
       <g:google_shopping_category>${gcategory}</g:google_shopping_category>
       <g:brand>${this.escapeXml(product.brand || 'Unbranded')}</g:brand>
-      ${gtin ? `<g:gtin>${gtin}</g:gtin>` : ''}
-      ${mpn ? `<g:mpn>${mpn}</g:mpn>` : ''}
+      ${gtin ? `<g:gtin>${this.escapeXml(gtin)}</g:gtin>` : ''}
+      ${mpn ? `<g:mpn>${this.escapeXml(mpn)}</g:mpn>` : ''}
       <g:custom_label_0>${customLabel}</g:custom_label_0>
       <g:seller_name>${this.escapeXml(product.business.name)}</g:seller_name>
       <g:seller_id>${product.business.id}</g:seller_id>
