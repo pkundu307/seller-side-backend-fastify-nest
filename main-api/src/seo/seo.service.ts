@@ -37,23 +37,28 @@ async generateGoogleShoppingFeed() {
   });
 
   // 2. Build items as an array, then join (faster than map-join)
+// 2. Build items as an array
   const items: string[] = [];
   
   for (const product of products) {
     const variant = product.variants[0];
-    if (!variant) continue; // Skip products without variants
+    if (!variant) continue;
 
     const price = Number(variant.price).toFixed(2);
     const availability = (variant.stock ?? 0) > 0 ? 'in_stock' : 'out_of_stock';
-    const weightGrams = variant?.weightInGrams|| 500; 
-const shippingWeight = `<g:shipping_weight>${weightGrams} g</g:shipping_weight>`;
+    const weightGrams = variant?.weightInGrams || 500;
     
-    // Filter out data:base64 images immediately
+    // --- Define these INSIDE the loop ---
+    const productType = this.escapeXml(product.category?.name || 'General');
+    const gcategory = this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''));
+    
     const validImages = product.images?.filter(img => img?.startsWith('http')) || [];
-    if (validImages.length === 0) continue; // Skip products with no valid images
+    if (validImages.length === 0) continue;
 
     const imageUrl = this.escapeXml(validImages[0]);
-    const additionalImages = validImages.slice(1, 10).map(img => `<g:additional_image_link>${this.escapeXml(img)}</g:additional_image_link>`).join('\n      ');
+    const additionalImages = validImages.slice(1, 10)
+      .map(img => `<g:additional_image_link>${this.escapeXml(img)}</g:additional_image_link>`)
+      .join('\n      ');
 
     items.push(`
     <item>
@@ -66,27 +71,14 @@ const shippingWeight = `<g:shipping_weight>${weightGrams} g</g:shipping_weight>`
       <g:price>${price} INR</g:price>
       <g:availability>${availability}</g:availability>
       <g:condition>new</g:condition>
-      <g:shipping_weight>${weightGrams} g</g:shipping_weight> 
-      <g:google_product_category>${this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''))}</g:google_product_category>
       <g:shipping_weight>${weightGrams} g</g:shipping_weight>
-      <g:product_type>${this.escapeXml(product.category?.name || 'General')}</g:product_type>
-      <g:google_shopping_category>${this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''))}</g:google_shopping_category>
+      <g:product_type>${productType}</g:product_type>
+      <g:google_product_category>${gcategory || 'Other'}</g:google_product_category>
       <g:brand>${this.escapeXml(product.brand || 'Unbranded')}</g:brand>
-      <g:gtin>${this.escapeXml(variant.sku || product.id)}</g:gtin>
+      ${variant?.sku ? `<g:gtin>${this.escapeXml(variant.sku)}</g:gtin>` : ''}
       <g:identifier_exists>false</g:identifier_exists>
     </item>`);
   }
-
-  // 3. Construct clean XML
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
-  <channel>
-    <title>Jottosop Products</title>
-    <link>${baseUrl}</link>
-    <description>Product feed from Jottosop</description>
-    ${items.join('\n')}
-  </channel>
-</rss>`;
 }
   private mapCategoryToGoogle(categoryName: string): string {
     const categoryMap: Record<string, string> = {
@@ -179,23 +171,26 @@ const shippingWeight = `<g:shipping_weight>${weightGrams} g</g:shipping_weight>`
     return sitemap;
   }
 
-  async generateRobotsTxt(): Promise<string> {
-    const baseUrl = this.getBaseUrl();
-    
-    // Disallow user-specific and backend-related paths
-    const disallowPaths = [
-      '/api', '/admin', '/profile', '/cart', '/checkout',
-      '/orders', '/wishlist', '/notifications',
-    ];
+async generateRobotsTxt(): Promise<string> {
+  const baseUrl = this.getBaseUrl();
+  
+  // ALLOW product paths, block only private/admin paths
+  return `User-agent: Googlebot
+Allow: /product/
+Allow: /category/
+Allow: /
 
-    let robotsTxt = `User-agent: *\n`;
-    disallowPaths.forEach(path => {
-        robotsTxt += `Disallow: ${path}/\n`;
-    });
-    robotsTxt += `\nSitemap: ${baseUrl}/sitemap.xml`;
-    
-    return robotsTxt;
-  }
+User-agent: Googlebot-Image
+Allow: /
+
+User-agent: *
+Disallow: /api/
+Disallow: /admin/
+Disallow: /cart/
+Disallow: /checkout/
+
+Sitemap: ${baseUrl}/seo/sitemap.xml`;
+}
 
   async getPageMeta(type: 'product' | 'category' | 'home' | 'other', slug?: string) {
     const baseUrl = this.getBaseUrl();
