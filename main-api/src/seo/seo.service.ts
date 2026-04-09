@@ -29,8 +29,9 @@ async generateGoogleShoppingFeed() {
     select: {
       id: true, title: true, description: true, images: true, brand: true, slug: true,
       category: { select: { name: true } },
-      variants: { where: { isDefault: true }, select: { price: true, stock: true, sku: true }, take: 1 },
+      variants: { where: { isDefault: true }, select: { price: true, stock: true, sku: true, weightInGrams: true }, take: 1 },
       business: { select: { name: true, id: true } },
+      
     },
     take: 5000,
   });
@@ -44,6 +45,8 @@ async generateGoogleShoppingFeed() {
 
     const price = Number(variant.price).toFixed(2);
     const availability = (variant.stock ?? 0) > 0 ? 'in_stock' : 'out_of_stock';
+    const weightGrams = variant?.weightInGrams|| 500; 
+const shippingWeight = `<g:shipping_weight>${weightGrams} g</g:shipping_weight>`;
     
     // Filter out data:base64 images immediately
     const validImages = product.images?.filter(img => img?.startsWith('http')) || [];
@@ -63,6 +66,9 @@ async generateGoogleShoppingFeed() {
       <g:price>${price} INR</g:price>
       <g:availability>${availability}</g:availability>
       <g:condition>new</g:condition>
+      <g:shipping_weight>${weightGrams} g</g:shipping_weight> 
+      <g:google_product_category>${this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''))}</g:google_product_category>
+      <g:shipping_weight>${weightGrams} g</g:shipping_weight>
       <g:product_type>${this.escapeXml(product.category?.name || 'General')}</g:product_type>
       <g:google_shopping_category>${this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''))}</g:google_shopping_category>
       <g:brand>${this.escapeXml(product.brand || 'Unbranded')}</g:brand>
