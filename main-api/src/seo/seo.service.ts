@@ -2,6 +2,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class SeoService {
@@ -12,6 +13,164 @@ export class SeoService {
 
   private getBaseUrl(): string {
     return this.configService.get<string>('FRONTEND_URL') || 'https://jottosop.in';
+  }
+
+  private getMerchantBaseUrl(): string {
+    return this.configService.get<string>('MERCHANT_CENTER_URL') || this.getBaseUrl();
+  }
+
+  // --- Google Shopping Feed Generator ---
+  async generateGoogleShoppingFeed() {
+    const baseUrl = this.getMerchantBaseUrl();
+
+    const products = await this.prisma.product.findMany({
+      where: {
+        isPublished: true,
+        isFeatured: true,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        images: true,
+        brand: true,
+        slug: true,
+        metaDescription: true,
+        category: { select: { id: true, name: true, slug: true } },
+        variants: {
+          where: { isDefault: true },
+          select: { price: true, stock: true, sku: true },
+          take: 1,
+        },
+        business: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            city: true,
+            state: true,
+            country: true,
+            isVerified: true,
+            logoUrl: true,
+            websiteUrl: true,
+          },
+        },
+      },
+      take: 5000, // Google limit per feed
+    });
+
+    const feedItems = products.map((product) => {
+      const variant = product.variants[0];
+      const price = variant ? Number(variant.price).toFixed(2) : '0.00';
+      const stock = variant?.stock ?? 0;
+      const availability = stock > 0 ? 'in_stock' : 'out_of_stock';
+      const imageUrl = product.images?.[0] || '';
+      const additionalImages = product.images?.slice(1) || [];
+      const condition = 'new';
+      const gtin = variant?.sku || '';
+      const mpn = variant?.sku || '';
+      const productType = product.category?.name || 'Other';
+      const gcategory = this.mapCategoryToGoogle(product.category?.name || '');
+      const customLabel = product.brand ? `brand:${product.brand}` : '';
+
+      return `
+    <item>
+      <g:id>${product.id}</g:id>
+      <g:title>${this.escapeXml(product.title)}</g:title>
+      <g:description>${this.escapeXml(product.description || product.metaDescription || '')}</g:description>
+      <g:link>${baseUrl}/product/${product.slug}</g:link>
+      <g:image_link>${imageUrl}</g:image_link>
+      ${additionalImages.map(url => `<g:additional_image_link>${url}</g:additional_image_link>`).join('\n      ')}
+      <g:price>${price} INR</g:price>
+      <g:sale_price>${price} INR</g:sale_price>
+      <g:availability>${availability}</g:availability>
+      <g:condition>${condition}</g:condition>
+      <g:product_type>${this.escapeXml(productType)}</g:product_type>
+      <g:google_shopping_category>${gcategory}</g:google_shopping_category>
+      <g:brand>${this.escapeXml(product.brand || 'Unbranded')}</g:brand>
+      ${gtin ? `<g:gtin>${gtin}</g:gtin>` : ''}
+      ${mpn ? `<g:mpn>${mpn}</g:mpn>` : ''}
+      <g:custom_label_0>${customLabel}</g:custom_label_0>
+      <g:seller_name>${this.escapeXml(product.business.name)}</g:seller_name>
+      <g:seller_id>${product.business.id}</g:seller_id>
+      <g:shipping>
+        <g:country>IN</g:country>
+        <g:region>*</g:region>
+        <g:service>
+          <g:service_name>Standard Shipping</g:service_name>
+          <g:service_type>flat_rate</g:service_type>
+          <g:price>100.00 INR</g:price>
+          <g:delivery_time>ft:3:5</g:delivery_time>
+        </g:service>
+      </g:shipping>
+      <g:tax>
+        <g:country>IN</g:country>
+        <g:rate>18</g:rate>
+        <g:state>*</g:state>
+      </g:tax>
+      <g:identifier_exists>false</g:identifier_exists>
+      <g:additional_image_link>${imageUrl}</g:additional_image_link>
+    </item>`;
+    }).join('\n');
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
+  <channel>
+    <title>Jottosop Products</title>
+    <link>${baseUrl}</link>
+    <description>Product feed from Jottosop</description>
+    <language>en-us</language>
+    <last_build_date>${new Date().toUTCString()}</last_build_date>
+    <item>
+      <title>Store Information</title>
+      <link>${baseUrl}</link>
+      <description>
+        <g:seller_name>Jottosop</g:seller_name>
+        <g:seller_id>jottosop-main</g:seller_id>
+        <g:customer_service_phone>+91 89109 88290</g:customer_service_phone>
+        <g:email>support@jottosop.in</g:email>
+        <g:return_policy>30 days return policy</g:return_policy>
+        <g:shipping_rate>
+          <g:country>IN</g:country>
+          <g:region>*</g:region>
+          <g:service>
+            <g:service_name>Standard Shipping</g:service_name>
+            <g:service_type>flat_rate</g:service_type>
+            <g:price>100.00 INR</g:price>
+            <g:delivery_time>ft:3:5</g:delivery_time>
+          </g:service>
+        </g:shipping_rate>
+      </description>
+    </item>
+    ${feedItems}
+  </channel>
+</rss>`;
+  }
+
+  private mapCategoryToGoogle(categoryName: string): string {
+    const categoryMap: Record<string, string> = {
+      'Electronics': 'Electronics > Audio > Headphones',
+      'Fashion': 'Fashion > Clothing & Accessories',
+      'Home & Kitchen': 'Home & Garden > Kitchen & Dining',
+      'Books': 'Books & Magazines',
+      'Beauty': 'Beauty > Makeup',
+      'Sports': 'Sports & Outdoors',
+      'Toys': 'Toys & Games',
+      'Health': 'Health & Personal Care',
+      'Automotive': 'Auto & Tires',
+      'General': 'Other',
+    };
+    return categoryMap[categoryName] || 'Other';
+  }
+
+  private escapeXml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
   }
 
   async generateSitemap(): Promise<string> {
@@ -153,5 +312,460 @@ export class SeoService {
           canonical: baseUrl,
         };
     }
+  }
+
+  // --- Product Details API ---
+  async getProductDetails(slug: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { slug, isPublished: true, deletedAt: null },
+      include: {
+        category: { select: { id: true, name: true, slug: true } },
+        business: {
+          select: { id: true, name: true, slug: true, logoUrl: true, isVerified: true },
+        },
+        variants: {
+          where: { isDefault: true },
+          select: { price: true, stock: true, status: true, id: true },
+          take: 1,
+        },
+        reviews: {
+          select: { id: true, rating: true, comment: true, createdAt: true, customerUser: { select: { name: true } } },
+          take: 5,
+          orderBy: { createdAt: 'desc' },
+        },
+        _count: { select: { reviews: true, variants: true } },
+      },
+    });
+
+    if (!product) throw new NotFoundException(`Product with slug "${slug}" not found`);
+
+    const variant = product.variants[0];
+    const price = variant ? Number(variant.price) : 0;
+    const stock = variant?.stock ?? 0;
+    const status = variant?.status ?? 'OUT_OF_STOCK';
+
+    return {
+      id: product.id,
+      title: product.title,
+      slug: product.slug,
+      description: product.description,
+      images: product.images,
+      brand: product.brand,
+      price,
+      originalPrice: price,
+      discount: 0,
+      stock,
+      status,
+      isPublished: product.isPublished,
+      category: {
+        id: product.category.id,
+        name: product.category.name,
+        slug: product.category.slug,
+      },
+      business: {
+        id: product.business.id,
+        name: product.business.name,
+        slug: product.business.slug,
+        logoUrl: product.business.logoUrl,
+        isVerified: product.business.isVerified,
+      },
+      reviews: {
+        count: product._count.reviews,
+        averageRating: 0, // Can be calculated from reviews
+        recent: product.reviews,
+      },
+      tags: product.tags,
+      metaTitle: product.metaTitle || product.title,
+      metaDescription: product.metaDescription || product.title.substring(0, 160),
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt,
+    };
+  }
+
+  // --- Category Details API ---
+  async getCategoryDetails(slug: string) {
+    const category = await this.prisma.category.findUnique({
+      where: { slug, isActive: true },
+      include: {
+        parent: { select: { id: true, name: true, slug: true } },
+        children: {
+          where: { isActive: true },
+          select: { id: true, name: true, slug: true, imageUrl: true },
+        },
+        products: {
+          where: { isPublished: true, deletedAt: null },
+          take: 20,
+          select: {
+            id: true,
+            title: true,
+            slug: true,
+            images: true,
+            brand: true,
+            category: { select: { id: true, name: true } },
+            business: { select: { id: true, name: true, slug: true } },
+            variants: {
+              where: { isDefault: true },
+              select: { price: true, stock: true },
+              take: 1,
+            },
+            _count: { select: { reviews: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+        _count: { select: { products: true, children: true } },
+      },
+    });
+
+    if (!category) throw new NotFoundException(`Category with slug "${slug}" not found`);
+
+    const products = category.products.map((p) => {
+      const variant = p.variants[0];
+      return {
+        id: p.id,
+        title: p.title,
+        slug: p.slug,
+        images: p.images,
+        brand: p.brand,
+        price: variant ? Number(variant.price) : 0,
+        stock: variant?.stock ?? 0,
+        category: p.category,
+        business: p.business,
+        reviewCount: p._count.reviews,
+      };
+    });
+
+    return {
+      id: category.id,
+      name: category.name,
+      slug: category.slug,
+      description: category.description,
+      imageUrl: category.imageUrl,
+      metaTitle: category.metaTitle || category.name,
+      metaDescription: category.metaDescription || category.name,
+      parent: category.parent || null,
+      subcategories: category.children,
+      products,
+      totalProducts: category._count.products,
+      totalSubcategories: category._count.children,
+    };
+  }
+
+  // --- Seller Store API ---
+  async getSellerStore(slug: string) {
+    const business = await this.prisma.business.findUnique({
+      where: { slug, isActive: true },
+      include: {
+        owner: { select: { id: true, name: true } },
+        products: {
+          where: { isPublished: true, deletedAt: null },
+          take: 20,
+          select: {
+            id: true,
+            title: true,
+            slug: true,
+            images: true,
+            brand: true,
+            category: { select: { id: true, name: true } },
+            variants: {
+              where: { isDefault: true },
+              select: { price: true, stock: true },
+              take: 1,
+            },
+            _count: { select: { reviews: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+        _count: { select: { products: true } },
+      },
+    });
+
+    if (!business) throw new NotFoundException(`Seller with slug "${slug}" not found`);
+
+    const products = business.products.map((p) => {
+      const variant = p.variants[0];
+      return {
+        id: p.id,
+        title: p.title,
+        slug: p.slug,
+        images: p.images,
+        brand: p.brand,
+        price: variant ? Number(variant.price) : 0,
+        stock: variant?.stock ?? 0,
+        category: p.category,
+        reviewCount: p._count.reviews,
+      };
+    });
+
+    const rating = Number(business.rating) || 0;
+
+    return {
+      id: business.id,
+      name: business.name,
+      slug: business.slug,
+      description: business.description,
+      logoUrl: business.logoUrl,
+      bannerUrl: business.bannerUrl,
+      category: business.category,
+      rating,
+      reviewCount: business.reviewCount,
+      isVerified: business.isVerified,
+      phone: business.phone,
+      city: business.city,
+      state: business.state,
+      socialLinks: business.socialLinks as Record<string, string> | null,
+      websiteUrl: business.websiteUrl,
+      products,
+      totalProducts: business._count.products,
+    };
+  }
+
+  // --- Product Schema JSON (JSON-LD) ---
+  async getProductSchemaJson(slug: string) {
+    const product = await this.getProductDetails(slug);
+
+    const schema: Prisma.JsonObject = {
+      '@context': 'https://schema.org/',
+      '@type': 'Product',
+      name: product.title,
+      description: product.description || '',
+      image: product.images,
+      offers: {
+        '@type': 'Offer',
+        url: `${this.getBaseUrl()}/product/${product.slug}`,
+        price: product.price.toString(),
+        priceCurrency: 'INR',
+        availability:
+          product.status === 'ACTIVE'
+            ? 'https://schema.org/InStock'
+            : product.status === 'INACTIVE'
+              ? 'https://schema.org/OutOfStock'
+              : 'https://schema.org/PreOrder',
+      },
+      brand: {
+        '@type': 'Brand',
+        name: product.brand || '',
+      },
+      aggregateRating: product.reviews.count > 0
+        ? {
+            '@type': 'AggregateRating',
+            ratingValue: product.reviews.averageRating.toString(),
+            reviewCount: product.reviews.count,
+          }
+        : undefined,
+      seller: {
+        '@type': 'Organization',
+        name: product.business.name,
+      },
+    };
+
+    return schema;
+  }
+
+  // --- Category Schema JSON (JSON-LD) ---
+  async getCategorySchemaJson(slug: string) {
+    const category = await this.getCategoryDetails(slug);
+
+    const schema: Prisma.JsonObject = {
+      '@context': 'https://schema.org/',
+      '@type': 'CollectionPage',
+      name: category.name,
+      description: category.metaDescription || '',
+      url: `${this.getBaseUrl()}/category/${category.slug}`,
+      itemListElement: category.products.map((product, index) => ({
+        '@type': 'ListItem',
+        position: index + 1,
+        item: {
+          '@type': 'Product',
+          name: product.title,
+          image: product.images[0],
+          url: `${this.getBaseUrl()}/product/${product.slug}`,
+          offers: {
+            '@type': 'Offer',
+            price: product.price.toString(),
+            priceCurrency: 'INR',
+          },
+        },
+      })),
+    };
+
+    return schema;
+  }
+
+  // --- Seller Schema JSON (JSON-LD) ---
+  async getSellerSchemaJson(slug: string) {
+    const seller = await this.getSellerStore(slug);
+
+    const schema: Prisma.JsonObject = {
+      '@context': 'https://schema.org/',
+      '@type': 'Organization',
+      name: seller.name,
+      description: seller.description || '',
+      url: `${this.getBaseUrl()}/seller/${seller.slug}`,
+      logo: seller.logoUrl || '',
+      image: seller.bannerUrl || '',
+      sameAs: seller.socialLinks || [],
+      address: {
+        '@type': 'PostalAddress',
+        addressLocality: seller.city,
+        addressRegion: seller.state,
+      },
+      contactPoint: {
+        '@type': 'ContactPoint',
+        telephone: seller.phone,
+        contactType: 'customer service',
+      },
+      aggregateRating: seller.reviewCount > 0
+        ? {
+            '@type': 'AggregateRating',
+            ratingValue: seller.rating.toString(),
+            reviewCount: seller.reviewCount,
+          }
+        : undefined,
+      makesOffer: {
+        '@type': 'OfferCatalog',
+        name: `${seller.name} Products`,
+        itemListElement: seller.products.map((product) => ({
+          '@type': 'Offer',
+          itemOffered: {
+            '@type': 'Product',
+            name: product.title,
+            image: product.images[0],
+            url: `${this.getBaseUrl()}/product/${product.slug}`,
+            offers: {
+              '@type': 'Offer',
+              price: product.price.toString(),
+              priceCurrency: 'INR',
+            },
+          },
+        })),
+      },
+    };
+
+    return schema;
+  }
+
+  // --- Search Results API ---
+  async getSearchResults(query: string, page: number = 1, limit: number = 20) {
+    const skip = (page - 1) * limit;
+    const searchQuery = `%${query}%`;
+
+    const [products, total] = await this.prisma.$transaction([
+      this.prisma.product.findMany({
+        where: {
+          isPublished: true,
+          deletedAt: null,
+          OR: [
+            { title: { contains: searchQuery, mode: 'insensitive' } },
+            { description: { contains: searchQuery, mode: 'insensitive' } },
+            { brand: { contains: searchQuery, mode: 'insensitive' } },
+            { tags: { has: query } },
+          ],
+        },
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          images: true,
+          brand: true,
+          description: true,
+          category: { select: { id: true, name: true, slug: true } },
+          business: { select: { id: true, name: true, slug: true, logoUrl: true } },
+          variants: {
+            where: { isDefault: true },
+            select: { price: true, stock: true },
+            take: 1,
+          },
+          _count: { select: { reviews: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.product.count({
+        where: {
+          isPublished: true,
+          deletedAt: null,
+          OR: [
+            { title: { contains: searchQuery, mode: 'insensitive' } },
+            { description: { contains: searchQuery, mode: 'insensitive' } },
+            { brand: { contains: searchQuery, mode: 'insensitive' } },
+            { tags: { has: query } },
+          ],
+        },
+      }),
+    ]);
+
+    const results = products.map((p) => {
+      const variant = p.variants[0];
+      return {
+        id: p.id,
+        title: p.title,
+        slug: p.slug,
+        images: p.images,
+        brand: p.brand,
+        description: p.description,
+        price: variant ? Number(variant.price) : 0,
+        stock: variant?.stock ?? 0,
+        category: p.category,
+        business: p.business,
+        reviewCount: p._count.reviews,
+      };
+    });
+
+    return {
+      query,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      results,
+    };
+  }
+
+  // --- Product Reviews API ---
+  async getProductReviews(productId: string, page: number = 1, limit: number = 10) {
+    const skip = (page - 1) * limit;
+
+  const [reviews, total] = await this.prisma.$transaction([
+      this.prisma.review.findMany({
+        where: { productId },
+        select: {
+          id: true,
+          rating: true,
+          comment: true,
+          createdAt: true,
+          customerUser: { select: { name: true, picture: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.review.count({ where: { productId } }),
+    ]);
+
+    const averageRating = total > 0
+      ? Number(
+          (
+            reviews.reduce((sum, r) => sum + r.rating, 0) / total
+          ).toFixed(1)
+        )
+      : 0;
+
+    return {
+      productId,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      averageRating,
+      ratingDistribution: {
+        5: reviews.filter((r) => r.rating === 5).length,
+        4: reviews.filter((r) => r.rating === 4).length,
+        3: reviews.filter((r) => r.rating === 3).length,
+        2: reviews.filter((r) => r.rating === 2).length,
+        1: reviews.filter((r) => r.rating === 1).length,
+      },
+      reviews,
+    };
   }
 }
