@@ -83,17 +83,24 @@ async generateGoogleShoppingFeed() {
   private mapCategoryToGoogle(categoryName: string): string {
     const categoryMap: Record<string, string> = {
       'Electronics': 'Electronics > Audio > Headphones',
-      'Fashion': 'Fashion > Clothing & Accessories',
-      'Home & Kitchen': 'Home & Garden > Kitchen & Dining',
-      'Books': 'Books & Magazines',
-      'Beauty': 'Beauty > Makeup',
-      'Sports': 'Sports & Outdoors',
-      'Toys': 'Toys & Games',
-      'Health': 'Health & Personal Care',
-      'Automotive': 'Auto & Tires',
-      'General': 'Other',
+      'Fashion': 'Shopping > Clothing, Accessories & Shoes > Clothing > Tops & Tees > T-Shirts',
+      'Clothing': 'Shopping > Clothing, Accessories & Shoes > Clothing > Tops & Tees > T-Shirts',
+      'Shoes': 'Shopping > Clothing, Accessories & Shoes > Shoes > Athletic Shoes > Athletic Shoes - Walking & Training',
+      'Accessories': 'Shopping > Clothing, Accessories & Shoes > Accessories',
+      'Home & Kitchen': 'Shopping > Home, Furniture & Bedding > Kitchen & Dining > Kitchen Utensils & Gadgets > Cooking Utensils',
+      'Home': 'Shopping > Home, Furniture & Bedding > Furniture > Tables',
+      'Kitchen': 'Shopping > Home, Furniture & Bedding > Kitchen & Dining > Kitchen Utensils & Gadgets > Cooking Utensils',
+      'Books': 'Arts, Entertainment & Sports > Books > Nonfiction',
+      'Beauty': 'Shopping > Health & Beauty > Beauty > Makeup > Eyes > Mascara',
+      'Health': 'Shopping > Health & Beauty > Health > Vitamins & Supplements > Vitamins',
+      'Sports': 'Arts, Entertainment & Sports > Sports & Fitness > Sports > Outdoor Recreation > Camping & Hiking > Backpacks',
+      'Toys': 'Arts, Entertainment & Sports > Toys > Toys & Games',
+      'Toys & Games': 'Arts, Entertainment & Sports > Toys > Toys & Games',
+      'Automotive': 'Auto, Parts & Tires > Car Accessories > Electronics > Car Electronics',
+      'General': 'Shopping > Other',
+      'Other': 'Shopping > Other',
     };
-    return categoryMap[categoryName] || 'Other';
+    return categoryMap[categoryName] || 'Shopping > Other';
   }
 
   private escapeXml(text: string): string {

@@ -67,7 +67,7 @@ async getHomepageDistributed() {
   const categories = await this.prisma.category.findMany({
     where: {
       isActive: true,
-      products: { some: { isPublished: true, deletedAt: null } },
+      products: { some: { isPublished: true, deletedAt: null, isFeatured: true } },
     },
     select: { id: true, name: true, slug: true },
   });
@@ -75,7 +75,7 @@ async getHomepageDistributed() {
   const distributedData = await Promise.all(
     categories.map(async (cat) => {
       const products = await this.prisma.product.findMany({
-        where:   { categoryId: cat.id, isPublished: true, deletedAt: null },
+        where:   { categoryId: cat.id, isPublished: true, deletedAt: null,isFeatured: true },
         take:    10,
         orderBy: { createdAt: 'desc' },
         select: {
