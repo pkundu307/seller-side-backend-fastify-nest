@@ -31,15 +31,14 @@ async generateGoogleShoppingFeed() {
       category: { select: { name: true } },
       variants: { where: { isDefault: true }, select: { price: true, stock: true, sku: true, weightInGrams: true }, take: 1 },
       business: { select: { name: true, id: true } },
-      
+
     },
     take: 5000,
   });
 
-  // 2. Build items as an array, then join (faster than map-join)
-// 2. Build items as an array
+  // 2. Build items as an array
   const items: string[] = [];
-  
+
   for (const product of products) {
     const variant = product.variants[0];
     if (!variant) continue;
@@ -47,11 +46,11 @@ async generateGoogleShoppingFeed() {
     const price = Number(variant.price).toFixed(2);
     const availability = (variant.stock ?? 0) > 0 ? 'in_stock' : 'out_of_stock';
     const weightGrams = variant?.weightInGrams || 500;
-    
+
     // --- Define these INSIDE the loop ---
     const productType = this.escapeXml(product.category?.name || 'General');
     const gcategory = this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''));
-    
+
     const validImages = product.images?.filter(img => img?.startsWith('http')) || [];
     if (validImages.length === 0) continue;
 
@@ -73,12 +72,25 @@ async generateGoogleShoppingFeed() {
       <g:condition>new</g:condition>
       <g:shipping_weight>${weightGrams} g</g:shipping_weight>
       <g:product_type>${productType}</g:product_type>
-      <g:google_product_category>${gcategory || 'Other'}</g:google_product_category>
+      <g:google_product_category>${gcategory || 'Shopping > Other'}</g:google_product_category>
       <g:brand>${this.escapeXml(product.brand || 'Unbranded')}</g:brand>
       ${variant?.sku ? `<g:gtin>${this.escapeXml(variant.sku)}</g:gtin>` : ''}
       <g:identifier_exists>false</g:identifier_exists>
     </item>`);
   }
+
+  // 3. Build XML and return
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:g="http://google.com/schema_bases/1.63/shopping_base">
+  <channel>
+    <title>${this.escapeXml(baseUrl)}</title>
+    <link>${baseUrl}</link>
+    <description>Product feed for ${this.escapeXml(baseUrl)}</description>
+    ${items.join('\n    ')}
+  </channel>
+</rss>`;
+
+  return xml;
 }
   private mapCategoryToGoogle(categoryName: string): string {
     const categoryMap: Record<string, string> = {
