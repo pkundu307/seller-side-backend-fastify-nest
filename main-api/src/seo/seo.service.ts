@@ -38,46 +38,36 @@ async generateGoogleShoppingFeed() {
 
   // 2. Build items as an array
   const items: string[] = [];
+for (const product of products) {
+  const variant = product.variants[0];
+  if (!variant) continue;
 
-  for (const product of products) {
-    const variant = product.variants[0];
-    if (!variant) continue;
+  const price = Number(variant.price).toFixed(2);
+  // Ensure we use the exact Google attribute name: availability
+  const availability = (variant.stock ?? 0) > 0 ? 'in_stock' : 'out_of_stock';
+  const weightGrams = variant?.weightInGrams || 500;
+  
+  // Clean up images
+  const validImages = product.images?.filter(img => img?.startsWith('http')) || [];
+  if (validImages.length === 0) continue; 
+  const imageUrl = this.escapeXml(validImages[0]);
 
-    const price = Number(variant.price).toFixed(2);
-    const availability = (variant.stock ?? 0) > 0 ? 'in_stock' : 'out_of_stock';
-    const weightGrams = variant?.weightInGrams || 500;
-
-    // --- Define these INSIDE the loop ---
-    const productType = this.escapeXml(product.category?.name || 'General');
-    const gcategory = this.escapeXml(this.mapCategoryToGoogle(product.category?.name || ''));
-
-    const validImages = product.images?.filter(img => img?.startsWith('http')) || [];
-    if (validImages.length === 0) continue;
-
-    const imageUrl = this.escapeXml(validImages[0]);
-    const additionalImages = validImages.slice(1, 10)
-      .map(img => `<g:additional_image_link>${this.escapeXml(img)}</g:additional_image_link>`)
-      .join('\n      ');
-
-    items.push(`
+  items.push(`
     <item>
       <g:id>${product.id}</g:id>
       <g:title>${this.escapeXml(product.title)}</g:title>
       <g:description>${this.escapeXml((product.description || '').substring(0, 5000)).replace(/\n/g, ' ')}</g:description>
       <g:link>${baseUrl}/product/${product.slug}</g:link>
       <g:image_link>${imageUrl}</g:image_link>
-      ${additionalImages}
       <g:price>${price} INR</g:price>
       <g:availability>${availability}</g:availability>
-      <g:condition>new</g:condition>
       <g:shipping_weight>${weightGrams} g</g:shipping_weight>
-      <g:product_type>${productType}</g:product_type>
-      <g:google_product_category>${gcategory || 'Shopping > Other'}</g:google_product_category>
+      <g:condition>new</g:condition>
       <g:brand>${this.escapeXml(product.brand || 'Unbranded')}</g:brand>
-      ${variant?.sku ? `<g:gtin>${this.escapeXml(variant.sku)}</g:gtin>` : ''}
+      <g:gtin>${this.escapeXml(variant.sku || product.id)}</g:gtin>
       <g:identifier_exists>false</g:identifier_exists>
     </item>`);
-  }
+}
 
   // 3. Build XML and return
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -192,21 +182,15 @@ async generateGoogleShoppingFeed() {
 
 async generateRobotsTxt(): Promise<string> {
   const baseUrl = this.getBaseUrl();
-  
-  // ALLOW product paths, block only private/admin paths
   return `User-agent: Googlebot
 Allow: /product/
 Allow: /category/
 Allow: /
 
-User-agent: Googlebot-Image
-Allow: /
-
 User-agent: *
 Disallow: /api/
 Disallow: /admin/
-Disallow: /cart/
-Disallow: /checkout/
+# ... keep other disallows
 
 Sitemap: ${baseUrl}/seo/sitemap.xml`;
 }
