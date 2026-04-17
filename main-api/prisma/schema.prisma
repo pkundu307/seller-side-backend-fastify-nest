@@ -1747,7 +1747,8 @@ model BankCashChequeTransaction {
   account         BankCashCheque  @relation(fields: [accountId], references: [id])
   business        Business        @relation(fields: [businessId], references: [id])
   party           Party?          @relation("PartyBankTx", fields: [partyId], references: [id])
-
+ targetPartyBankAccountId String? 
+  targetPartyBankAccount   PartyBankAccount? @relation(fields: [targetPartyBankAccountId], references: [id])
   @@index([accountId])
   @@index([businessId])
 }
@@ -2080,6 +2081,7 @@ model Party {
   sales            Sale[]                      @relation("SaleParty")
   purchases        Purchase[]                  @relation("PurchaseParty")
   campaigns        Campaign[]
+  bankAccounts PartyBankAccount[] 
 
   @@index([businessId, partyType])
 }
@@ -2118,7 +2120,24 @@ model KitchenTicket {
   completedAt DateTime?
   business    Business  @relation(fields: [businessId], references: [id])
 }
+model PartyBankAccount {
+  id         String   @id @default(uuid())
+  partyId    String
+  party      Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  
+  bankName   String   @db.VarChar(256)
+  accountNo  String   @db.VarChar(128)
+  ifscCode   String?  @db.VarChar(20)
+  accountHolder String? @db.VarChar(256)
+  upiId      String?  @db.VarChar(128)
+  isDefault  Boolean  @default(false)
+  transactions BankCashChequeTransaction[] 
 
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([partyId])
+}
 model RestaurantTable {
   id            String      @id @default(uuid())
   businessId    String

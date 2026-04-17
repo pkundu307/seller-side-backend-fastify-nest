@@ -1,3 +1,4 @@
+// DTO for creating a Party (Customer/Supplier) with all relevant details
 import {
   IsString, IsOptional, IsEmail,
   IsEnum, IsNumber, IsBoolean,
