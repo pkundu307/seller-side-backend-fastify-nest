@@ -61,7 +61,7 @@ export class UpdateVariantDto {
   // ── Optional: tax / compliance ─────────────────────────────────────────────
   @IsOptional() @IsString() hsnCode?: string;
   @IsOptional() @IsString() sacCode?: string;
-  @IsOptional() @IsString() tax?: string;
+    @IsOptional() @IsString() tax?: string; 
 
   // ── Optional: dimension unit ───────────────────────────────────────────────
   @IsOptional() @IsString() dimensionUnit?: string;           // default 'CM'

@@ -1,11 +1,29 @@
 import { Type, Transform } from 'class-transformer';
 import {
-  IsArray, IsNotEmpty, IsNumberString, IsString, ValidateNested,
-  IsOptional, IsBoolean, IsEnum, IsInt, IsUrl, Min, IsPositive,
+  IsArray,
+  IsNotEmpty,
+  IsNumberString,
+  IsString,
+  ValidateNested,
+  IsOptional,
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsUrl,
+  Min,
+  IsPositive,
 } from 'class-validator';
 
-export enum ProductType  { STANDARD = 'STANDARD', DIGITAL = 'DIGITAL', SERVICE = 'SERVICE' }
-export enum StockMethod  { FIFO = 'FIFO', FEFO = 'FEFO', MANUAL = 'MANUAL' }
+export enum ProductType {
+  STANDARD = 'STANDARD',
+  DIGITAL = 'DIGITAL',
+  SERVICE = 'SERVICE',
+}
+export enum StockMethod {
+  FIFO = 'FIFO',
+  FEFO = 'FEFO',
+  MANUAL = 'MANUAL',
+}
 
 // ── Attribute ─────────────────────────────────────────────────────────────────
 class CreateVariantAttributeDto {
@@ -16,11 +34,12 @@ class CreateVariantAttributeDto {
 
 // ── Variant ───────────────────────────────────────────────────────────────────
 export class CreateVariantDto {
-
   // ── Required: identity & pricing ──────────────────────────────────────────
   @IsString()
   @IsNotEmpty()
   sku: string;
+
+  @IsOptional() @IsString() tax?: string;
 
   @IsNumberString()
   @IsNotEmpty()
@@ -39,32 +58,40 @@ export class CreateVariantDto {
   // These come from mandatory dropdowns on the frontend.
   // Values are numeric strings representing the upper bound of the selected range.
   @IsNumberString()
-  @IsNotEmpty({ message: 'Approx weight is required for shipping calculation.' })
-  weightInGrams: string;           // e.g. "1000"  → 1 kg bucket
+  @IsNotEmpty({
+    message: 'Approx weight is required for shipping calculation.',
+  })
+  weightInGrams: string; // e.g. "1000"  → 1 kg bucket
 
   @IsNumberString()
-  @IsNotEmpty({ message: 'Length is required for volumetric weight calculation.' })
-  length: string;                  // e.g. "25" cm
+  @IsNotEmpty({
+    message: 'Length is required for volumetric weight calculation.',
+  })
+  length: string; // e.g. "25" cm
 
   @IsNumberString()
-  @IsNotEmpty({ message: 'Width is required for volumetric weight calculation.' })
-  width: string;                   // e.g. "20" cm
+  @IsNotEmpty({
+    message: 'Width is required for volumetric weight calculation.',
+  })
+  width: string; // e.g. "20" cm
 
   @IsNumberString()
-  @IsNotEmpty({ message: 'Height is required for volumetric weight calculation.' })
-  height: string;                  // e.g. "10" cm
+  @IsNotEmpty({
+    message: 'Height is required for volumetric weight calculation.',
+  })
+  height: string; // e.g. "10" cm
 
   // ── Optional: pricing extras ───────────────────────────────────────────────
   @IsOptional() @IsNumberString() mrp?: string;
   @IsOptional() @IsNumberString() purchasePrice?: string;
-  @IsOptional() @IsString()       purchasePriceType?: string;
+  @IsOptional() @IsString() purchasePriceType?: string;
 
   // ── Optional: tax / compliance ─────────────────────────────────────────────
   @IsOptional() @IsString() hsnCode?: string;
   @IsOptional() @IsString() sacCode?: string;
 
   // ── Optional: dimension unit ───────────────────────────────────────────────
-  @IsOptional() @IsString() dimensionUnit?: string;         // default 'CM'
+  @IsOptional() @IsString() dimensionUnit?: string; // default 'CM'
 
   // ── Optional: stock alerts ─────────────────────────────────────────────────
   @IsOptional() @IsNumberString() minStockCount?: string;
@@ -111,7 +138,6 @@ export class CreateVariantDto {
 
 // ── Product ───────────────────────────────────────────────────────────────────
 export class CreateProductDto {
-
   // ── Required ──────────────────────────────────────────────────────────────
   @IsString()
   @IsNotEmpty()
@@ -132,7 +158,7 @@ export class CreateProductDto {
 
   // ── Optional: product identity ─────────────────────────────────────────────
   @IsOptional() @IsEnum(ProductType) productType?: ProductType;
-  @IsOptional() @IsString()          brand?: string;
+  @IsOptional() @IsString() brand?: string;
 
   @IsOptional()
   @IsArray()
@@ -149,7 +175,7 @@ export class CreateProductDto {
   @Transform(({ value }) => value === 'true' || value === true)
   isCustomizable?: boolean;
 
-  @IsOptional() @IsString() customizationConfig?: string;   // JSON string
+  @IsOptional() @IsString() customizationConfig?: string; // JSON string
 
   // ── Optional: scheduling ───────────────────────────────────────────────────
   @IsOptional()
@@ -157,7 +183,7 @@ export class CreateProductDto {
   @Transform(({ value }) => value === 'true' || value === true)
   isFeatured?: boolean;
 
-  @IsOptional() @IsString() publishDate?: string;           // ISO date string
+  @IsOptional() @IsString() publishDate?: string; // ISO date string
 
   // ── Optional: product-level image URLs ────────────────────────────────────
   @IsOptional()

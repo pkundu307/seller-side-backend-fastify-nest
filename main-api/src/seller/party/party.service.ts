@@ -19,64 +19,39 @@ export class PartyService {
   // ================================================================
   async create(businessId: string, dto: CreatePartyDto) {
     const existing = await this.prisma.party.findFirst({
-      where: {
-        businessId,
-        partyName: { equals: dto.partyName, mode: 'insensitive' },
-      },
+      where: { businessId, partyName: { equals: dto.partyName, mode: 'insensitive' } },
     });
-    if (existing) {
-      throw new ConflictException(`Party "${dto.partyName}" already exists.`);
-    }
+    if (existing) throw new ConflictException(`Party "${dto.partyName}" already exists.`);
 
-    const partyType      = dto.partyType          ?? PartyType.CUSTOMER;
-    const openingBalance = dto.openingBalance      ?? 0;
-    const openingBalType = dto.openingBalanceType  ?? OpeningBalanceType.TO_COLLECT;
-
-    const closingBalance =
-      openingBalType === OpeningBalanceType.TO_PAY
-        ? -Math.abs(openingBalance)
-        :  Math.abs(openingBalance);
-
-    const shippingAddress =
-      dto.isBillingShippingSame && dto.billingAddress
-        ? dto.billingAddress
-        : dto.shippingAddress;
+    const openingBalance = dto.openingBalance ?? 0;
+    const openingBalType = dto.openingBalanceType ?? OpeningBalanceType.TO_COLLECT;
+    const closingBalance = openingBalType === OpeningBalanceType.TO_PAY ? -Math.abs(openingBalance) : Math.abs(openingBalance);
 
     return this.prisma.$transaction(async (tx) => {
       const party = await tx.party.create({
         data: {
           businessId,
-          partyName:    dto.partyName,
-          partyType,
-          phoneNo:       dto.phoneNo       ?? null,
-          email:         dto.email         ?? null,
+          partyName: dto.partyName,
+          partyType: dto.partyType ?? PartyType.CUSTOMER,
+          phoneNo: dto.phoneNo ?? null,
+          email: dto.email ?? null,
           partyCategory: dto.partyCategory ?? null,
-          isBusiness:    dto.isBusiness    ?? true,
-          businessName:  dto.businessName  ?? null,
-          notes:         dto.notes         ?? null,
-          taxId:         dto.taxId         ?? null,
-          panNo:         dto.panNo         ?? null,
-
-          // Json? — must use Prisma.JsonNull, never plain null
-          billingAddress: dto.billingAddress
-            ? dto.billingAddress
-            : Prisma.JsonNull,
-          shippingAddress: shippingAddress
-            ? shippingAddress
-            : Prisma.JsonNull,
+          isBusiness: dto.isBusiness ?? true,
+          businessName: dto.businessName ?? null,
+          notes: dto.notes ?? null,
+          taxId: dto.taxId ?? null,
+          panNo: dto.panNo ?? null,
+          billingAddress: dto.billingAddress ? dto.billingAddress : Prisma.JsonNull,
+          shippingAddress: (dto.isBillingShippingSame && dto.billingAddress) ? dto.billingAddress : (dto.shippingAddress || Prisma.JsonNull),
           isBillingShippingSame: dto.isBillingShippingSame ?? true,
-
-          openingBalance:     new Prisma.Decimal(openingBalance),
+          openingBalance: new Prisma.Decimal(openingBalance),
           openingBalanceType: openingBalType,
           openingBalanceDate: new Date(),
-          closingBalance:     new Prisma.Decimal(closingBalance),
-
+          closingBalance: new Prisma.Decimal(closingBalance),
           creditPeriod: dto.creditPeriod ?? null,
-          creditLimit:  dto.creditLimit
-            ? new Prisma.Decimal(dto.creditLimit)
-            : null,
-
+          creditLimit: dto.creditLimit ? new Prisma.Decimal(dto.creditLimit) : null,
           customField: dto.customField ?? Prisma.JsonNull,
+          bankAccounts: dto.bankAccounts?.length ? { create: dto.bankAccounts } : undefined,
         },
       });
 
@@ -84,28 +59,20 @@ export class PartyService {
         await tx.partyLedger.create({
           data: {
             businessId,
-            partyId:         party.id,
-            partyType,
-            partyName:       party.partyName,
-            phoneNo:         party.phoneNo,
-            email:           party.email,
+            partyId: party.id,
+            partyType: party.partyType,
+            partyName: party.partyName,
             transactionDate: new Date(),
-            description:     'Opening Balance',
-            debit:
-              openingBalType === OpeningBalanceType.TO_COLLECT
-                ? new Prisma.Decimal(openingBalance)
-                : new Prisma.Decimal(0),
-            credit:
-              openingBalType === OpeningBalanceType.TO_PAY
-                ? new Prisma.Decimal(openingBalance)
-                : new Prisma.Decimal(0),
+            description: 'Opening Balance',
+            debit: openingBalType === OpeningBalanceType.TO_COLLECT ? new Prisma.Decimal(openingBalance) : new Prisma.Decimal(0),
+            credit: openingBalType === OpeningBalanceType.TO_PAY ? new Prisma.Decimal(openingBalance) : new Prisma.Decimal(0),
           },
         });
       }
-
       return party;
     });
   }
+
 
   // ================================================================
   // 2. GET ALL PARTIES (Paginated + Filtered)
@@ -168,82 +135,204 @@ export class PartyService {
   // ================================================================
   // 3. GET ONE PARTY
   // ================================================================
-  async findOne(businessId: string, id: string) {
-    const party = await this.prisma.party.findFirst({
-      where: { id, businessId },
-    });
-    if (!party) throw new NotFoundException('Party not found');
-    return party;
+async findOne(businessId: string, id: string) {
+  const party = await this.prisma.party.findFirst({
+    where: { id, businessId },
+    include: { bankAccounts: true }
+  });
+  if (!party) throw new NotFoundException('Party not found');
+  return party;
+}
+async getPartyDetails(businessId: string, partyId: string) {
+  const party = await this.prisma.party.findFirst({
+    where: { id: partyId, businessId },
+    include: { bankAccounts: true },
+  });
+  if (!party) throw new NotFoundException('Party not found');
+
+  // ── Transactions: Sales ──────────────────────────────────────
+  const sales = await this.prisma.sale.findMany({
+    where: { businessId, partyId, deletedAt: null },
+    select: {
+      id: true,
+      invoicePrefix: true,
+      invoiceNo: true,
+      invoiceDate: true,
+      totalAmount: true,
+      balanceAmount: true,
+      isSettled: true,
+      status: true,
+      partyName: true,
+    },
+    orderBy: { invoiceDate: 'desc' },
+  });
+
+  // ── Transactions: Purchases ──────────────────────────────────
+  const purchases = await this.prisma.purchase.findMany({
+    where: { businessId, supplierPartyId: partyId },
+    select: {
+      id: true,
+      purchaseOrderNo: true,
+      purchaseOrderDate: true,
+      totalAmount: true,
+      balanceDue: true,
+      status: true,
+      supplierName: true,
+    },
+    orderBy: { purchaseOrderDate: 'desc' },
+  });
+
+  // ── Ledger Entries ────────────────────────────────────────────
+  const ledger = await this.prisma.partyLedger.findMany({
+    where: { businessId, partyId },
+    orderBy: { transactionDate: 'asc' },
+  });
+
+  // ── Item-Wise Report: group sale items by variant ─────────────
+  const saleItems = await this.prisma.saleItem.findMany({
+    where: {
+      sale: { businessId, partyId, deletedAt: null },
+    },
+    select: {
+      itemId: true,
+      itemName: true,
+      hsnCode: true,
+      quantity: true,
+      price: true,
+      amount: true,
+      taxAmount: true,
+      unit: true,
+      sale: { select: { invoiceDate: true, invoiceNo: true, invoicePrefix: true } },
+    },
+  });
+
+  // Group by itemId
+  const itemMap = new Map<
+    string,
+    {
+      itemId: string;
+      itemName: string;
+      hsnCode: string;
+      unit: string;
+      totalQty: number;
+      totalAmount: number;
+      totalTax: number;
+      transactions: { invoiceNo: string; date: string; qty: number; amount: number }[];
+    }
+  >();
+
+  for (const si of saleItems) {
+    const existing = itemMap.get(si.itemId);
+    const entry = {
+      invoiceNo: `${si.sale.invoicePrefix}-${si.sale.invoiceNo}`,
+      date: si.sale.invoiceDate.toISOString(),
+      qty: Number(si.quantity),
+      amount: Number(si.amount),
+    };
+    if (existing) {
+      existing.totalQty += Number(si.quantity);
+      existing.totalAmount += Number(si.amount);
+      existing.totalTax += Number(si.taxAmount);
+      existing.transactions.push(entry);
+    } else {
+      itemMap.set(si.itemId, {
+        itemId: si.itemId,
+        itemName: si.itemName,
+        hsnCode: si.hsnCode ?? '',
+        unit: si.unit,
+        totalQty: Number(si.quantity),
+        totalAmount: Number(si.amount),
+        totalTax: Number(si.taxAmount),
+        transactions: [entry],
+      });
+    }
   }
+
+  // Running balance for ledger
+  let running = 0;
+  const ledgerWithBalance = ledger.map((l) => {
+    running += Number(l.debit) - Number(l.credit);
+    return { ...l, runningBalance: running };
+  });
+
+  return {
+    party,
+    transactions: {
+      sales: sales.map((s) => ({
+        id: s.id,
+        type: 'SALE',
+        invoiceNo: `${s.invoicePrefix}-${s.invoiceNo}`,
+        date: s.invoiceDate,
+        total: Number(s.totalAmount),
+        balance: Number(s.balanceAmount),
+        isSettled: s.isSettled,
+        status: s.status,
+        partyName: s.partyName,
+      })),
+      purchases: purchases.map((p) => ({
+        id: p.id,
+        type: 'PURCHASE',
+        invoiceNo: p.purchaseOrderNo,
+        date: p.purchaseOrderDate,
+        total: Number(p.totalAmount),
+        balance: Number(p.balanceDue),
+        // isSettled: p.balanceDue === 0,
+        status: p.status,
+        partyName: p.supplierName,
+      })),
+    },
+    ledger: ledgerWithBalance,
+    itemWise: Array.from(itemMap.values()),
+  };
+}
+
 
   // ================================================================
   // 4. UPDATE PARTY
   // ================================================================
-  async update(businessId: string, id: string, dto: UpdatePartyDto) {
+ async update(businessId: string, id: string, dto: UpdatePartyDto) {
     await this.findOne(businessId, id);
 
     if (dto.partyName) {
       const dup = await this.prisma.party.findFirst({
-        where: {
-          businessId,
-          partyName: { equals: dto.partyName, mode: 'insensitive' },
-          NOT: { id },
-        },
+        where: { businessId, partyName: { equals: dto.partyName, mode: 'insensitive' }, NOT: { id } },
       });
-      if (dup) {
-        throw new ConflictException(
-          `Party name "${dto.partyName}" is already in use.`,
-        );
-      }
+      if (dup) throw new ConflictException(`Party name "${dto.partyName}" is already in use.`);
     }
 
-    const shippingAddress =
-      dto.isBillingShippingSame && dto.billingAddress
-        ? dto.billingAddress
-        : dto.shippingAddress;
-
-    return this.prisma.party.update({
-      where: { id },
-      data: {
-        ...(dto.partyName     !== undefined && { partyName:     dto.partyName     }),
-        ...(dto.phoneNo       !== undefined && { phoneNo:       dto.phoneNo       }),
-        ...(dto.email         !== undefined && { email:         dto.email         }),
-        ...(dto.partyType     !== undefined && { partyType:     dto.partyType     }),
-        ...(dto.partyCategory !== undefined && { partyCategory: dto.partyCategory }),
-        ...(dto.isBusiness    !== undefined && { isBusiness:    dto.isBusiness    }),
-        ...(dto.businessName  !== undefined && { businessName:  dto.businessName  }),
-        ...(dto.taxId         !== undefined && { taxId:         dto.taxId         }),
-        ...(dto.panNo         !== undefined && { panNo:         dto.panNo         }),
-        ...(dto.notes         !== undefined && { notes:         dto.notes         }),
-
-        // Json? fields
-        ...(dto.billingAddress !== undefined && {
-          billingAddress: dto.billingAddress
-            ? dto.billingAddress
-            : Prisma.JsonNull,
-        }),
-        ...(shippingAddress !== undefined && {
-          shippingAddress: shippingAddress
-            ? shippingAddress
-            : Prisma.JsonNull,
-        }),
-        ...(dto.isBillingShippingSame !== undefined && {
-          isBillingShippingSame: dto.isBillingShippingSame,
-        }),
-
-        ...(dto.creditPeriod !== undefined && { creditPeriod: dto.creditPeriod }),
-        ...(dto.creditLimit  !== undefined && {
-          creditLimit: dto.creditLimit
-            ? new Prisma.Decimal(dto.creditLimit)
-            : null,
-        }),
-
-        ...(dto.customField !== undefined && {
+    return this.prisma.$transaction(async (tx) => {
+      const updatedParty = await tx.party.update({
+        where: { id },
+        data: {
+          partyName: dto.partyName,
+          phoneNo: dto.phoneNo,
+          email: dto.email,
+          partyType: dto.partyType,
+          partyCategory: dto.partyCategory,
+          isBusiness: dto.isBusiness,
+          businessName: dto.businessName,
+          taxId: dto.taxId,
+          panNo: dto.panNo,
+          notes: dto.notes,
+          billingAddress: dto.billingAddress ?? Prisma.JsonNull,
+          shippingAddress: dto.shippingAddress ?? Prisma.JsonNull,
+          creditPeriod: dto.creditPeriod,
+          creditLimit: dto.creditLimit ? new Prisma.Decimal(dto.creditLimit) : null,
           customField: dto.customField ?? Prisma.JsonNull,
-        }),
-      },
+        },
+      });
+
+      if (dto.bankAccounts) {
+        await tx.partyBankAccount.deleteMany({ where: { partyId: id } });
+        await tx.partyBankAccount.createMany({
+          data: dto.bankAccounts.map(ba => ({ ...ba, partyId: id })),
+        });
+      }
+      return updatedParty;
     });
   }
+
+ 
 
   // ================================================================
   // 5. DELETE PARTY (Hard delete — no deletedAt on Party model)

@@ -249,7 +249,7 @@ function drawSummary(
   // Subtotal
   doc.fontSize(8).font('Helvetica').fillColor('#555555');
   doc.text('Subtotal:',               summaryX, y, { width: 75, align: 'right' });
-  doc.text(`₹${subtotal.toFixed(2)}`, COL.total, y, { width: 45, align: 'right' });
+  doc.text(`Rs.${subtotal.toFixed(2)}`, COL.total, y, { width: 45, align: 'right' });
 
   // Discount
   if (sale.discountAmount && Number(sale.discountAmount) > 0) {
@@ -257,7 +257,7 @@ function drawSummary(
     doc.fillColor('#cc3300');
     doc.text('Discount:', summaryX, y, { width: 75, align: 'right' });
     doc.text(
-      `-₹${Number(sale.discountAmount).toFixed(2)}`,
+      `-Rs.${Number(sale.discountAmount).toFixed(2)}`,
       COL.total, y, { width: 45, align: 'right' },
     );
   }
@@ -271,7 +271,7 @@ function drawSummary(
       summaryX, y, { width: 75, align: 'right' },
     );
     doc.text(
-      `₹${Number(sale.taxAmount).toFixed(2)}`,
+      `Rs.${Number(sale.taxAmount).toFixed(2)}`,
       COL.total, y, { width: 45, align: 'right' },
     );
   }
@@ -282,7 +282,7 @@ function drawSummary(
   doc.fontSize(9).font('Helvetica-Bold').fillColor('#ffffff');
   doc.text('Grand Total:',  summaryX, y + 2, { width: 75, align: 'right' });
   doc.text(
-    `₹${Number(sale.totalAmount ?? subtotal).toFixed(2)}`,
+    `Rs.${Number(sale.totalAmount ?? subtotal).toFixed(2)}`,
     COL.total, y + 2, { width: 45, align: 'right' },
   );
 

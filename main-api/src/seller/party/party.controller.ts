@@ -20,14 +20,11 @@ export class PartyController {
 
   // POST /seller/:businessId/parties
   @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new party (customer/supplier)' })
-  create(
-    @Param('businessId') businessId: string,
-    @Body() dto: CreatePartyDto,
-  ) {
+  create(@Param('businessId') businessId: string, @Body() dto: CreatePartyDto) {
     return this.partyService.create(businessId, dto);
   }
+
+
 
   // GET /seller/:businessId/parties
   @Get()
@@ -48,15 +45,17 @@ export class PartyController {
   ) {
     return this.partyService.findOne(businessId, id);
   }
-
+@Get(':id/details')
+@ApiOperation({ summary: 'Get full party details — profile + transactions + ledger + item-wise' })
+getDetails(
+  @Param('businessId') businessId: string,
+  @Param('id') id: string,
+) {
+  return this.partyService.getPartyDetails(businessId, id);
+}
   // PATCH /seller/:businessId/parties/:id
   @Patch(':id')
-  @ApiOperation({ summary: 'Update a party' })
-  update(
-    @Param('businessId') businessId: string,
-    @Param('id') id: string,
-    @Body() dto: UpdatePartyDto,
-  ) {
+  update(@Param('businessId') businessId: string, @Param('id') id: string, @Body() dto: UpdatePartyDto) {
     return this.partyService.update(businessId, id, dto);
   }
 
