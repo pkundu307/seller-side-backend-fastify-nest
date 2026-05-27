@@ -11,6 +11,7 @@ import { CreateDiscountDto } from './dto/create-discount.dto';
 import { CreateDiscountTargetDto } from './dto/create-discount-target.dto';
 import { ListCouponsDto } from './dto/list-coupons.dto';
 import { ValidateCouponDto } from './dto/validate-coupon.dto';
+import { GetActiveCouponsDto } from './dto/get-active-coupons.dto';
 
 @Injectable()
 export class CouponsService {
@@ -105,6 +106,48 @@ async findAllCoupons(query: ListCouponsDto) {
       },
     }),
     this.prisma.coupon.count({ where }),
+  ]);
+
+  return {
+    data,
+    meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+  };
+}
+
+async getActiveCoupons(query: GetActiveCouponsDto) {
+  const page = query.page ?? 1;
+  const limit = query.limit ?? 20;
+  const skip = (page - 1) * limit;
+
+  const [data, total] = await this.prisma.$transaction([
+    this.prisma.coupon.findMany({
+      where: { active: true },
+      skip,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        discount: {
+          select: {
+            id: true,
+            name: true,
+            discountType: true,
+            discountValue: true,
+            minOrderAmount: true,
+            maxDiscountAmount: true,
+            targets: {
+              select: {
+                id: true,
+                productId: true,
+                categoryId: true,
+                brand: true,
+              },
+            },
+          },
+        },
+        _count: { select: { usages: true } },
+      },
+    }),
+    this.prisma.coupon.count({ where: { active: true } }),
   ]);
 
   return {

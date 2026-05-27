@@ -9,6 +9,7 @@ import { CreateCouponDto } from './dto/create-coupon.dto';
 import { UpdateCouponDto } from './dto/update-coupon.dto';
 import { CreateDiscountTargetDto } from './dto/create-discount-target.dto';
 import { ListCouponsDto } from './dto/list-coupons.dto';
+import { GetActiveCouponsDto } from './dto/get-active-coupons.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -159,6 +160,16 @@ export class CouponsController {
   @ApiOperation({ summary: 'Get usage stats — total uses, discount given, reversals' })
   getCouponStats(@Param('id') id: string) {
     return this.couponsService.getCouponStats(id);
+  }
+
+  // ─── PUBLIC CUSTOMER ENDPOINT ──────────────────────────────────────
+
+  @Get('active')
+  @ApiOperation({ summary: 'Get all active coupons with rules (public endpoint)' })
+  @ApiQuery({ name: 'page', required: false, description: 'Page number' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Items per page' })
+  getActiveCoupons(@Query() query: GetActiveCouponsDto) {
+    return this.couponsService.getActiveCoupons(query);
   }
 
   @Get(':id/usages')

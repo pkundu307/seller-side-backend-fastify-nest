@@ -541,7 +541,7 @@ async getProductsForVerification(query: AdminProductFilterDto) {
   async getBusinessProducts(businessId: string, page: number = 1, limit: number = 10) {
     const skip = (page - 1) * limit;
 
-    const [products, total] = await this.prisma.$transaction([
+    const [products, total, business] = await this.prisma.$transaction([
       this.prisma.product.findMany({
         where: { businessId },
         skip,
@@ -553,6 +553,10 @@ async getProductsForVerification(query: AdminProductFilterDto) {
         },
       }),
       this.prisma.product.count({ where: { businessId } }),
+      this.prisma.business.findUnique({
+        where: { id: businessId },
+        select: { name: true },
+      }),
     ]);
 
     return {
@@ -562,6 +566,7 @@ async getProductsForVerification(query: AdminProductFilterDto) {
         page,
         limit,
         totalPages: Math.ceil(total / limit),
+        businessName: business?.name,
       },
     };
   }
