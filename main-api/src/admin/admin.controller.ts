@@ -21,9 +21,8 @@ interface ParsedHomepageFiles {
 }
 
 
-interface ParsedBannerFiles {
+export interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
-  brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
 }
 
 
@@ -196,15 +195,13 @@ private async parseBannerMultipartData(
 
   for await (const part of req.parts() as AsyncIterableIterator<MultipartFile>) {
     if (part.file) {
-      // It's a file
-      const buffer = await part.toBuffer();
       if (part.fieldname === 'bannerImage') {
+        const buffer = await part.toBuffer();
         files.bannerImage = { buffer, filename: part.filename, mimetype: part.mimetype };
-      } else if (part.fieldname === 'brandLogo') {
-        files.brandLogo = { buffer, filename: part.filename, mimetype: part.mimetype };
+      } else {
+        await part.toBuffer(); // drain ignored file fields to avoid memory leak
       }
     } else if ((part as any).value) {
-      // It's a field
       rawDto[(part as any).fieldname] = (part as any).value;
     }
   }

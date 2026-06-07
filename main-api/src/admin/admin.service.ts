@@ -15,9 +15,8 @@ import { CreatePlatformFeeDto, UpdatePlatformFeeDto } from './dto/platform-fee.d
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { NotificationService } from 'src/notifications/notifications.service';
-interface ParsedBannerFiles {
+export interface ParsedBannerFiles {
   bannerImage?: { buffer: Buffer; filename: string; mimetype: string };
-  brandLogo?: { buffer: Buffer; filename: string; mimetype: string };
 }
 interface ParsedHomepageFiles {
   // Maps the item's index to its file data
@@ -201,72 +200,43 @@ async updatePlatformFee(id: string, dto: UpdatePlatformFeeDto) {
     };
   }
 
-  async createBanner(
-    dto: CreateBannerDto,
-    files: ParsedBannerFiles, // <-- UPDATED type signature
-  ) {
-    // This check is now more direct
-    if (!files.bannerImage) {
-      throw new BadRequestException('A banner image is required.');
-    }
-
-    const bannerImageFile = files.bannerImage;
-    const brandLogoFile = files.brandLogo; // Can be undefined
-
-    const uploadedImageUrls: string[] = [];
-
-    try {
-      // 1. Upload Banner Image to S3
-      // The logic now uses the buffer directly, no need for .toBuffer()
-      const bannerImageUrl = await this.s3Service.uploadImage(
-        bannerImageFile.buffer,
-        bannerImageFile.filename,
-        bannerImageFile.mimetype,
-        "banners"
-      );
-      uploadedImageUrls.push(bannerImageUrl);
-
-      // 2. Upload Optional Brand Logo to S3
-      let brandLogoUrl: string | undefined = undefined;
-      if (brandLogoFile) {
-        brandLogoUrl = await this.s3Service.uploadImage(
-          brandLogoFile.buffer,
-          brandLogoFile.filename,
-          brandLogoFile.mimetype,
-          "banners"
-        );
-        uploadedImageUrls.push(brandLogoUrl);
-      }
-
-      // 3. Create the Banner record in the database (this part is unchanged)
-      const banner = await this.prisma.promotionalBanner.create({
-        data: {
-          title: dto.title,
-          discountText: dto.discountText,
-          targetUrl: dto.targetUrl,
-          position: dto.position,
-          bannerImageUrl: bannerImageUrl,
-          brandLogoUrl: brandLogoUrl,
-        },
-      });
-
-      return {
-        success: true,
-        message: 'Promotional banner created successfully.',
-        data: banner,
-      };
-    } catch (error) {
-      // S3 rollback logic remains unchanged and is still critical
-      if (uploadedImageUrls.length > 0) {
-        console.error(
-          `Database error after file upload. Rolling back S3 objects: ${uploadedImageUrls.join(', ')}`,
-        );
-        this.s3Service.deleteImages(uploadedImageUrls);
-      }
-      
-      throw error;
-    }
+async createBanner(dto: CreateBannerDto, files: ParsedBannerFiles) {
+  if (!files.bannerImage) {
+    throw new BadRequestException('A banner image is required.');
   }
+
+  const uploadedImageUrls: string[] = [];
+
+  try {
+    const bannerImageUrl = await this.s3Service.uploadImage(
+      files.bannerImage.buffer,
+      files.bannerImage.filename,
+      files.bannerImage.mimetype,
+      'banners',
+    );
+    uploadedImageUrls.push(bannerImageUrl);
+
+    const banner = await this.prisma.promotionalBanner.create({
+      data: {
+        title: '',           // satisfies DB not-null, not displayed anywhere
+        targetUrl: dto.targetUrl,
+        bannerImageUrl,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Promotional banner created successfully.',
+      data: banner,
+    };
+  } catch (error) {
+    if (uploadedImageUrls.length > 0) {
+      console.error(`Rolling back S3 objects: ${uploadedImageUrls.join(', ')}`);
+      this.s3Service.deleteImages(uploadedImageUrls);
+    }
+    throw error;
+  }
+}
 
 
     async deleteBanner(bannerId: number) {

@@ -12,7 +12,7 @@ import { LoginDto } from './dto/login-user.dto';
 import { GoogleLoginDto } from './dto/google-login.dto';
 import { OAuth2Client } from 'google-auth-library';
 import { ConfigService } from '@nestjs/config';
-import { AuthSource, CustomerType, CustomerUser, NotificationType } from '@prisma/client';
+import { AuthSource, CustomerType, NotificationType } from '@prisma/client';
 import { NotificationService } from 'src/notifications/notifications.service';
 import { PrismaService } from 'src/prisma/prisma.service'; // <--- IMPORT THIS
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
