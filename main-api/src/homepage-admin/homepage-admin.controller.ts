@@ -52,26 +52,31 @@ export class HomepageAdminController {
     return this.homepageAdminService.deleteSection(id);
   }
 
-  @Post('sections/:sectionId/items')
-  @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: '2. Add a new item to a section' })
-  @ApiBody({
-      schema: {
-          type: 'object',
-          properties: {
-              title: { type: 'string' },
-              subtitle: { type: 'string' },
-              linkType: { type: 'string' },
-              linkValue: { type: 'string' },
-              styleConfig: { type: 'string', description: 'JSON string' },
-              image: { type: 'string', format: 'binary' }
-          }
-      }
-  })
-  async addItemToSection(@Param('sectionId', ParseIntPipe) sectionId: number, @Req() req: FastifyRequest) {
-    const { dto, file } = await this.parseItemMultipart(req);
-    return this.homepageAdminService.addItemToSection(sectionId, dto, file);
-  }
+@Post('sections/:sectionId/items')
+@ApiConsumes('multipart/form-data')
+@ApiOperation({ summary: '2. Add a new item to a section' })
+@ApiBody({
+  schema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      subtitle: { type: 'string' },
+      linkType: { type: 'string' },
+      linkValue: { type: 'string' },
+      styleConfig: { type: 'string', description: 'JSON string' },
+      imageUrl: { type: 'string', description: 'Paste a direct image URL instead of uploading' },
+      image: { type: 'string', format: 'binary', description: 'Upload an image file' },
+    },
+  },
+})
+async addItemToSection(
+  @Param('sectionId', ParseIntPipe) sectionId: number,
+  @Req() req: FastifyRequest,
+) {
+  const { dto, file } = await this.parseItemMultipart(req);
+  return this.homepageAdminService.addItemToSection(sectionId, dto, file);
+}
+
 
   @Patch('items/:id')
   @ApiConsumes('multipart/form-data')

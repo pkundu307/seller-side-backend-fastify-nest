@@ -47,24 +47,34 @@ export class HomepageAdminService {
   }
 
   // 2. ADD AN ITEM TO A SECTION (with image)
-  async addItemToSection(sectionId: number, dto: UpdateHomepageItemDto, file?: UploadedFile) {
-    const section = await this.prisma.homepageSection.findUnique({ where: { id: sectionId } });
-    if (!section) throw new NotFoundException(`Section with ID ${sectionId} not found.`);
-    
-    let imageUrl: string | undefined;
-    if (file) {
-      imageUrl = await this.s3Service.uploadImage(file.buffer, file.filename, file.mimetype, 'homepage-items');
-    }
-    
-    return this.prisma.homepageItem.create({
-      data: {
-        sectionId,
-        imageUrl,
-        ...dto,
-        styleConfig: dto.styleConfig ? JSON.parse(dto.styleConfig) : undefined,
-      }
-    });
+async addItemToSection(sectionId: number, dto: UpdateHomepageItemDto, file?: UploadedFile) {
+  const section = await this.prisma.homepageSection.findUnique({ where: { id: sectionId } });
+  if (!section) throw new NotFoundException(`Section with ID ${sectionId} not found.`);
+
+  let imageUrl: string | undefined;
+
+  if (dto.imageUrl?.trim()) {
+    // Use pasted URL directly — no upload needed
+    imageUrl = dto.imageUrl.trim();
+  } else if (file) {
+    // Upload file to S3
+    imageUrl = await this.s3Service.uploadImage(
+      file.buffer,
+      file.filename,
+      file.mimetype,
+      'homepage-items',
+    );
   }
+
+  return this.prisma.homepageItem.create({
+    data: {
+      sectionId,
+      ...dto,
+      imageUrl,                // override any imageUrl from dto spread with resolved value
+      styleConfig: dto.styleConfig ? JSON.parse(dto.styleConfig) : undefined,
+    },
+  });
+}
 
   // 3. EDIT A SECTION
   async updateSection(sectionId: number, dto: UpdateHomepageSectionDto) {

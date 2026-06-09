@@ -28,4 +28,8 @@ export class UpdateHomepageItemDto {
   @IsOptional()
   @IsJSON()
   styleConfig?: string;
+  @ApiPropertyOptional({ description: 'Direct image URL (use instead of uploading a file)' })
+@IsString()
+@IsOptional()
+imageUrl?: string;
 }
