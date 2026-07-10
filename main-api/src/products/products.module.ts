@@ -16,6 +16,7 @@ import { S3Service } from './utils/s3Service';
     AuthModule, // ✅ Add this
   ],
   controllers: [ProductsController],
-  providers: [ProductsService,S3Service],
+  providers: [ProductsService, S3Service],
+  exports: [ProductsService],
 })
 export class ProductsModule {}

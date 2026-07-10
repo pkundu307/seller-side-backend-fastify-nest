@@ -8,67 +8,35 @@ datasource db {
 }
 
 model PlatformFeeConfig {
-  id String @id @default(uuid())
-
-  feeType PlatformFeeType
-
-  name        String
-  description String?
-
-  // Charge structure
-  calculationType FeeCalculationType
-  rate            Decimal? // % rate if percentage
-  amount          Decimal? // fixed charge
-
-  currency String @default("INR")
-
-  // Scope
-  appliesToSeller   Boolean @default(true)
-  appliesToCustomer Boolean @default(false)
-
-  isActive Boolean @default(true)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([feeType])
-}
-
-enum PlatformFeeType {
-  PLATFORM_COMMISSION
-  SHIPPING_FEE
-  PAYMENT_GATEWAY_FEE
-  TDS
-  TCS
-  PACKAGING_FEE
-}
-
-enum FeeCalculationType {
-  PERCENTAGE
-  FIXED
+  id                String             @id @default(uuid())
+  feeType           PlatformFeeType    @unique
+  name              String
+  description       String?
+  calculationType   FeeCalculationType
+  rate              Decimal?
+  amount            Decimal?
+  currency          String             @default("INR")
+  appliesToSeller   Boolean            @default(true)
+  appliesToCustomer Boolean            @default(false)
+  isActive          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 }
 
 model PlatformCharge {
-  id String @id @default(uuid())
-
-  orderId    String
-  businessId String
-
-  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-
-  chargeType  PlatformChargeType
-  description String?
-
-  rate   Decimal?
-  amount Decimal
-
-  currency String @default("INR")
-
-  isDeductedFromSeller Boolean @default(true)
-  isRefundable         Boolean @default(false)
-
-  createdAt DateTime @default(now())
+  id                   String             @id @default(uuid())
+  orderId              String
+  businessId           String
+  chargeType           PlatformChargeType
+  description          String?
+  rate                 Decimal?
+  amount               Decimal
+  currency             String             @default("INR")
+  isDeductedFromSeller Boolean            @default(true)
+  isRefundable         Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  business             Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order                Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
   @@index([businessId])
@@ -89,7 +57,6 @@ model CustomerUser {
   isEmailVerified   Boolean                @default(false)
   isPhoneVerified   Boolean                @default(false)
   lastLoginAt       DateTime?
-  couponUsages      CouponUsage[]
   phoneNumber       String?                @unique
   preferredLanguage String?                @default("en-US")
   deletedAt         DateTime?
@@ -97,8 +64,8 @@ model CustomerUser {
   addresses         Address[]
   appointments      Appointment[]
   cartItems         CartItem[]
+  couponUsages      CouponUsage[]
   notifications     CustomerNotification[]
-  wallet            CustomerWallet?
   orders            Order[]
   orderInitiates    OrderInitiate[]
   preOrderRequests  PreOrderRequest[]
@@ -109,6 +76,7 @@ model CustomerUser {
   supportMessages   SupportTicketMessage[]
   userInteractions  UserInteraction[]
   wishlistItems     Wishlist[]
+  wallet            CustomerWallet?
 }
 
 model Wishlist {
@@ -134,31 +102,31 @@ model User {
   identityVerified         Boolean                      @default(false)
   lastKycReviewAt          DateTime?
   refreshToken             String?
-  lastOtp                  String? // <--- ADD THIS
-  otpExpiry                DateTime? // <--- ADD THIS  
+  lastOtp                  String?
+  otpExpiry                DateTime?
   businesses               Business[]
   businessAccess           BusinessUser[]
   pushSubscriptions        PushSubscription[]
+  sales                    Sale[]
   notifications            SellerNotification[]
   staffProfile             StaffMember?
   supportMessages          SupportTicketMessage[]
-  campaigns                Campaign[]
-  campaignMembers          CampaignMember[]
-  campaignTasks            CampaignTask[]
-  campaignTasksCreated     CampaignTask[]               @relation("TaskCreator")
-  campaignTaskTimeLogs     CampaignTaskTimeLog[]
-  campaignFiles            CampaignFile[]
-  campaignChats            CampaignChat[]
+  performedActivities      ActivityLog[]                @relation("PerformedUserActivities")
   campaignChatReads        CampaignChatRead[]
-  campaignDocuments        CampaignDocument[]
-  campaignDocumentVersions CampaignDocumentVersion[]
-  campaignFolders          CampaignFolder[]
+  campaignChats            CampaignChat[]
   campaignDocPermissions   CampaignDocumentPermission[]
   campaignDocShareLinks    CampaignDocumentShareLink[]
-  performedActivities      ActivityLog[]                @relation("PerformedUserActivities")
-  walletTransactions       WalletTransaction[]          @relation("WalletPerformedBy")
-  sales                    Sale[]
+  campaignDocumentVersions CampaignDocumentVersion[]
+  campaignDocuments        CampaignDocument[]
+  campaignFiles            CampaignFile[]
+  campaignFolders          CampaignFolder[]
+  campaignMembers          CampaignMember[]
+  campaignTaskTimeLogs     CampaignTaskTimeLog[]
+  campaignTasks            CampaignTask[]
+  campaignTasksCreated     CampaignTask[]               @relation("TaskCreator")
+  campaigns                Campaign[]
   gstFilingDocuments       GstFilingDocument[]
+  walletTransactions       WalletTransaction[]          @relation("WalletPerformedBy")
 }
 
 model Permission {
@@ -193,11 +161,11 @@ model BusinessUser {
   isActive   Boolean   @default(true)
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
+  lastOtp    String?
+  otpExpiry  DateTime?
   business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
   role       Role      @relation(fields: [roleId], references: [id])
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  lastOtp    String? // <--- ADD THIS
-  otpExpiry  DateTime? // <--- ADD THIS
 
   @@unique([userId, businessId])
   @@index([businessId])
@@ -210,7 +178,6 @@ model Address {
   city                   String
   state                  String
   postalCode             String
-  stateCode              String?      @db.VarChar(4)
   country                String
   customerUserId         String
   alternativePhoneNumber String?
@@ -222,6 +189,7 @@ model Address {
   longitude              Float?
   type                   String       @default("HOME")
   notes                  String?
+  stateCode              String?      @db.VarChar(4)
   customerUser           CustomerUser @relation(fields: [customerUserId], references: [id])
 }
 
@@ -246,19 +214,6 @@ model Business {
   invoiceTerms                    String?
   dateFormat                      String                      @default("DD/MM/YYYY")
   language                        String                      @default("en")
-  itemBatches                     ItemBatching[]
-  serialisations                  ItemSerialisation[]
-  campaigns                       Campaign[]
-  isGstFilingEnabled              Boolean                     @default(false)
-  gstFilingConsentAt              DateTime? // When owner gave consent
-  gstFilingConsentIp              String?
-  gstPortalUsername               String? // GST portal login
-  gstPortalPasswordEnc            String? // AES-256 encrypted — NEVER plain text
-  gstFilingRequests               GstFilingRequest[]
-  gstRegistrationType             String?                     @db.VarChar(32)
-  isCompositionDealer             Boolean                     @default(false)
-  stateCode                       String?                     @db.VarChar(4)
-  gstState                        GstState?                   @relation(fields: [stateCode], references: [stateCode])
   isVerified                      Boolean                     @default(false)
   createdAt                       DateTime                    @default(now())
   updatedAt                       DateTime                    @updatedAt
@@ -281,7 +236,6 @@ model Business {
   kycRejectedAt                   DateTime?
   kycRemarks                      String?
   kycStatus                       SellerKycStatus             @default(PENDING)
-  salesDebitNotes                 SalesDebitNote[]            @relation("BusinessSalesDebitNotes")
   kycSubmittedAt                  DateTime?
   kycVerifiedAt                   DateTime?
   kycDocumentsJson                Json?                       @map("kyc_documents")
@@ -297,21 +251,34 @@ model Business {
   authorizedSignatoryDesignation  String?
   authorizedSignatoryName         String?
   authorizedSignatorySignatureUrl String?
+  gstRegistrationType             String?                     @db.VarChar(32)
+  isCompositionDealer             Boolean                     @default(false)
+  stateCode                       String?                     @db.VarChar(4)
+  gstFilingConsentAt              DateTime?
+  gstFilingConsentIp              String?
+  gstPortalPasswordEnc            String?
+  gstPortalUsername               String?
+  isGstFilingEnabled              Boolean                     @default(false)
   advertisementCampaigns          AdvertisementCampaign[]
   appointments                    Appointment[]
   bankAccounts                    BankCashCheque[]
   ledgerEntries                   BankCashChequeTransaction[]
   owner                           User                        @relation(fields: [ownerId], references: [id])
+  gstState                        GstState?                   @relation(fields: [stateCode], references: [stateCode])
   authorizedUsers                 BusinessUser[]
   creditNotes                     CreditNote[]
   debitNotes                      DebitNote[]
   challans                        DeliveryChallan[]
   expenses                        Expense[]
   fixedAssets                     FixedAsset[]
+  itemBatches                     ItemBatching[]
   itemUnits                       ItemUnit[]
   kitchenTickets                  KitchenTicket[]
   modifierGroups                  ModifierGroup[]
+  parties                         Party[]
+  partyActivities                 PartyActivity[]
   partyLedgers                    PartyLedger[]
+  platformCharges                 PlatformCharge[]
   preOrderRequests                PreOrderRequest[]
   products                        Product[]
   productWaitlists                ProductWaitlist[]
@@ -330,76 +297,50 @@ model Business {
   taxEntries                      TaxEntry[]
   warehouses                      Warehouse[]
   activities                      ActivityLog[]               @relation("BusinessActivities")
-  parties                         Party[]
-  partyActivities                 PartyActivity[]
-  invoiceSeries                   InvoiceSeries[]
-  uqcMappings                     UqcMapping[]
+  campaigns                       Campaign[]
+  gstFilingRequests               GstFilingRequest[]
   gstTaxPaymentChallans           GstTaxPaymentChallan[]
-  platformCharges                 PlatformCharge[]
+  invoiceSeries                   InvoiceSeries[]
+  serialisations                  ItemSerialisation[]
   otherIncomes                    OtherIncome[]
-}
-
-enum GstFilingFrequency {
-  MONTHLY
-  QUARTERLY
-  ANNUALLY
-}
-
-enum GstReturnType {
-  GSTR1
-  GSTR3B
-  GSTR4
-  GSTR9
+  salesDebitNotes                 SalesDebitNote[]            @relation("BusinessSalesDebitNotes")
+  uqcMappings                     UqcMapping[]
 }
 
 model GstFilingRequest {
-  id          String             @id @default(uuid())
-  businessId  String
-  returnType  GstReturnType
-  periodMonth Int // 1–12
-  periodYear  Int
-  frequency   GstFilingFrequency @default(MONTHLY)
-  dueDate     DateTime? // Legal GST due date
-
-  status GstFilingStatus @default(DRAFT)
-
-  // Platform-side assignment
-  assignedToUserId String?
-  assignedAt       DateTime?
-
-  // Business review & approval
-  sentForReviewAt  DateTime?
-  approvedAt       DateTime?
-  reviewedByUserId String?
-  approvalNotes    String?
-
-  // Filing result
-  filedAt   DateTime?
-  ackNumber String?   @db.VarChar(64) // GST portal ACK no.
-  ackDate   DateTime?
-  arnNumber String?   @db.VarChar(128) // Application Reference Number
-
-  // Financial summary
+  id                  String                @id @default(uuid())
+  businessId          String
+  returnType          GstReturnType
+  periodMonth         Int
+  periodYear          Int
+  frequency           GstFilingFrequency    @default(MONTHLY)
+  dueDate             DateTime?
+  status              GstFilingStatus       @default(DRAFT)
+  assignedToUserId    String?
+  assignedAt          DateTime?
+  sentForReviewAt     DateTime?
+  approvedAt          DateTime?
+  reviewedByUserId    String?
+  approvalNotes       String?
+  filedAt             DateTime?
+  ackNumber           String?               @db.VarChar(64)
+  ackDate             DateTime?
+  arnNumber           String?               @db.VarChar(128)
   totalOutwardTaxable Decimal?
   totalOutwardTax     Decimal?
   totalItcClaimed     Decimal?
   netTaxPayable       Decimal?
-  lateFee             Decimal? @default(0)
-  interest            Decimal? @default(0)
-
-  // Failure info
-  failureReason   String?
-  portalErrorCode String? @db.VarChar(64)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  business  Business              @relation(fields: [businessId], references: [id])
-  snapshot  GstFilingSnapshot?
-  challan   GstTaxPaymentChallan?
-  documents GstFilingDocument[]
-  auditLogs GstFilingAuditLog[]
+  lateFee             Decimal?              @default(0)
+  interest            Decimal?              @default(0)
+  failureReason       String?
+  portalErrorCode     String?               @db.VarChar(64)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  auditLogs           GstFilingAuditLog[]
+  documents           GstFilingDocument[]
+  business            Business              @relation(fields: [businessId], references: [id])
+  snapshot            GstFilingSnapshot?
+  challan             GstTaxPaymentChallan?
 
   @@unique([businessId, returnType, periodMonth, periodYear])
   @@index([businessId])
@@ -409,27 +350,19 @@ model GstFilingRequest {
 }
 
 model InvoiceSeries {
-  id         String   @id @default(uuid())
-  businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-
-  documentType String @db.VarChar(64)
-  // TAX_INVOICE | CREDIT_NOTE | DEBIT_NOTE
-  // REVISED_INVOICE | DELIVERY_CHALLAN | RECEIPT_VOUCHER
-
-  prefix String @db.VarChar(32)
-  // e.g. "INV", "CN", "DN"
-
+  id             String   @id @default(uuid())
+  businessId     String
+  documentType   String   @db.VarChar(64)
+  prefix         String   @db.VarChar(32)
   fromNo         Int
   toNo           Int
-  totalIssued    Int @default(0)
-  totalCancelled Int @default(0)
-
-  periodMonth Int // 1–12
-  periodYear  Int // e.g. 2025
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  totalIssued    Int      @default(0)
+  totalCancelled Int      @default(0)
+  periodMonth    Int
+  periodYear     Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@index([businessId])
   @@index([periodMonth, periodYear])
@@ -439,13 +372,9 @@ model InvoiceSeries {
 model UqcMapping {
   id         String   @id @default(uuid())
   businessId String
+  customUnit String   @db.VarChar(64)
+  gstUqc     String   @db.VarChar(16)
   business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-
-  customUnit String @db.VarChar(64)
-  // What the seller types: "piece", "pcs", "pc", "nos"
-
-  gstUqc String @db.VarChar(16)
-  // Standard GST code: NOS, KGS, MTR, LTR, SQM, TON, NA
 
   @@unique([businessId, customUnit])
   @@index([businessId])
@@ -453,22 +382,15 @@ model UqcMapping {
 }
 
 model GstState {
-  id        Int    @id @default(autoincrement())
-  stateCode String @unique @db.VarChar(4)
-  // "01", "02", ... "37"
-
-  stateName String @unique @db.VarChar(128)
-  // "Jammu and Kashmir", "Kerala" etc.
-
-  stateShortName String @db.VarChar(8)
-  // "JK", "KL", "MH", "TN" etc.
-
-  isUT        Boolean      @default(false)
-  // true for Union Territories like Ladakh, DD, DNH
-  sales       Sale[]
-  creditNotes CreditNote[]
-  businesses  Business[]
-  parties     Party[]
+  id             Int          @id @default(autoincrement())
+  stateCode      String       @unique @db.VarChar(4)
+  stateName      String       @unique @db.VarChar(128)
+  stateShortName String       @db.VarChar(8)
+  isUT           Boolean      @default(false)
+  businesses     Business[]
+  creditNotes    CreditNote[]
+  parties        Party[]
+  sales          Sale[]
 
   @@map("gst_state")
 }
@@ -542,7 +464,7 @@ model Category {
   products        Product[]
   parent          Category?   @relation("SubCategories", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   children        Category[]  @relation("SubCategories")
-
+  layouts         CategoryLayout[]
   @@map("category")
 }
 
@@ -590,58 +512,48 @@ model Product {
 }
 
 model Variant {
-  id                     String        @id @default(uuid())
-  sku                    String        @unique
-  price                  Decimal       @db.Decimal(10, 2)
+  id                     String                  @id @default(uuid())
+  sku                    String                  @unique
+  price                  Decimal                 @db.Decimal(10, 2)
   stock                  Int
-  isDefault              Boolean       @default(false)
+  isDefault              Boolean                 @default(false)
   weightInGrams          Int?
   images                 String[]
-  createdAt              DateTime      @default(now())
-  updatedAt              DateTime      @updatedAt
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
   hsnCode                String?
   sacCode                String?
-  mrp                    Decimal?      @db.Decimal(10, 2)
-  purchasePrice          Decimal?      @db.Decimal(10, 2)
-  purchasePriceType      String?       @db.VarChar(64)
-  tax                    String?       @db.VarChar(128)
-  minStockCount          Decimal?      @db.Decimal(10, 2)
+  mrp                    Decimal?                @db.Decimal(10, 2)
+  purchasePrice          Decimal?                @db.Decimal(10, 2)
+  purchasePriceType      String?                 @db.VarChar(64)
+  tax                    String?                 @db.VarChar(128)
+  minStockCount          Decimal?                @db.Decimal(10, 2)
   isMinStockAlertEnabled Boolean?
   productId              String
-  status                 VariantStatus @default(DRAFT)
+  status                 VariantStatus           @default(DRAFT)
   description            String?
-  dimensionUnit          String?       @default("CM")
+  dimensionUnit          String?                 @default("CM")
   height                 Decimal?
   length                 Decimal?
   width                  Decimal?
-
-  // ── NEW: Batching & Expiry Control ──
-  isBatchingEnabled Boolean @default(false) // Does this variant use batch tracking?
-  isExpiryTracked   Boolean @default(false) // Should expiry dates be tracked?
-  isSerialTracked   Boolean @default(false) // Serial number tracking?
-
-  // ── NEW: Expiry Alert Config ──
-  expiryAlertDays Int? // Alert X days before expiry (e.g. 30)
-
-  // ── NEW: Stock Deduction Method ──
-  stockDeductionMethod StockMethod @default(FIFO) // FIFO / FEFO / MANUAL
-
-  // ── Existing Relations ──
-  product          Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
-  cartItems        CartItem[]
-  orderItems       OrderItem[]
-  stockActivities  StockActivity[]
-  attributeValues  VariantAttributeValue[]
-  purchaseItems    PurchaseItem[]
-  warehouseStocks  WarehouseStock[]
-  productWaitlists ProductWaitlist[]
-  bomItems         BomItem[]
-  preOrderRequests PreOrderRequest[]
-  deletedAt        DateTime?
-
-  // ── New Relations ──
-  batches        ItemBatching[]
-  serialisations ItemSerialisation[]
+  isBatchingEnabled      Boolean                 @default(false)
+  isExpiryTracked        Boolean                 @default(false)
+  isSerialTracked        Boolean                 @default(false)
+  expiryAlertDays        Int?
+  stockDeductionMethod   StockMethod             @default(FIFO)
+  deletedAt              DateTime?
+  bomItems               BomItem[]
+  cartItems              CartItem[]
+  batches                ItemBatching[]
+  orderItems             OrderItem[]
+  preOrderRequests       PreOrderRequest[]
+  productWaitlists       ProductWaitlist[]
+  purchaseItems          PurchaseItem[]
+  stockActivities        StockActivity[]
+  product                Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouseStocks        WarehouseStock[]
+  serialisations         ItemSerialisation[]
+  attributeValues        VariantAttributeValue[]
 
   @@index([productId])
 }
@@ -733,60 +645,53 @@ model OtherIncome {
 }
 
 model Order {
-  id                    String        @id @default(uuid())
+  id                    String             @id @default(uuid())
   totalAmount           Decimal
   customerUserId        String
   paymentMethod         PaymentMethod
-  paymentStatus         PaymentStatus @default(pending)
-  status                OrderStatus   @default(pending)
+  paymentStatus         PaymentStatus      @default(pending)
+  status                OrderStatus        @default(pending)
   selectedAddress       Json
-  discount              Decimal       @default(0)
-  taxAmount             Decimal       @default(0)
-  shippingFee           Decimal       @default(0)
+  discount              Decimal            @default(0)
+  taxAmount             Decimal            @default(0)
+  shippingFee           Decimal            @default(0)
   trackingNumber        String?
   estimatedDeliveryDate DateTime?
   cancellationReason    String?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
   cancelledAt           DateTime?
   confirmedAt           DateTime?
-  currency              String        @default("INR")
+  currency              String             @default("INR")
   deliveredAt           DateTime?
   ipAddress             String?
-  isRefunded            Boolean       @default(false)
-  orderNumber           String        @unique
+  isRefunded            Boolean            @default(false)
+  orderNumber           String             @unique
   refundAmount          Decimal?
   shippedAt             DateTime?
+  couponCode            String?            @db.VarChar(128)
+  couponDiscount        Decimal?           @db.Decimal(10, 2)
   couponId              String?
-  couponCode            String?       @db.VarChar(128)
-  couponDiscount        Decimal?      @db.Decimal(10, 2)
-
-  coupon          Coupon?            @relation(fields: [couponId], references: [id], onDelete: SetNull)
-  customerUser    CustomerUser       @relation(fields: [customerUserId], references: [id])
-  items           OrderItem[]
-  returnRequests  ReturnRequest[]
-  platformCharges PlatformCharge[]
-  settlements     SellerSettlement[]
-  supportTickets  SupportTicket[]
+  coupon                Coupon?            @relation(fields: [couponId], references: [id])
+  customerUser          CustomerUser       @relation(fields: [customerUserId], references: [id])
+  items                 OrderItem[]
+  platformCharges       PlatformCharge[]
+  returnRequests        ReturnRequest[]
+  settlements           SellerSettlement[]
+  supportTickets        SupportTicket[]
 }
 
 model CouponUsage {
-  id String @id @default(uuid())
-
-  couponId String
-  coupon   Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
-
-  customerUserId String
-  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id], onDelete: Cascade)
-
-  orderId String? @unique
-  // unique = one usage record per order
-
-  discountApplied Decimal   @db.Decimal(10, 2)
-  usedAt          DateTime  @default(now())
-  isReversed      Boolean   @default(false)
+  id              String       @id @default(uuid())
+  couponId        String
+  customerUserId  String
+  orderId         String?      @unique
+  discountApplied Decimal      @db.Decimal(10, 2)
+  usedAt          DateTime     @default(now())
+  isReversed      Boolean      @default(false)
   reversedAt      DateTime?
-  // composite index for perUserLimit check query
+  coupon          Coupon       @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  customerUser    CustomerUser @relation(fields: [customerUserId], references: [id], onDelete: Cascade)
 
   @@index([couponId])
   @@index([customerUserId])
@@ -796,16 +701,16 @@ model CouponUsage {
 model OrderItem {
   id                   String       @id @default(uuid())
   quantity             Int
-  businessId           String?
   priceAtTimeOfOrder   Decimal
   note                 String?
   orderId              String
   productId            String
   variantId            String?
-  supplyState          String?
-  supplyStateCode      String?      @db.VarChar(4)
   customizationDetails Json?
   customizationImages  String[]
+  businessId           String?
+  supplyState          String?
+  supplyStateCode      String?      @db.VarChar(4)
   order                Order        @relation(fields: [orderId], references: [id])
   variant              Variant?     @relation(fields: [variantId], references: [id])
   returnedIn           ReturnItem[]
@@ -817,10 +722,10 @@ model CartItem {
   productId            String
   variantId            String?
   customerUserId       String
-  supplyState          String?
-  supplyStateCode      String?      @db.VarChar(4)
   customizationDetails Json?
   customizationImages  String[]     @default([])
+  supplyState          String?
+  supplyStateCode      String?      @db.VarChar(4)
   customerUser         CustomerUser @relation(fields: [customerUserId], references: [id])
   variant              Variant?     @relation(fields: [variantId], references: [id])
 }
@@ -854,11 +759,11 @@ model Discount {
 
 model DiscountTarget {
   id         String     @id @default(uuid())
-  brand      String?    @db.VarChar(256)
   discountId String     @map("discount_id")
   targetType TargetType @map("target_type")
   productId  String?    @map("product_id")
   categoryId Int?       @map("category_id")
+  brand      String?    @db.VarChar(256)
   discount   Discount   @relation(fields: [discountId], references: [id])
 }
 
@@ -870,17 +775,17 @@ model Coupon {
   maxUses         Int?          @map("max_uses")
   usedCount       Int           @default(0) @map("used_count")
   perUserLimit    Int?          @map("per_user_limit")
-  firstOrderOnly  Boolean       @default(false)
-  maxOrderAmount  Decimal?      @db.Decimal(10, 2)
-  minItemQuantity Int?
-  channel         String?       @db.VarChar(64)
-  usages          CouponUsage[]
-  orders          Order[]
   startsAt        DateTime?     @map("starts_at")
   expiresAt       DateTime?     @map("expires_at")
   createdAt       DateTime      @default(now()) @map("created_at")
   updatedAt       DateTime      @updatedAt @map("updated_at")
+  channel         String?       @db.VarChar(64)
+  firstOrderOnly  Boolean       @default(false)
+  maxOrderAmount  Decimal?      @db.Decimal(10, 2)
+  minItemQuantity Int?
   discount        Discount      @relation(fields: [discountId], references: [id])
+  usages          CouponUsage[]
+  orders          Order[]
 }
 
 model PushSubscription {
@@ -939,6 +844,44 @@ model HomepageItem {
   section     HomepageSection @relation(fields: [sectionId], references: [id])
 }
 
+model CategoryLayout {
+  id           Int                  @id @default(autoincrement())
+  categorySlug String               // Reference to Category slug
+  category     Category             @relation(fields: [categorySlug], references: [slug], onDelete: Cascade, onUpdate: Cascade, map: "CategoryLayout_categorySlug_category_slug_fk")
+
+  title        String?
+  subtitle     String?
+  isActive     Boolean              @default(true)
+  position     Int                  @default(0) // Determines the order of sections
+
+  endDate      DateTime?
+  startDate    DateTime?
+  styleConfig  Json?
+  type         CategoryLayoutType
+
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  items        CategoryLayoutItem[]
+
+  // REMOVED: @@unique([categorySlug, type])
+  @@index([categorySlug], map: "CategoryLayout_categorySlug_idx") // Add index instead for fast lookups
+}
+
+model CategoryLayoutItem {
+  id          Int            @id @default(autoincrement())
+  layoutId    Int
+  title       String?
+  subtitle    String?
+  imageUrl    String?
+  isActive    Boolean        @default(true)
+  position    Int            @default(0)
+  linkType    LinkType       @default(NONE)
+  linkValue   String?
+  styleConfig Json?
+  videoUrl    String?
+  layout      CategoryLayout @relation(fields: [layoutId], references: [id])
+}
+
 model Sale {
   id                        String                 @id @default(uuid())
   businessId                String
@@ -955,33 +898,20 @@ model Sale {
   businessName              String                 @db.VarChar(256)
   billingAddress            String
   shippingAddress           String
-  party                     Party?                 @relation("SaleParty", fields: [partyId], references: [id])
   placeOfSupply             String                 @db.VarChar(128)
   phoneNo                   String                 @db.VarChar(36)
   taxId                     String                 @db.VarChar(128)
   panNo                     String                 @db.VarChar(128)
   isDiscountAfterTaxEnabled Boolean
   discountPercent           Decimal
-  salesDebitNotes           SalesDebitNote[]       @relation("SaleSalesDebitNotes")
-  placeOfSupplyCode         String?                @db.VarChar(4)
-  gstState                  GstState?              @relation(fields: [placeOfSupplyCode], references: [stateCode])
   discountAmount            Decimal
   totalTaxableAmount        Decimal
   totalTaxAmount            Decimal
-  isReverseCharge           Boolean                @default(false)
-  ecommerceGstin            String?                @db.VarChar(20)
-  portCode                  String?                @db.VarChar(10)
-  shippingBillNo            String?                @db.VarChar(64)
-  shippingBillDate          DateTime?
-  supplyType                String                 @default("REGULAR") @db.VarChar(64)
   isAutoRoundoffEnabled     Boolean
   roundoffType              String                 @db.VarChar(64)
   roundoffAmount            Decimal
   totalAmount               Decimal
-  createdByUserId           String? // Sales Summary - Category Wise
-  createdByUser             User?                  @relation(fields: [createdByUserId], references: [id])
   isSettled                 Boolean
-  invoiceCategory           String?                @db.VarChar(8) // "B2B" | "B2CL" | "B2CS" | "EXPORT" — ❌ ADD (optional but useful)
   balanceAmount             Decimal
   termCondition             String
   notes                     String
@@ -994,13 +924,26 @@ model Sale {
   pdfUrl                    String?
   status                    String                 @default("FINALIZED")
   deletedAt                 DateTime?
+  ecommerceGstin            String?                @db.VarChar(20)
+  isReverseCharge           Boolean                @default(false)
+  placeOfSupplyCode         String?                @db.VarChar(4)
+  portCode                  String?                @db.VarChar(10)
+  shippingBillDate          DateTime?
+  shippingBillNo            String?                @db.VarChar(64)
+  supplyType                String                 @default("REGULAR") @db.VarChar(64)
+  createdByUserId           String?
+  invoiceCategory           String?                @db.VarChar(8)
   creditNotes               CreditNote[]
   customField               CustomField?
   business                  Business               @relation(fields: [businessId], references: [id])
+  createdByUser             User?                  @relation(fields: [createdByUserId], references: [id])
+  party                     Party?                 @relation("SaleParty", fields: [partyId], references: [id])
+  gstState                  GstState?              @relation(fields: [placeOfSupplyCode], references: [stateCode])
   saleAdditionalCharges     SaleAdditionalCharge[]
   saleItems                 SaleItem[]
   salePaymentModes          SalePaymentMode[]
   saleTaxes                 SaleTax[]
+  salesDebitNotes           SalesDebitNote[]       @relation("SaleSalesDebitNotes")
 }
 
 model SaleItem {
@@ -1016,7 +959,6 @@ model SaleItem {
   quantity               Decimal
   price                  Decimal
   priceType              String   @db.VarChar(64)
-  supplyState            String?  @db.VarChar(128)
   unit                   String   @db.VarChar(128)
   discountPercent        Decimal
   discountAmount         Decimal
@@ -1028,10 +970,6 @@ model SaleItem {
   amount                 Decimal
   isMrpEnabled           Boolean
   isWholesaleEnabled     Boolean
-  uqc                    String   @default("NOS") @db.VarChar(16)
-  isNilRated             Boolean  @default(false)
-  isExempt               Boolean  @default(false)
-  isNonGst               Boolean  @default(false)
   isSerialisationEnabled Boolean
   isBatchingEnabled      Boolean
   sellingPrice           Decimal
@@ -1046,6 +984,11 @@ model SaleItem {
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
   saleId                 String
+  isExempt               Boolean  @default(false)
+  isNilRated             Boolean  @default(false)
+  isNonGst               Boolean  @default(false)
+  uqc                    String   @default("NOS") @db.VarChar(16)
+  supplyState            String?  @db.VarChar(128)
   sale                   Sale     @relation(fields: [saleId], references: [id])
 }
 
@@ -1103,101 +1046,66 @@ model CustomField {
 }
 
 model ItemBatching {
-  id String @id @default(uuid())
+  id                  String              @id @default(uuid())
+  businessId          String
+  variantId           String?
+  batchNo             String              @db.VarChar(128)
+  status              BatchStatus         @default(ACTIVE)
+  manufactureDate     DateTime?
+  expiryDate          DateTime?
+  openingStock        Decimal             @default(0)
+  openingStockDate    DateTime            @default(now())
+  currentStock        Decimal             @default(0)
+  reservedStock       Decimal             @default(0)
+  closingStock        Decimal             @default(0)
+  minStockAlert       Decimal?
+  costPrice           Decimal?
+  sellingPrice        Decimal
+  sellingPriceType    String              @db.VarChar(64)
+  purchasePrice       Decimal
+  purchasePriceType   String              @db.VarChar(64)
+  mrp                 Decimal
+  unit                String              @db.VarChar(128)
+  isSecondUnitEnabled Boolean             @default(false)
+  secondUnit          String?             @db.VarChar(128)
+  conversionRate      Decimal             @default(1)
+  purchaseId          String?
+  supplierId          String?
+  warehouseId         String?
+  notes               String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  business            Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  variant             Variant?            @relation(fields: [variantId], references: [id])
+  warehouse           Warehouse?          @relation(fields: [warehouseId], references: [id])
+  serialisations      ItemSerialisation[]
 
-  // ── Business Context ──
-  businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-
-  // ── Link to Variant ──
-  variantId String?
-  variant   Variant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
-
-  // ── Batch Identity ──
-  batchNo String      @db.VarChar(128)
-  status  BatchStatus @default(ACTIVE)
-
-  // ── Dates ──
-  manufactureDate DateTime?
-  expiryDate      DateTime? // NULL = no expiry (non-perishable)
-
-  // ── Stock ──
-  openingStock     Decimal  @default(0) // Stock when batch was created
-  openingStockDate DateTime @default(now())
-  currentStock     Decimal  @default(0) // Live remaining stock in this batch
-  reservedStock    Decimal  @default(0) // Reserved for pending orders
-  closingStock     Decimal  @default(0) // Snapshot at end of period
-
-  // ── Low Stock Alert ──
-  minStockAlert Decimal? // Alert when batch stock < this value
-
-  // ── Pricing (can differ per batch — e.g. imported at different rate) ──
-  costPrice         Decimal? // Actual purchase cost for this batch
-  sellingPrice      Decimal
-  sellingPriceType  String   @db.VarChar(64)
-  purchasePrice     Decimal
-  purchasePriceType String   @db.VarChar(64)
-  mrp               Decimal
-
-  // ── Units ──
-  unit                String  @db.VarChar(128)
-  isSecondUnitEnabled Boolean @default(false)
-  secondUnit          String? @db.VarChar(128)
-  conversionRate      Decimal @default(1)
-
-  // ── Source Traceability ──
-  purchaseId String? // Which PO created this batch
-  supplierId String? // Which supplier
-
-  // ── Location ──
-  warehouseId String?
-  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
-
-  // ── Notes ──
-  notes String? // e.g. "Imported batch, handle carefully"
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  serialisations ItemSerialisation[]
-
-  @@unique([businessId, variantId, batchNo]) // No duplicate batch nos per product
+  @@unique([businessId, variantId, batchNo])
   @@index([variantId])
   @@index([businessId])
-  @@index([expiryDate]) // Critical — used by expiry alert cron job
+  @@index([expiryDate])
   @@index([status])
   @@index([purchaseId])
 }
 
 model ItemSerialisation {
-  id String @id @default(uuid())
-
-  // ── Relations (were ALL missing before) ──
-  businessId String
-  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-
-  variantId String
-  variant   Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
-
-  batchId String? // Optional — serial may belong to a specific batch
-  batch   ItemBatching? @relation(fields: [batchId], references: [id], onDelete: SetNull)
-
-  // ── Serial Info ──
-  serialNo     String       @db.VarChar(128)
-  serialNoDate DateTime     @default(now())
-  status       SerialStatus @default(IN_STOCK)
-
-  // ── Sale Link ──
-  soldInSaleId String? // Which sale consumed this serial number
+  id           String        @id @default(uuid())
+  businessId   String
+  variantId    String
+  batchId      String?
+  serialNo     String        @db.VarChar(128)
+  serialNoDate DateTime      @default(now())
+  status       SerialStatus  @default(IN_STOCK)
+  soldInSaleId String?
   soldAt       DateTime?
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  batch        ItemBatching? @relation(fields: [batchId], references: [id])
+  business     Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  variant      Variant       @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
-  // ── Notes ──
-  notes String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([businessId, serialNo]) // Serial must be unique per business
+  @@unique([businessId, serialNo])
   @@index([variantId])
   @@index([businessId])
   @@index([batchId])
@@ -1223,11 +1131,11 @@ model StockActivity {
   invoicePrefix String   @db.VarChar(128)
   invoiceNo     Int
   quantity      Decimal
-  notes         String? // Stock Detail Report
   closingStock  Decimal
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   variantId     String?
+  notes         String?
   variant       Variant? @relation(fields: [variantId], references: [id])
 }
 
@@ -1305,24 +1213,24 @@ model StaffMember {
   lastOtp                  String?
   otpExpiry                DateTime?
   password                 String?
-  advanceBalance           Decimal                      @default(0) // Outstanding advance given to staff
   pin                      String?
+  advanceBalance           Decimal                      @default(0)
   appointments             Appointment[]
   attendance               Attendance[]
   salaryPayouts            SalaryPayout[]
   business                 Business                     @relation(fields: [businessId], references: [id])
   role                     Role?                        @relation(fields: [roleId], references: [id])
   user                     User?                        @relation(fields: [userId], references: [id])
-  campaignMembers          CampaignMember[]
-  campaignTasks            CampaignTask[]
-  campaignTaskTimeLogs     CampaignTaskTimeLog[]
-  campaignFiles            CampaignFile[]
-  campaignChats            CampaignChat[]
   campaignChatReads        CampaignChatRead[]
-  campaignDocuments        CampaignDocument[]
-  campaignDocumentVersions CampaignDocumentVersion[]
+  campaignChats            CampaignChat[]
   campaignDocPermissions   CampaignDocumentPermission[]
   campaignDocShareLinks    CampaignDocumentShareLink[]
+  campaignDocumentVersions CampaignDocumentVersion[]
+  campaignDocuments        CampaignDocument[]
+  campaignFiles            CampaignFile[]
+  campaignMembers          CampaignMember[]
+  campaignTaskTimeLogs     CampaignTaskTimeLog[]
+  campaignTasks            CampaignTask[]
 
   @@index([businessId])
 }
@@ -1346,12 +1254,12 @@ model SalaryPayout {
   payoutDate      DateTime
   amountPaid      Decimal
   paymentPeriod   String
-  deductionAmount Decimal     @default(0) // Deductions (leaves, advances)
-  advanceDeducted Decimal     @default(0) // If advance was given earlier
-  netSalary       Decimal?
   paymentMethod   String
   transactionRef  String?
   notes           String?
+  advanceDeducted Decimal     @default(0)
+  deductionAmount Decimal     @default(0)
+  netSalary       Decimal?
   staffMember     StaffMember @relation(fields: [staffMemberId], references: [id])
 
   @@index([staffMemberId])
@@ -1407,74 +1315,49 @@ model SponsoredProduct {
 }
 
 model CustomerWallet {
-  id             String       @id @default(uuid())
-  customerUserId String       @unique
-  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id], onDelete: Cascade)
-
-  // ── Balance ──
-  balance Decimal @default(0) // Current usable balance
-
-  // ── Lifetime Stats (for analytics & loyalty dashboard) ──
-  lifetimeEarned Decimal @default(0) // Total ever credited (all time)
-  lifetimeSpent  Decimal @default(0) // Total ever debited (all time)
-
-  // ── Limits ──
-  maxBalance Decimal @default(10000) // Cap to prevent abuse (configurable)
-
-  // ── Admin Controls ──
-  isLocked     Boolean   @default(false) // Admin can freeze wallet
-  lockedReason String? // Why it was frozen
-  lockedAt     DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  transactions WalletTransaction[]
+  id             String              @id @default(uuid())
+  customerUserId String              @unique
+  balance        Decimal             @default(0)
+  lifetimeEarned Decimal             @default(0)
+  lifetimeSpent  Decimal             @default(0)
+  maxBalance     Decimal             @default(10000)
+  isLocked       Boolean             @default(false)
+  lockedReason   String?
+  lockedAt       DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  customerUser   CustomerUser        @relation(fields: [customerUserId], references: [id], onDelete: Cascade)
+  transactions   WalletTransaction[]
 
   @@map("customer_wallets")
 }
 
 model WalletTransaction {
-  id BigInt @id @default(autoincrement())
-
-  // ── Link to Wallet ──
-  walletId String
-  wallet   CustomerWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
-
-  // ── Transaction Core ──
-  amount    Decimal // Always POSITIVE number
-  direction WalletDirection // CREDIT or DEBIT — never use negative amounts
-  type      WalletTransactionType
-  status    WalletTxStatus        @default(SUCCESS)
-
-  // ── Balance Snapshot (critical for statement view) ──
-  balanceBefore Decimal // Balance before this transaction
-  balanceAfter  Decimal // Balance after this transaction
-
-  // ── Traceability (link back to order/refund/etc.) ──
-  referenceId   String? // orderId, refundId, campaignId etc.
-  referenceType String? // "ORDER", "REFUND", "MANUAL", "REFERRAL"
-
-  // ── Display ──
-  description String? // "Cashback for Order #INV-0023"
-  note        String? // Admin internal note (not shown to user)
-
-  // ── Expiry (for promotional credits only) ──
-  expiresAt DateTime? // NULL = never expires
-  isExpired Boolean   @default(false)
-
-  // ── Who did this (for manual adjustments) ──
-  performedByUserId String? // Admin/staff userId who triggered this
-
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  performedByUser User?    @relation("WalletPerformedBy", fields: [performedByUserId], references: [id], onDelete: SetNull)
+  id                BigInt                @id @default(autoincrement())
+  walletId          String
+  amount            Decimal
+  direction         WalletDirection
+  type              WalletTransactionType
+  status            WalletTxStatus        @default(SUCCESS)
+  balanceBefore     Decimal
+  balanceAfter      Decimal
+  referenceId       String?
+  referenceType     String?
+  description       String?
+  note              String?
+  expiresAt         DateTime?
+  isExpired         Boolean               @default(false)
+  performedByUserId String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  performedByUser   User?                 @relation("WalletPerformedBy", fields: [performedByUserId], references: [id])
+  wallet            CustomerWallet        @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
   @@index([walletId])
   @@index([referenceId])
   @@index([status])
-  @@index([expiresAt]) // For expiry cron job
-  @@index([createdAt]) // For date range queries on statements
+  @@index([expiresAt])
+  @@index([createdAt])
   @@map("wallet_transactions")
 }
 
@@ -1573,7 +1456,6 @@ model SellerSettlement {
   id          String           @id @default(uuid())
   businessId  String
   orderId     String
-  tdsAmount   Decimal          @default(0)
   grossAmount Decimal
   commission  Decimal
   tcsAmount   Decimal
@@ -1582,6 +1464,7 @@ model SellerSettlement {
   payoutDate  DateTime?
   referenceId String?
   createdAt   DateTime         @default(now())
+  tdsAmount   Decimal          @default(0)
   business    Business         @relation(fields: [businessId], references: [id])
   order       Order            @relation(fields: [orderId], references: [id])
 
@@ -1622,17 +1505,17 @@ model Purchase {
   depositAccountId  String?
   tcsAmount         Decimal         @default(0)
   tcsRate           Decimal?
-  originalInvoiceNo String?         @db.VarChar(128) // Purchase Summary, GST Purchase
-  invoiceType       String?         @db.VarChar(64) // GSTR-2 (Regular/Debit Note etc.)
-  supplierStateCode String?         @db.VarChar(4) // GSTR-2 State Code column
-  isImport          Boolean         @default(false) // GSTR-3b Section 4(1)(2)
-  isISD             Boolean         @default(false) // GSTR-3b Section 4(4) ISD
+  supplierPartyId   String?
+  invoiceType       String?         @db.VarChar(64)
+  isISD             Boolean         @default(false)
+  isImport          Boolean         @default(false)
+  originalInvoiceNo String?         @db.VarChar(128)
+  supplierStateCode String?         @db.VarChar(4)
   debitNotes        DebitNote[]
   business          Business        @relation(fields: [businessId], references: [id])
   depositAccount    BankCashCheque? @relation(fields: [depositAccountId], references: [id])
-  items             PurchaseItem[]
-  supplierPartyId   String? // NEW
   supplierParty     Party?          @relation("PurchaseParty", fields: [supplierPartyId], references: [id])
+  items             PurchaseItem[]
 
   @@unique([businessId, purchaseOrderNo])
 }
@@ -1649,12 +1532,12 @@ model PurchaseItem {
   taxAmount     Decimal  @default(0)
   discount      Decimal  @default(0)
   totalAmount   Decimal
-  itemCode      String?  @db.VarChar(128) // Item Report By Party
-  cgst          Decimal  @default(0) // GST Purchase, GSTR-2, GSTR-3b ITC
-  sgst          Decimal  @default(0)
-  igst          Decimal  @default(0)
-  cess          Decimal  @default(0)
   createdAt     DateTime @default(now())
+  cess          Decimal  @default(0)
+  cgst          Decimal  @default(0)
+  igst          Decimal  @default(0)
+  itemCode      String?  @db.VarChar(128)
+  sgst          Decimal  @default(0)
   purchase      Purchase @relation(fields: [purchaseId], references: [id])
   variant       Variant  @relation(fields: [variantId], references: [id])
 }
@@ -1672,7 +1555,6 @@ model Expense {
   notes              String?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
-  expenseNumber      String          @db.VarChar(64) // Expense Transaction Report (auto-gen like EXP-0001)
   deleteAt           DateTime?
   isRcmApplicable    Boolean         @default(false)
   itcClaimed         Boolean         @default(true)
@@ -1680,6 +1562,7 @@ model Expense {
   totalTaxAmount     Decimal         @default(0)
   totalTaxableAmount Decimal         @default(0)
   vendorGstin        String?         @db.VarChar(15)
+  expenseNumber      String          @db.VarChar(64)
   business           Business        @relation(fields: [businessId], references: [id])
   items              ExpenseItem[]
 
@@ -1729,26 +1612,27 @@ model BankCashCheque {
 }
 
 model BankCashChequeTransaction {
-  id              String          @id @default(uuid())
-  businessId      String
-  accountId       String          @map("bank_cash_cheque_id")
-  partyId         String?
-  partyName       String?         @db.VarChar(256)
-  transactionType TransactionType
-  transactionNo   String?         @db.VarChar(128)
-  paymentMode     String?         @db.VarChar(128)
-  amount          Decimal
-  runningBalance  Decimal
-  referenceId     String?
-  referenceType   ReferenceType   @default(SALE)
-  invoiceNo       String?         @db.VarChar(128)
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  account         BankCashCheque  @relation(fields: [accountId], references: [id])
-  business        Business        @relation(fields: [businessId], references: [id])
-  party           Party?          @relation("PartyBankTx", fields: [partyId], references: [id])
- targetPartyBankAccountId String? 
+  id                       String            @id @default(uuid())
+  businessId               String
+  accountId                String            @map("bank_cash_cheque_id")
+  partyId                  String?
+  partyName                String?           @db.VarChar(256)
+  transactionType          TransactionType
+  transactionNo            String?           @db.VarChar(128)
+  paymentMode              String?           @db.VarChar(128)
+  amount                   Decimal
+  runningBalance           Decimal
+  referenceId              String?
+  referenceType            ReferenceType     @default(SALE)
+  invoiceNo                String?           @db.VarChar(128)
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+  targetPartyBankAccountId String?
+  account                  BankCashCheque    @relation(fields: [accountId], references: [id])
+  business                 Business          @relation(fields: [businessId], references: [id])
+  party                    Party?            @relation("PartyBankTx", fields: [partyId], references: [id])
   targetPartyBankAccount   PartyBankAccount? @relation(fields: [targetPartyBankAccountId], references: [id])
+
   @@index([accountId])
   @@index([businessId])
 }
@@ -1819,22 +1703,22 @@ model CreditNote {
   reason              String
   amount              Decimal
   taxAmount           Decimal
-  placeOfSupplyCode   String?   @db.VarChar(4)
-  gstState            GstState? @relation(fields: [placeOfSupplyCode], references: [stateCode])
-  noteType            String    @default("C") @db.VarChar(4)
-  reasonCode          String?   @db.VarChar(4)
-  originalInvoiceDate DateTime?
-  noteCategory        String    @default("CREDIT") // "CREDIT" | "DEBIT" 
   status              String    @default("ACTIVE")
-  cgst                Decimal   @default(0)
-  sgst                Decimal   @default(0)
-  igst                Decimal   @default(0)
-  cessAmount          Decimal   @default(0)
-  rate                Decimal   @default(0) // applicable tax %
-  buyerGstin          String?   @db.VarChar(20)
-  taxableAmount       Decimal   @default(0) // ADD THIS FIELD
   createdAt           DateTime  @default(now())
+  noteType            String    @default("C") @db.VarChar(4)
+  originalInvoiceDate DateTime?
+  placeOfSupplyCode   String?   @db.VarChar(4)
+  reasonCode          String?   @db.VarChar(4)
+  taxableAmount       Decimal   @default(0)
+  buyerGstin          String?   @db.VarChar(20)
+  cessAmount          Decimal   @default(0)
+  cgst                Decimal   @default(0)
+  igst                Decimal   @default(0)
+  noteCategory        String    @default("CREDIT")
+  rate                Decimal   @default(0)
+  sgst                Decimal   @default(0)
   business            Business  @relation(fields: [businessId], references: [id])
+  gstState            GstState? @relation(fields: [placeOfSupplyCode], references: [stateCode])
   sale                Sale      @relation(fields: [saleId], references: [id])
 }
 
@@ -1857,10 +1741,8 @@ model SalesDebitNote {
   placeOfSupplyCode   String?   @db.VarChar(4)
   originalInvoiceDate DateTime?
   status              String    @default("ACTIVE")
-
-  // ✅ both sides defined here
-  business Business @relation("BusinessSalesDebitNotes", fields: [businessId], references: [id])
-  sale     Sale     @relation("SaleSalesDebitNotes", fields: [saleId], references: [id])
+  business            Business  @relation("BusinessSalesDebitNotes", fields: [businessId], references: [id])
+  sale                Sale      @relation("SaleSalesDebitNotes", fields: [saleId], references: [id])
 
   @@index([businessId])
   @@index([saleId])
@@ -1887,11 +1769,11 @@ model Warehouse {
   name            String
   address         String?
   isDefault       Boolean          @default(false)
+  batches         ItemBatching[]
   sourceTransfers StockTransfer[]  @relation("SourceWarehouse")
   destTransfers   StockTransfer[]  @relation("DestWarehouse")
   business        Business         @relation(fields: [businessId], references: [id])
   stocks          WarehouseStock[]
-  batches         ItemBatching[]
 }
 
 model WarehouseStock {
@@ -1939,9 +1821,9 @@ model TaxEntry {
   isFiled       Boolean   @default(false)
   challanDate   DateTime?
   deletedAt     DateTime?
-  partyGstin    String?   @db.VarChar(15) // TDS/TCS Payable & Receivable
-  taxName       String?   @db.VarChar(128)
   createdAt     DateTime  @default(now())
+  partyGstin    String?   @db.VarChar(15)
+  taxName       String?   @db.VarChar(128)
   business      Business  @relation(fields: [businessId], references: [id])
 }
 
@@ -1962,13 +1844,9 @@ model AuditLog {
 }
 
 model PartyLedger {
-  id         String   @id @default(uuid())
-  businessId String
-  business   Business @relation(fields: [businessId], references: [id])
-
-  partyId String?
-  party   Party?  @relation("PartyLedgerParty", fields: [partyId], references: [id])
-
+  id               String   @id @default(uuid())
+  businessId       String
+  partyId          String?
   partyType        String
   referenceId      String?
   partyName        String
@@ -1982,6 +1860,8 @@ model PartyLedger {
   email            String?
   gstin            String?
   phoneNo          String?
+  business         Business @relation(fields: [businessId], references: [id])
+  party            Party?   @relation("PartyLedgerParty", fields: [partyId], references: [id])
 
   @@index([businessId])
   @@index([referenceId])
@@ -2033,77 +1913,63 @@ model ProductModifier {
 }
 
 model Party {
-  id         String   @id @default(uuid())
-  businessId String
-  business   Business @relation(fields: [businessId], references: [id])
-
-  partyType     String    @db.VarChar(128) // SUPPLIER / CUSTOMER / BOTH
-  partyCategory String?   @db.VarChar(128)
-  partyName     String    @db.VarChar(256)
-  stateCode     String?   @db.VarChar(4)
-  gstState      GstState? @relation(fields: [stateCode], references: [stateCode])
-  isBusiness    Boolean   @default(true)
-  businessName  String?   @db.VarChar(512)
-  email         String?   @db.VarChar(128)
-  phoneNo       String?   @db.VarChar(36)
-  phoneNoAlt    String?   @db.VarChar(36)
-
-  taxId                 String? @db.VarChar(128) // GSTIN
-  panNo                 String? @db.VarChar(128)
-  tanNo                 String? @db.VarChar(128)
-  placeOfSupply         String? @db.VarChar(128)
-  billingAddress        Json? // structured address
+  id                    String                      @id @default(uuid())
+  businessId            String
+  partyType             String                      @db.VarChar(128)
+  partyCategory         String?                     @db.VarChar(128)
+  partyName             String                      @db.VarChar(256)
+  isBusiness            Boolean                     @default(true)
+  businessName          String?                     @db.VarChar(512)
+  email                 String?                     @db.VarChar(128)
+  phoneNo               String?                     @db.VarChar(36)
+  phoneNoAlt            String?                     @db.VarChar(36)
+  taxId                 String?                     @db.VarChar(128)
+  panNo                 String?                     @db.VarChar(128)
+  tanNo                 String?                     @db.VarChar(128)
+  placeOfSupply         String?                     @db.VarChar(128)
+  stateCode             String?                     @db.VarChar(4)
+  billingAddress        Json?
   shippingAddress       Json?
-  isBillingShippingSame Boolean @default(true)
-
-  openingBalance     Decimal?  @db.Decimal(18, 2)
-  openingBalanceType String?   @db.VarChar(36) // TO_PAY / TO_COLLECT
-  openingBalanceDate DateTime?
-
-  creditPeriod Int?
-  creditLimit  Decimal? @db.Decimal(18, 2)
-
-  closingBalance Decimal? @db.Decimal(18, 2)
-
-  notes       String?
-  customField Json? // for your custom fields
-
-  isEnabled Boolean @default(true)
-  isSynced  Boolean @default(false)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  activities       PartyActivity[]
-  ledgerEntries    PartyLedger[]               @relation("PartyLedgerParty")
-  bankTransactions BankCashChequeTransaction[] @relation("PartyBankTx")
-  sales            Sale[]                      @relation("SaleParty")
-  purchases        Purchase[]                  @relation("PurchaseParty")
-  campaigns        Campaign[]
-  bankAccounts PartyBankAccount[] 
+  isBillingShippingSame Boolean                     @default(true)
+  openingBalance        Decimal?                    @db.Decimal(18, 2)
+  openingBalanceType    String?                     @db.VarChar(36)
+  openingBalanceDate    DateTime?
+  creditPeriod          Int?
+  creditLimit           Decimal?                    @db.Decimal(18, 2)
+  closingBalance        Decimal?                    @db.Decimal(18, 2)
+  notes                 String?
+  customField           Json?
+  isEnabled             Boolean                     @default(true)
+  isSynced              Boolean                     @default(false)
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+  bankTransactions      BankCashChequeTransaction[] @relation("PartyBankTx")
+  business              Business                    @relation(fields: [businessId], references: [id])
+  gstState              GstState?                   @relation(fields: [stateCode], references: [stateCode])
+  activities            PartyActivity[]
+  bankAccounts          PartyBankAccount[]
+  ledgerEntries         PartyLedger[]               @relation("PartyLedgerParty")
+  purchases             Purchase[]                  @relation("PurchaseParty")
+  sales                 Sale[]                      @relation("SaleParty")
+  campaigns             Campaign[]
 
   @@index([businessId, partyType])
 }
 
 model PartyActivity {
-  id         String   @id @default(uuid())
-  businessId String
-  business   Business @relation(fields: [businessId], references: [id])
-
-  partyId String
-  party   Party  @relation(fields: [partyId], references: [id])
-
-  partyType     String  @db.VarChar(128)
-  partyCategory String? @db.VarChar(128)
-  partyName     String  @db.VarChar(256)
-  phoneNo       String? @db.VarChar(36)
-
-  totalAmount    Decimal @db.Decimal(18, 2)
-  closingBalance Decimal @db.Decimal(18, 2)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(uuid())
+  businessId     String
+  partyId        String
+  partyType      String   @db.VarChar(128)
+  partyCategory  String?  @db.VarChar(128)
+  partyName      String   @db.VarChar(256)
+  phoneNo        String?  @db.VarChar(36)
+  totalAmount    Decimal  @db.Decimal(18, 2)
+  closingBalance Decimal  @db.Decimal(18, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  business       Business @relation(fields: [businessId], references: [id])
+  party          Party    @relation(fields: [partyId], references: [id])
 
   @@index([businessId, partyType])
   @@index([partyId])
@@ -2120,24 +1986,24 @@ model KitchenTicket {
   completedAt DateTime?
   business    Business  @relation(fields: [businessId], references: [id])
 }
-model PartyBankAccount {
-  id         String   @id @default(uuid())
-  partyId    String
-  party      Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
-  
-  bankName   String   @db.VarChar(256)
-  accountNo  String   @db.VarChar(128)
-  ifscCode   String?  @db.VarChar(20)
-  accountHolder String? @db.VarChar(256)
-  upiId      String?  @db.VarChar(128)
-  isDefault  Boolean  @default(false)
-  transactions BankCashChequeTransaction[] 
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+model PartyBankAccount {
+  id            String                      @id @default(uuid())
+  partyId       String
+  bankName      String                      @db.VarChar(256)
+  accountNo     String                      @db.VarChar(128)
+  ifscCode      String?                     @db.VarChar(20)
+  accountHolder String?                     @db.VarChar(256)
+  upiId         String?                     @db.VarChar(128)
+  isDefault     Boolean                     @default(false)
+  createdAt     DateTime                    @default(now())
+  updatedAt     DateTime                    @updatedAt
+  transactions  BankCashChequeTransaction[]
+  party         Party                       @relation(fields: [partyId], references: [id], onDelete: Cascade)
 
   @@index([partyId])
 }
+
 model RestaurantTable {
   id            String      @id @default(uuid())
   businessId    String
@@ -2208,7 +2074,6 @@ model PreOrderRequest {
 model Campaign {
   id              String             @id @default(uuid())
   businessId      String
-  business        Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
   title           String             @db.VarChar(256)
   description     String?
   coverImage      String?
@@ -2220,20 +2085,21 @@ model Campaign {
   budget          Decimal?
   spentAmount     Decimal?           @default(0)
   createdByUserId String
-  createdByUser   User               @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
   tags            String[]           @default([])
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
   deletedAt       DateTime?
-  members         CampaignMember[]
-  tasks           CampaignTask[]
-  files           CampaignFile[]
+  clientPartyId   String?
   chats           CampaignChat[]
   documents       CampaignDocument[]
+  files           CampaignFile[]
   folders         CampaignFolder[]
+  members         CampaignMember[]
   sprints         CampaignSprint[]
-  clientPartyId   String?
+  tasks           CampaignTask[]
+  business        Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
   clientParty     Party?             @relation(fields: [clientPartyId], references: [id])
+  createdByUser   User               @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
 
   @@index([businessId])
   @@index([status])
@@ -2244,12 +2110,9 @@ model Campaign {
 model CampaignMember {
   id                String             @id @default(uuid())
   campaignId        String
-  campaign          Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   memberType        CampaignMemberType
   staffMemberId     String?
-  staffMember       StaffMember?       @relation(fields: [staffMemberId], references: [id], onDelete: SetNull)
   userId            String?
-  user              User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
   role              CampaignMemberRole @default(MEMBER)
   isActive          Boolean            @default(true)
   joinedAt          DateTime           @default(now())
@@ -2258,6 +2121,9 @@ model CampaignMember {
   addedByUserId     String?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
+  campaign          Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  staffMember       StaffMember?       @relation(fields: [staffMemberId], references: [id])
+  user              User?              @relation(fields: [userId], references: [id])
 
   @@unique([campaignId, staffMemberId])
   @@unique([campaignId, userId])
@@ -2270,7 +2136,6 @@ model CampaignMember {
 model CampaignSprint {
   id         String         @id @default(uuid())
   campaignId String
-  campaign   Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   name       String         @db.VarChar(128)
   goal       String?
   startDate  DateTime
@@ -2278,6 +2143,7 @@ model CampaignSprint {
   status     SprintStatus   @default(PLANNED)
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
+  campaign   Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   tasks      CampaignTask[]
 
   @@index([campaignId])
@@ -2287,12 +2153,8 @@ model CampaignSprint {
 model CampaignTask {
   id                String                   @id @default(uuid())
   campaignId        String
-  campaign          Campaign                 @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   sprintId          String?
-  sprint            CampaignSprint?          @relation(fields: [sprintId], references: [id], onDelete: SetNull)
   parentId          String?
-  parent            CampaignTask?            @relation("SubTasks", fields: [parentId], references: [id], onDelete: SetNull)
-  subTasks          CampaignTask[]           @relation("SubTasks")
   title             String                   @db.VarChar(256)
   description       String?
   status            TaskStatus               @default(TODO)
@@ -2300,21 +2162,25 @@ model CampaignTask {
   dueDate           DateTime?
   completedAt       DateTime?
   estimatedMinutes  Int?
-  startDate         DateTime? // For Gantt chart rendering (only dueDate exists now)
-  tags              String[]
   assignedToStaffId String?
-  assignedToStaff   StaffMember?             @relation(fields: [assignedToStaffId], references: [id], onDelete: SetNull)
   assignedToUserId  String?
-  assignedToUser    User?                    @relation(fields: [assignedToUserId], references: [id], onDelete: SetNull)
   createdByUserId   String?
-  createdByUser     User?                    @relation("TaskCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
   position          Int                      @default(0)
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
   deletedAt         DateTime?
-  timeLogs          CampaignTaskTimeLog[]
-  dependents        CampaignTaskDependency[] @relation("Dependent")
+  startDate         DateTime?
+  tags              String[]
   dependencies      CampaignTaskDependency[] @relation("DependsOn")
+  dependents        CampaignTaskDependency[] @relation("Dependent")
+  timeLogs          CampaignTaskTimeLog[]
+  assignedToStaff   StaffMember?             @relation(fields: [assignedToStaffId], references: [id])
+  assignedToUser    User?                    @relation(fields: [assignedToUserId], references: [id])
+  campaign          Campaign                 @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  createdByUser     User?                    @relation("TaskCreator", fields: [createdByUserId], references: [id])
+  parent            CampaignTask?            @relation("SubTasks", fields: [parentId], references: [id])
+  subTasks          CampaignTask[]           @relation("SubTasks")
+  sprint            CampaignSprint?          @relation(fields: [sprintId], references: [id])
 
   @@index([campaignId])
   @@index([sprintId])
@@ -2328,10 +2194,10 @@ model CampaignTask {
 model CampaignTaskDependency {
   id          String       @id @default(uuid())
   taskId      String
-  task        CampaignTask @relation("Dependent", fields: [taskId], references: [id], onDelete: Cascade)
   dependsOnId String
-  dependsOn   CampaignTask @relation("DependsOn", fields: [dependsOnId], references: [id], onDelete: Cascade)
   createdAt   DateTime     @default(now())
+  dependsOn   CampaignTask @relation("DependsOn", fields: [dependsOnId], references: [id], onDelete: Cascade)
+  task        CampaignTask @relation("Dependent", fields: [taskId], references: [id], onDelete: Cascade)
 
   @@unique([taskId, dependsOnId])
   @@index([taskId])
@@ -2341,17 +2207,17 @@ model CampaignTaskDependency {
 model CampaignTaskTimeLog {
   id         String       @id @default(uuid())
   taskId     String
-  task       CampaignTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
   userId     String?
-  user       User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   staffId    String?
-  staff      StaffMember? @relation(fields: [staffId], references: [id], onDelete: SetNull)
   startedAt  DateTime
   endedAt    DateTime?
   minutes    Int?
   note       String?
-  isBillable Boolean      @default(false) // Client billing / invoice generation
   createdAt  DateTime     @default(now())
+  isBillable Boolean      @default(false)
+  staff      StaffMember? @relation(fields: [staffId], references: [id])
+  task       CampaignTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user       User?        @relation(fields: [userId], references: [id])
 
   @@index([taskId])
   @@map("campaign_task_time_logs")
@@ -2360,18 +2226,18 @@ model CampaignTaskTimeLog {
 model CampaignFile {
   id                String       @id @default(uuid())
   campaignId        String
-  campaign          Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   name              String       @db.VarChar(256)
   url               String
   mimeType          String       @db.VarChar(128)
   sizeBytes         Int
   uploadedByUserId  String?
-  uploadedByUser    User?        @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull)
   uploadedByStaffId String?
-  uploadedByStaff   StaffMember? @relation(fields: [uploadedByStaffId], references: [id], onDelete: SetNull)
   taskId            String?
   createdAt         DateTime     @default(now())
   deletedAt         DateTime?
+  campaign          Campaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  uploadedByStaff   StaffMember? @relation(fields: [uploadedByStaffId], references: [id])
+  uploadedByUser    User?        @relation(fields: [uploadedByUserId], references: [id])
 
   @@index([campaignId])
   @@map("campaign_files")
@@ -2380,22 +2246,22 @@ model CampaignFile {
 model CampaignChat {
   id              String                   @id @default(uuid())
   campaignId      String
-  campaign        Campaign                 @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   message         String?
   messageType     ChatMessageType          @default(TEXT)
   senderUserId    String?
-  senderUser      User?                    @relation(fields: [senderUserId], references: [id], onDelete: SetNull)
   senderStaffId   String?
-  senderStaff     StaffMember?             @relation(fields: [senderStaffId], references: [id], onDelete: SetNull)
   replyToId       String?
-  replyTo         CampaignChat?            @relation("ChatReplies", fields: [replyToId], references: [id], onDelete: SetNull)
-  replies         CampaignChat[]           @relation("ChatReplies")
   isSystemMessage Boolean                  @default(false)
   editedAt        DateTime?
   createdAt       DateTime                 @default(now())
   deletedAt       DateTime?
   attachments     CampaignChatAttachment[]
   readBy          CampaignChatRead[]
+  campaign        Campaign                 @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  replyTo         CampaignChat?            @relation("ChatReplies", fields: [replyToId], references: [id])
+  replies         CampaignChat[]           @relation("ChatReplies")
+  senderStaff     StaffMember?             @relation(fields: [senderStaffId], references: [id])
+  senderUser      User?                    @relation(fields: [senderUserId], references: [id])
 
   @@index([campaignId])
   @@index([senderUserId])
@@ -2407,12 +2273,12 @@ model CampaignChat {
 model CampaignChatAttachment {
   id        String       @id @default(uuid())
   chatId    String
-  chat      CampaignChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
   name      String       @db.VarChar(256)
   url       String
   mimeType  String       @db.VarChar(128)
   sizeBytes Int
   createdAt DateTime     @default(now())
+  chat      CampaignChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
 
   @@index([chatId])
   @@map("campaign_chat_attachments")
@@ -2421,12 +2287,12 @@ model CampaignChatAttachment {
 model CampaignChatRead {
   id      String       @id @default(uuid())
   chatId  String
-  chat    CampaignChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
   userId  String?
-  user    User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   staffId String?
-  staff   StaffMember? @relation(fields: [staffId], references: [id], onDelete: SetNull)
   readAt  DateTime     @default(now())
+  chat    CampaignChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  staff   StaffMember? @relation(fields: [staffId], references: [id])
+  user    User?        @relation(fields: [userId], references: [id])
 
   @@unique([chatId, userId])
   @@unique([chatId, staffId])
@@ -2437,27 +2303,27 @@ model CampaignChatRead {
 model CampaignDocument {
   id                String                       @id @default(uuid())
   campaignId        String
-  campaign          Campaign                     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   folderId          String?
-  folder            CampaignFolder?              @relation(fields: [folderId], references: [id], onDelete: SetNull)
   name              String                       @db.VarChar(256)
   description       String?
   currentVersionId  String?
   mimeType          String                       @db.VarChar(128)
   sizeBytes         Int
   uploadedByUserId  String?
-  uploadedByUser    User?                        @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull)
   uploadedByStaffId String?
-  uploadedByStaff   StaffMember?                 @relation(fields: [uploadedByStaffId], references: [id], onDelete: SetNull)
   defaultAccess     DocumentAccess               @default(VIEW_ONLY)
   isPublic          Boolean                      @default(false)
   tags              String[]                     @default([])
   createdAt         DateTime                     @default(now())
   updatedAt         DateTime                     @updatedAt
   deletedAt         DateTime?
-  versions          CampaignDocumentVersion[]
   permissions       CampaignDocumentPermission[]
   shareLinks        CampaignDocumentShareLink[]
+  versions          CampaignDocumentVersion[]
+  campaign          Campaign                     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  folder            CampaignFolder?              @relation(fields: [folderId], references: [id])
+  uploadedByStaff   StaffMember?                 @relation(fields: [uploadedByStaffId], references: [id])
+  uploadedByUser    User?                        @relation(fields: [uploadedByUserId], references: [id])
 
   @@index([campaignId])
   @@index([folderId])
@@ -2467,16 +2333,16 @@ model CampaignDocument {
 model CampaignDocumentVersion {
   id                String           @id @default(uuid())
   documentId        String
-  document          CampaignDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
   versionNumber     Int
   url               String
   sizeBytes         Int
   changeNote        String?
   uploadedByUserId  String?
-  uploadedByUser    User?            @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull)
   uploadedByStaffId String?
-  uploadedByStaff   StaffMember?     @relation(fields: [uploadedByStaffId], references: [id], onDelete: SetNull)
   createdAt         DateTime         @default(now())
+  document          CampaignDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedByStaff   StaffMember?     @relation(fields: [uploadedByStaffId], references: [id])
+  uploadedByUser    User?            @relation(fields: [uploadedByUserId], references: [id])
 
   @@unique([documentId, versionNumber])
   @@index([documentId])
@@ -2486,18 +2352,18 @@ model CampaignDocumentVersion {
 model CampaignFolder {
   id              String             @id @default(uuid())
   campaignId      String
-  campaign        Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   parentId        String?
-  parent          CampaignFolder?    @relation("FolderChildren", fields: [parentId], references: [id], onDelete: SetNull)
-  children        CampaignFolder[]   @relation("FolderChildren")
   name            String             @db.VarChar(128)
   color           String?
   position        Int                @default(0)
   createdByUserId String?
-  createdByUser   User?              @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
   documents       CampaignDocument[]
+  campaign        Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  createdByUser   User?              @relation(fields: [createdByUserId], references: [id])
+  parent          CampaignFolder?    @relation("FolderChildren", fields: [parentId], references: [id])
+  children        CampaignFolder[]   @relation("FolderChildren")
 
   @@unique([campaignId, parentId, name])
   @@index([campaignId])
@@ -2508,14 +2374,14 @@ model CampaignFolder {
 model CampaignDocumentPermission {
   id              String           @id @default(uuid())
   documentId      String
-  document        CampaignDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
   userId          String?
-  user            User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   staffId         String?
-  staff           StaffMember?     @relation(fields: [staffId], references: [id], onDelete: SetNull)
   access          DocumentAccess
   grantedByUserId String?
   grantedAt       DateTime         @default(now())
+  document        CampaignDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  staff           StaffMember?     @relation(fields: [staffId], references: [id])
+  user            User?            @relation(fields: [userId], references: [id])
 
   @@unique([documentId, userId])
   @@unique([documentId, staffId])
@@ -2526,7 +2392,6 @@ model CampaignDocumentPermission {
 model CampaignDocumentShareLink {
   id               String                      @id @default(uuid())
   documentId       String
-  document         CampaignDocument            @relation(fields: [documentId], references: [id], onDelete: Cascade)
   token            String                      @unique @default(uuid())
   access           DocumentAccess              @default(VIEW_ONLY)
   status           ShareLinkStatus             @default(ACTIVE)
@@ -2535,16 +2400,174 @@ model CampaignDocumentShareLink {
   viewCount        Int                         @default(0)
   passwordHash     String?
   createdByUserId  String?
-  createdByUser    User?                       @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   createdByStaffId String?
-  createdByStaff   StaffMember?                @relation(fields: [createdByStaffId], references: [id], onDelete: SetNull)
   createdAt        DateTime                    @default(now())
   accessLogs       CampaignDocumentAccessLog[]
+  createdByStaff   StaffMember?                @relation(fields: [createdByStaffId], references: [id])
+  createdByUser    User?                       @relation(fields: [createdByUserId], references: [id])
+  document         CampaignDocument            @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([token])
   @@index([documentId])
   @@index([expiresAt])
   @@map("campaign_document_share_links")
+}
+
+model CampaignDocumentAccessLog {
+  id          String                    @id @default(uuid())
+  shareLinkId String
+  userId      String?
+  staffId     String?
+  ipAddress   String?                   @db.VarChar(45)
+  userAgent   String?
+  accessedAt  DateTime                  @default(now())
+  shareLink   CampaignDocumentShareLink @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
+
+  @@index([shareLinkId])
+  @@index([accessedAt])
+  @@map("campaign_document_access_logs")
+}
+
+model GstFilingSnapshot {
+  id                   String              @id @default(uuid())
+  filingRequestId      String              @unique
+  outwardSupplies      Json
+  inwardSupplies       Json?
+  hsnSummary           Json?
+  documentSummary      Json?
+  itcFromPurchases     Decimal             @default(0)
+  itcFromImport        Decimal             @default(0)
+  itcReversed          Decimal             @default(0)
+  ineligibleItc        Decimal             @default(0)
+  totalInvoiceCount    Int                 @default(0)
+  totalCreditNoteCount Int                 @default(0)
+  snapshotTakenAt      DateTime            @default(now())
+  lineItems            GstFilingLineItem[]
+  filingRequest        GstFilingRequest    @relation(fields: [filingRequestId], references: [id])
+
+  @@map("gst_filing_snapshots")
+}
+
+model GstFilingLineItem {
+  id              String            @id @default(uuid())
+  snapshotId      String
+  sourceType      String            @db.VarChar(32)
+  sourceId        String
+  invoiceNo       String            @db.VarChar(128)
+  invoiceDate     DateTime
+  partyName       String            @db.VarChar(256)
+  partyGstin      String?           @db.VarChar(15)
+  placeOfSupply   String            @db.VarChar(128)
+  invoiceCategory String            @db.VarChar(8)
+  taxableAmount   Decimal
+  cgst            Decimal           @default(0)
+  sgst            Decimal           @default(0)
+  igst            Decimal           @default(0)
+  cess            Decimal           @default(0)
+  totalAmount     Decimal
+  isReverseCharge Boolean           @default(false)
+  snapshot        GstFilingSnapshot @relation(fields: [snapshotId], references: [id])
+
+  @@index([snapshotId])
+  @@index([sourceType, sourceId])
+  @@map("gst_filing_line_items")
+}
+
+model GstTaxPaymentChallan {
+  filingRequestId String               @unique
+  challanNo       String?              @db.VarChar(64)
+  challanDate     DateTime?
+  bankReference   String?              @db.VarChar(128)
+  id              String               @id @default(uuid())
+  businessId      String
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  cgstAmount      Decimal              @default(0)
+  sgstAmount      Decimal              @default(0)
+  igstAmount      Decimal              @default(0)
+  cessAmount      Decimal              @default(0)
+  lateFee         Decimal              @default(0)
+  interest        Decimal              @default(0)
+  totalAmount     Decimal
+  status          ChallanPaymentStatus @default(PENDING)
+  challanPdfUrl   String?
+  business        Business             @relation(fields: [businessId], references: [id])
+  filingRequest   GstFilingRequest     @relation(fields: [filingRequestId], references: [id])
+
+  @@index([businessId])
+  @@map("gst_tax_payment_challans")
+}
+
+model GstFilingDocument {
+  id                  String           @id @default(uuid())
+  createdAt           DateTime         @default(now())
+  filingRequestId     String
+  documentType        String           @db.VarChar(64)
+  fileName            String           @db.VarChar(256)
+  fileUrl             String
+  isVisibleToBusiness Boolean          @default(true)
+  uploadedByUserId    String?
+  filingRequest       GstFilingRequest @relation(fields: [filingRequestId], references: [id])
+  uploadedByUser      User?            @relation(fields: [uploadedByUserId], references: [id])
+
+  @@index([filingRequestId])
+  @@map("gst_filing_documents")
+}
+
+model GstFilingAuditLog {
+  id                String           @id @default(uuid())
+  filingRequestId   String
+  createdAt         DateTime         @default(now())
+  action            String           @db.VarChar(128)
+  fromStatus        GstFilingStatus?
+  toStatus          GstFilingStatus?
+  performedByUserId String?
+  note              String?
+  metadata          Json?
+  filingRequest     GstFilingRequest @relation(fields: [filingRequestId], references: [id])
+
+  @@index([performedByUserId])
+  @@index([filingRequestId])
+  @@map("gst_filing_audit_logs")
+}
+
+enum PlatformFeeType {
+  PLATFORM_COMMISSION
+  SHIPPING_FEE
+  PAYMENT_GATEWAY_FEE
+  TDS
+  TCS
+  PACKAGING_FEE
+}
+
+enum FeeCalculationType {
+  PERCENTAGE
+  FIXED
+}
+
+enum GstFilingFrequency {
+  MONTHLY
+  QUARTERLY
+  ANNUALLY
+}
+
+enum GstReturnType {
+  GSTR1
+  GSTR3B
+  GSTR4
+  GSTR9
+}
+
+enum CategoryLayoutType {
+  HERO_BANNER
+  SCROLLABLE_ROW
+  GRID_2XN
+  GRID_3XN
+  GRID_SQUARE_COMPACT
+  SINGLE_BANNER
+  PRODUCT_CAROUSEL
+  FEATURED_PRODUCTS
+  BANNER_WITH_TEXT
 }
 
 enum TicketSenderType {
@@ -2564,156 +2587,6 @@ enum AttendanceStatus {
   ABSENT
   ON_LEAVE
   HALF_DAY
-}
-
-model CampaignDocumentAccessLog {
-  id          String                    @id @default(uuid())
-  shareLinkId String
-  shareLink   CampaignDocumentShareLink @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
-
-  // Optional identifiers
-  userId  String?
-  staffId String?
-
-  // Access metadata
-  ipAddress  String?  @db.VarChar(45) // IPv4/IPv6 max length
-  userAgent  String? // Browser/device info
-  accessedAt DateTime @default(now()) // Timestamp of access
-
-  // Relations
-  // (You can extend with audit logs or related entities if needed)
-
-  @@index([shareLinkId])
-  @@index([accessedAt])
-  @@map("campaign_document_access_logs")
-}
-
-// prisma/schema.prisma
-
-model GstFilingSnapshot {
-  id              String @id @default(uuid())
-  filingRequestId String @unique
-
-  // Frozen JSON blobs — exactly what was submitted to the portal
-  outwardSupplies  Json // B2B, B2CL, B2CS, EXPORT, NIL grouped
-  inwardSupplies   Json? // ITC data
-  hsnSummary       Json?
-  documentSummary  Json?
-  filingRequest    GstFilingRequest @relation(fields: [filingRequestId], references: [id])
-  // ITC breakdown for GSTR-3B Section 4
-  itcFromPurchases Decimal          @default(0)
-  itcFromImport    Decimal          @default(0)
-  itcReversed      Decimal          @default(0)
-  ineligibleItc    Decimal          @default(0)
-
-  // Counts
-  totalInvoiceCount    Int @default(0)
-  totalCreditNoteCount Int @default(0)
-
-  snapshotTakenAt DateTime @default(now())
-
-  // Relations
-  lineItems GstFilingLineItem[]
-
-  @@map("gst_filing_snapshots")
-}
-
-model GstFilingLineItem {
-  id         String @id @default(uuid())
-  snapshotId String
-
-  sourceType String @db.VarChar(32) // SALE | PURCHASE | CREDITNOTE | DEBITNOTE
-  sourceId   String // Original Sale.id / Purchase.id
-
-  // Frozen values at time of snapshot
-  invoiceNo       String            @db.VarChar(128)
-  invoiceDate     DateTime
-  partyName       String            @db.VarChar(256)
-  partyGstin      String?           @db.VarChar(15)
-  placeOfSupply   String            @db.VarChar(128)
-  invoiceCategory String            @db.VarChar(8) // B2B / B2CL / B2CS / EXPORT
-  taxableAmount   Decimal
-  cgst            Decimal           @default(0)
-  sgst            Decimal           @default(0)
-  igst            Decimal           @default(0)
-  cess            Decimal           @default(0)
-  totalAmount     Decimal
-  isReverseCharge Boolean           @default(false)
-  snapshot        GstFilingSnapshot @relation(fields: [snapshotId], references: [id])
-
-  // ...existing fields...
-  @@index([snapshotId])
-  @@index([sourceType, sourceId])
-  @@map("gst_filing_line_items")
-}
-
-// Tax payment challan (PMT-06)
-model GstTaxPaymentChallan {
-  filingRequestId String           @unique
-  challanNo       String?          @db.VarChar(64)
-  challanDate     DateTime?
-  bankReference   String?          @db.VarChar(128)
-  id              String           @id @default(uuid()) 
-  filingRequest   GstFilingRequest @relation(fields: [filingRequestId], references: [id])
-  business        Business         @relation(fields: [businessId], references: [id])
-  businessId      String 
-
-  // ...existing fields...
-  createdAt     DateTime             @default(now()) 
-  updatedAt     DateTime             @updatedAt 
-  // Amounts
-  cgstAmount    Decimal              @default(0)
-  sgstAmount    Decimal              @default(0)
-  igstAmount    Decimal              @default(0)
-  cessAmount    Decimal              @default(0)
-  lateFee       Decimal              @default(0)
-  interest      Decimal              @default(0)
-  totalAmount   Decimal
-  status        ChallanPaymentStatus @default(PENDING)
-  challanPdfUrl String?
-
-  @@index([businessId]) 
-  @@map("gst_tax_payment_challans")
-}
-
-// Filed docs — ACK PDF, summary PDF, challan, raw JSON
-model GstFilingDocument {
-  id String @id @default(uuid()) 
-
-  filingRequest       GstFilingRequest @relation(fields: [filingRequestId], references: [id])
-  // ...existing fields...
-  createdAt           DateTime         @default(now()) 
-  filingRequestId     String
-  documentType        String           @db.VarChar(64)
-  // FILED_JSON | ACK_PDF | CHALLAN_PDF | SUMMARY_PDF | COMPUTATION_SHEET
-  fileName            String           @db.VarChar(256)
-  fileUrl             String
-  isVisibleToBusiness Boolean          @default(true) // Controls what business sees
-  uploadedByUserId    String?
-  uploadedByUser      User?            @relation(fields: [uploadedByUserId], references: [id])
-
-  @@index([filingRequestId]) 
-  @@map("gst_filing_documents")
-}
-
-// Full audit trail of every action
-model GstFilingAuditLog {
-  id                String           @id @default(uuid()) 
-  filingRequestId   String
-  filingRequest     GstFilingRequest @relation(fields: [filingRequestId], references: [id])
-  // ...existing fields...
-  createdAt         DateTime         @default(now()) 
-  action            String           @db.VarChar(128)
-  // CREATED | SENT_FOR_REVIEW | APPROVED | FILED_SUCCESSFULLY | CHALLAN_PAID ...
-  fromStatus        GstFilingStatus?
-  toStatus          GstFilingStatus?
-  performedByUserId String?
-  note              String?
-  metadata          Json?
-
-  @@index([performedByUserId]) 
-  @@index([filingRequestId])
-  @@map("gst_filing_audit_logs")
 }
 
 enum GstFilingStatus {
@@ -2751,16 +2624,16 @@ enum CampaignStatus {
 }
 
 enum WalletTransactionType {
-  REFUND // Order refunded → wallet credited
-  CASHBACK // Cashback reward on purchase
-  PROMOTIONAL_CREDIT // Admin gave free credits (renamed from PROMOTIONALCREDIT)
-  PURCHASE_DEBIT // Used wallet to pay for order (renamed from PURCHASEDEBIT)
-  GIFT_CARD_REDEMPTION // Gift card redeemed (renamed from GIFTCARDREDEMPTION)
-  MANUAL_ADJUSTMENT // Admin added/deducted manually (renamed from MANUALADJUSTMENT)
-  REFERRAL_BONUS // Earned from referring a friend
-  LOYALTY_POINTS // Loyalty program credits
-  EXPIRY_DEBIT // System auto-debits expired credits
-  REVERSAL // Transaction reversed (e.g. order cancelled after cashback)
+  REFUND
+  CASHBACK
+  PROMOTIONAL_CREDIT
+  PURCHASE_DEBIT
+  GIFT_CARD_REDEMPTION
+  MANUAL_ADJUSTMENT
+  REFERRAL_BONUS
+  LOYALTY_POINTS
+  EXPIRY_DEBIT
+  REVERSAL
 }
 
 enum ChallanPaymentStatus {
@@ -2770,16 +2643,16 @@ enum ChallanPaymentStatus {
 }
 
 enum WalletDirection {
-  CREDIT // Money coming IN to wallet
-  DEBIT // Money going OUT of wallet
+  CREDIT
+  DEBIT
 }
 
 enum WalletTxStatus {
-  PENDING // Being processed (e.g. waiting for order to confirm)
-  SUCCESS // Confirmed and settled
-  FAILED // Transaction failed
-  REVERSED // Was SUCCESS but then rolled back
-  EXPIRED // Promotional credit expired before use
+  PENDING
+  SUCCESS
+  FAILED
+  REVERSED
+  EXPIRED
 }
 
 enum UserInteractionType {
@@ -2822,17 +2695,17 @@ enum TaxType {
 }
 
 enum BatchStatus {
-  ACTIVE // Available for sale
-  EXPIRED // Past expiry date
-  QUARANTINE // On hold — quality check
-  EXHAUSTED // Stock = 0
-  RECALLED // Product recall
+  ACTIVE
+  EXPIRED
+  QUARANTINE
+  EXHAUSTED
+  RECALLED
 }
 
 enum StockMethod {
-  FIFO // First In First Out — oldest batch sold first
-  FEFO // First Expiry First Out — nearest expiry sold first (pharma/food)
-  MANUAL // Staff manually picks batch at point of sale
+  FIFO
+  FEFO
+  MANUAL
 }
 
 enum SerialStatus {
@@ -2952,7 +2825,7 @@ enum TargetType {
 enum DiscountType {
   percentage
   fixed_amount
-  free_shipping // ADD THIS
+  free_shipping
 }
 
 enum AuthSource {

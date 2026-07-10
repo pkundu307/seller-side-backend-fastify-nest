@@ -37,6 +37,7 @@ import { SeoModule } from './seo/seo.module';
 import { BankCashChequeModule } from './bank-cash-cheque/bank-cash-cheque.module';
 import { QuotationModule } from './seller/quotation/quotation.module';
 import { ProformaInvoiceModule } from './seller/proforma-invoice/proforma-invoice.module';
+import { CategoryLayoutModule } from './category-layout/category-layout.module';
 
 @Module({
   imports: [
@@ -85,6 +86,7 @@ import { ProformaInvoiceModule } from './seller/proforma-invoice/proforma-invoic
     OrderModule,
     HomepageAdminModule,
     HomepageModule,
+    CategoryLayoutModule,
     PaymentModule,
     CouponModule,
     SellerModule,
