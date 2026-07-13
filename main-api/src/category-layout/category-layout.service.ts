@@ -80,12 +80,14 @@ export class CategoryLayoutService implements OnModuleInit {
   }
 
   private async cacheGet<T>(key: string): Promise<T | null> {
+    if (!this.redis) return null;
     const raw = await this.redis.get(key);
     if (!raw) return null;
     return JSON.parse(raw) as T;
   }
 
   private async cacheSet(key: string, value: unknown): Promise<void> {
+    if (!this.redis) return;
     await this.redis.set(key, JSON.stringify(value), 'EX', 86400); // 24 hours
   }
 

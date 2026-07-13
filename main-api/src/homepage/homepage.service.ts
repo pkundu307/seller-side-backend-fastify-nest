@@ -207,6 +207,7 @@ export class HomepageService implements OnModuleInit {
   }
 
   async invalidateCache() {
+    if (!this.redis) return { success: true, message: 'Cache disabled' };
     await this.redis.del(this.KEY_LAYOUT, this.KEY_DISTRIBUTED);
     this.logger.warn('Redis Cache Invalidated');
     return { success: true, message: 'Redis Cache Purged' };
