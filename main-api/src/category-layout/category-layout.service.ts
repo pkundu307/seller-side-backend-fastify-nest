@@ -43,20 +43,31 @@ export interface CategoryLayout {
 @Injectable()
 export class CategoryLayoutService implements OnModuleInit {
   private readonly logger = new Logger(CategoryLayoutService.name);
-  private redis: Redis;
+  private redis: Redis | null = null;
 
   constructor(
     private prisma:         PrismaService,
     private configService:  ConfigService,
   ) {
-    this.redis = new Redis({
-      host:   this.configService.get<string>('REDIS_HOST', '127.0.0.1'),
-      port:   this.configService.get<number>('REDIS_PORT', 6379),
-      family: 4,
-    });
+    const redisHost = this.configService.get<string>('REDIS_HOST');
+    const redisPort = this.configService.get<number>('REDIS_PORT');
 
-    this.redis.on('connect', () => this.logger.log('✅ Redis connected'));
-    this.redis.on('error',   (err) => this.logger.error('❌ Redis error', err));
+    // Only initialize Redis if host is configured
+    if (redisHost) {
+      try {
+        this.redis = new Redis({
+          host:   redisHost,
+          port:   redisPort || 6379,
+          family: 4,
+          maxRetriesPerRequest: 1,  // Quick fail on connection error
+        });
+
+        this.redis.on('connect', () => this.logger.log('✅ Redis connected'));
+        this.redis.on('error',   (err) => this.logger.debug('Redis connection error (may be optional)', err.message));
+      } catch (error) {
+        this.logger.debug('Redis initialization failed, caching will be disabled', error.message);
+      }
+    }
   }
 
   async onModuleInit() {
@@ -195,20 +206,31 @@ export class CategoryLayoutService implements OnModuleInit {
   }
 
   async invalidateCache(categorySlug?: string): Promise<{ success: boolean; message: string }> {
-    if (categorySlug) {
-      const key = this.getCacheKey(categorySlug);
-      await this.redis.del(key);
-      this.logger.warn(`Cache invalidated for category: ${categorySlug}`);
-      return { success: true, message: `Cache purged for ${categorySlug}` };
+    // Skip caching if Redis is not available
+    if (!this.redis) {
+      this.logger.debug('Redis not available, skipping cache invalidation');
+      return { success: true, message: 'Cache disabled' };
     }
 
-    // Invalidate all category layouts
-    const keys = await this.redis.keys('CATEGORY_LAYOUT_*');
-    if (keys.length > 0) {
-      await this.redis.del(...keys);
+    try {
+      if (categorySlug) {
+        const key = this.getCacheKey(categorySlug);
+        await this.redis.del(key);
+        this.logger.warn(`Cache invalidated for category: ${categorySlug}`);
+        return { success: true, message: `Cache purged for ${categorySlug}` };
+      }
+
+      // Invalidate all category layouts
+      const keys = await this.redis.keys('CATEGORY_LAYOUT_*');
+      if (keys.length > 0) {
+        await this.redis.del(...keys);
+      }
+      this.logger.warn(`Redis Cache Invalidated for ${keys.length} categories`);
+      return { success: true, message: `Cache purged for ${keys.length} categories` };
+    } catch (error) {
+      this.logger.warn('Redis cache invalidation failed, continuing without cache', error.message);
+      return { success: true, message: 'Cache unavailable, operation completed' };
     }
-    this.logger.warn(`Redis Cache Invalidated for ${keys.length} categories`);
-    return { success: true, message: `Cache purged for ${keys.length} categories` };
   }
 
   // ── admin methods ────────────────────────────────────────────────────────

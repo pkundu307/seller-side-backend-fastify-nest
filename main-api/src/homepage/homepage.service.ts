@@ -10,30 +10,40 @@ export class HomepageService implements OnModuleInit {
   private readonly KEY_LAYOUT = 'HOMEPAGE_LAYOUT';
   private readonly KEY_DISTRIBUTED = 'HOMEPAGE_DISTRIBUTED_PRODUCTS';
   private readonly TTL_24H = 86400;
-  private redis: Redis;
+  private redis: Redis | null = null;
 
   constructor(
     private prisma: PrismaService,
     private configService: ConfigService,
   ) {
-    // ── Dynamic Redis Config (Supports VPS & Cloud/Upstash) ──
-    const redisOptions: any = {
-      host: this.configService.get<string>('REDIS_HOST', '127.0.0.1'),
-      port: this.configService.get<number>('REDIS_PORT', 6379),
-      family: 4,
-    };
+    const redisHost = this.configService.get<string>('REDIS_HOST');
 
-    const password = this.configService.get<string>('REDIS_PASSWORD');
-    if (password) redisOptions.password = password;
+    // Only initialize Redis if host is configured
+    if (redisHost) {
+      try {
+        // ── Dynamic Redis Config (Supports VPS & Cloud/Upstash) ──
+        const redisOptions: any = {
+          host: redisHost,
+          port: this.configService.get<number>('REDIS_PORT', 6379),
+          family: 4,
+          maxRetriesPerRequest: 1,  // Quick fail on connection error
+        };
 
-    if (this.configService.get<string>('REDIS_TLS') === 'true') {
-      redisOptions.tls = {};
+        const password = this.configService.get<string>('REDIS_PASSWORD');
+        if (password) redisOptions.password = password;
+
+        if (this.configService.get<string>('REDIS_TLS') === 'true') {
+          redisOptions.tls = {};
+        }
+
+        this.redis = new Redis(redisOptions);
+
+        this.redis.on('connect', () => this.logger.log('✅ Redis connected'));
+        this.redis.on('error', (err) => this.logger.debug('Redis connection error (may be optional)', err.message));
+      } catch (e) {
+        this.logger.debug('Redis initialization failed, caching will be disabled');
+      }
     }
-
-    this.redis = new Redis(redisOptions);
-
-    this.redis.on('connect', () => this.logger.log('✅ Redis connected'));
-    this.redis.on('error', (err) => this.logger.error('❌ Redis error', err));
   }
 
   async onModuleInit() {
@@ -49,6 +59,9 @@ export class HomepageService implements OnModuleInit {
   }
 
   private async cacheGet<T>(key: string): Promise<T | null> {
+    // Skip cache if Redis is not available
+    if (!this.redis) return null;
+
     try {
       const raw = await this.redis.get(key);
       return raw ? (JSON.parse(raw) as T) : null;
@@ -58,10 +71,13 @@ export class HomepageService implements OnModuleInit {
   }
 
   private async cacheSet(key: string, value: unknown): Promise<void> {
+    // Skip cache if Redis is not available
+    if (!this.redis) return;
+
     try {
       await this.redis.set(key, JSON.stringify(value), 'EX', this.TTL_24H);
     } catch (e) {
-      this.logger.error(`Redis set failed for ${key}`, e);
+      this.logger.debug(`Redis set failed for ${key}`, e);
     }
   }
 
