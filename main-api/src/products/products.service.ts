@@ -1599,100 +1599,102 @@ async updateProduct(
     return result.map((c) => c.id);
   }
 
-  async getCategoryPageDataBySlug(
-    categorySlug: string,
-    query: CategoryPageQueryDto,
-  ) {
-    const { page = 1, limit = 10, priceRange, attributes } = query;
-    const skip = (page - 1) * limit;
+  // async getCategoryPageDataBySlug(
+  //   categorySlug: string,
+  //   query: CategoryPageQueryDto,
+  // ) {
+  //   const { page = 1, limit = 10, priceRange, attributes } = query;
+  //   const skip = (page - 1) * limit;
 
-    const category = await this.prisma.category.findUnique({
-      where: { slug: categorySlug },
-      include: {
-        children: { select: { id: true, name: true, slug: true } },
-        attributes: {
-          include: { options: { select: { value: true } } },
-        },
-      },
-    });
+  //   const category = await this.prisma.category.findUnique({
+  //     where: { slug: categorySlug },
+  //     include: {
+  //       children: { select: { id: true, name: true, slug: true } },
+  //       attributes: {
+  //         include: { options: { select: { value: true } } },
+  //       },
+  //     },
+  //   });
 
-    if (!category) throw new NotFoundException('Category not found');
+  //   if (!category) throw new NotFoundException('Category not found');
 
-    // 1. Initialize the variant filter object separately to avoid "undefined" errors
-    const variantFilter: Prisma.VariantWhereInput = {
-      status: 'ACTIVE',
-      deletedAt: null,
-    };
+  //   // 1. Initialize the variant filter object separately to avoid "undefined" errors
+  //   const variantFilter: Prisma.VariantWhereInput = {
+  //     status: 'ACTIVE',
+  //     deletedAt: null,
+  //   };
 
-    // 2. Apply Price Filter to the variant object
-    if (priceRange) {
-      const rangeMap = {
-        '0-500': { gte: 0, lte: 500 },
-        '500-1k': { gte: 500, lte: 1000 },
-        '1k-5k': { gte: 1000, lte: 5000 },
-        '5k-10k': { gte: 5000, lte: 10000 },
-        '10k-20k': { gte: 10000, lte: 20000 },
-      };
-      variantFilter.price = rangeMap[priceRange];
-    }
+  //   // 2. Apply Price Filter to the variant object
+  //   if (priceRange) {
+  //     const rangeMap = {
+  //       '0-500': { gte: 0, lte: 500 },
+  //       '500-1k': { gte: 500, lte: 1000 },
+  //       '1k-5k': { gte: 1000, lte: 5000 },
+  //       '5k-10k': { gte: 5000, lte: 10000 },
+  //       '10k-20k': { gte: 10000, lte: 20000 },
+  //     };
+  //     variantFilter.price = rangeMap[priceRange];
+  //   }
 
-    // 3. Apply Attribute Cross-Filtering to the variant object
-    if (attributes) {
-      const filterPairs = attributes.split(',').map((p) => p.split(':'));
+  //   // 3. Apply Attribute Cross-Filtering to the variant object
+  //   if (attributes) {
+  //     const filterPairs = attributes.split(',').map((p) => p.split(':'));
 
-      // Use AND to ensure one variant matches ALL selected attributes
-      variantFilter.AND = filterPairs.map(([attrName, attrValue]) => ({
-        attributeValues: {
-          some: {
-            attribute: { name: attrName },
-            attributeOption: { value: attrValue },
-          },
-        },
-      }));
-    }
+  //     // Use AND to ensure one variant matches ALL selected attributes
+  //     variantFilter.AND = filterPairs.map(([attrName, attrValue]) => ({
+  //       attributeValues: {
+  //         some: {
+  //           attribute: { name: attrName },
+  //           attributeOption: { value: attrValue },
+  //         },
+  //       },
+  //     }));
+  //   }
 
-    // 4. Build the final Product Where clause
-    const where: Prisma.ProductWhereInput = {
-      categoryId: category.id,
-      isPublished: true,
-      isFeatured: true,
-      deletedAt: null,
-      variants: {
-        some: variantFilter, // Assign the fully built object here
-      },
-    };
+  //   // 4. Build the final Product Where clause
+  //   const where: Prisma.ProductWhereInput = {
+  //     categoryId: category.id,
+  //     isPublished: true,
+  //     isFeatured: true,
+  //     deletedAt: null,
+  //     variants: {
+  //       some: variantFilter, // Assign the fully built object here
+  //     },
+  //   };
 
-    // 5. Execute Queries
-    const [products, total] = await Promise.all([
-      this.prisma.product.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        select: this.getFeaturedProductSelect(),
-      }),
-      this.prisma.product.count({ where }),
-    ]);
+  //   // 5. Execute Queries
+  //   const [products, total] = await Promise.all([
+  //     this.prisma.product.findMany({
+  //       where,
+  //       skip,
+  //       take: limit,
+  //       orderBy: { createdAt: 'desc' },
+  //       select: this.getFeaturedProductSelect(),
+  //     }),
+  //     this.prisma.product.count({ where }),
+  //   ]);
 
-    return {
-      category: {
-        id: category.id,
-        name: category.name,
-        slug: category.slug,
-        availableFilters: category.attributes.map((a) => ({
-          name: a.name,
-          options: a.options.map((o) => o.value),
-        })),
-      },
-      products: products.map(this.processProduct),
-      pagination: {
-        total,
-        page,
-        limit,
-        lastPage: Math.ceil(total / limit),
-      },
-    };
-  }
+  //   return {
+  //     category: {
+  //       id: category.id,
+  //       name: category.name,
+  //       slug: category.slug,
+  //       availableFilters: category.attributes.map((a) => ({
+  //         name: a.name,
+  //         options: a.options.map((o) => o.value),
+  //       })),
+  //     },
+  //     products: products.map(this.processProduct),
+  //     pagination: {
+  //       total,
+  //       page,
+  //       limit,
+  //       lastPage: Math.ceil(total / limit),
+  //     },
+  //   };
+  // }
+
+
   /**
    * Reusable select object to get all the necessary product fields.
    */
@@ -1852,4 +1854,138 @@ async updateProduct(
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
   }
+
+
+
+async getCategoryPageDataBySlug(
+  categorySlug: string,
+  query: CategoryPageQueryDto,
+) {
+  const { limit = 10, priceRange, attributes } = query;
+  let { page = 1 } = query;
+
+  const category = await this.prisma.category.findUnique({
+    where: { slug: categorySlug },
+    include: {
+      children: { select: { id: true, name: true, slug: true } },
+      attributes: {
+        include: { options: { select: { value: true } } },
+      },
+    },
+  });
+
+  if (!category) throw new NotFoundException('Category not found');
+
+  const now = new Date();
+
+  // 1. Check for an active layout.
+  const layouts = await this.prisma.categoryLayout.findMany({
+    where: {
+      categorySlug,
+      isActive: true,
+      AND: [
+        { OR: [{ startDate: null }, { startDate: { lte: now } }] },
+        { OR: [{ endDate: null }, { endDate: { gte: now } }] },
+      ],
+    },
+    orderBy: { position: 'asc' },
+    include: {
+      items: {
+        where: { isActive: true },
+        orderBy: { position: 'asc' },
+      },
+    },
+  });
+
+  const hasLayout = layouts.length > 0;
+
+  const availableFilters = category.attributes.map((a) => ({
+    name: a.name,
+    options: a.options.map((o) => o.value),
+  }));
+
+  // 2. Build the product filter.
+  const variantFilter: Prisma.VariantWhereInput = {
+    status: 'ACTIVE',
+    deletedAt: null,
+  };
+
+  if (priceRange) {
+    const rangeMap = {
+      '0-500': { gte: 0, lte: 500 },
+      '500-1k': { gte: 500, lte: 1000 },
+      '1k-5k': { gte: 1000, lte: 5000 },
+      '5k-10k': { gte: 5000, lte: 10000 },
+      '10k-20k': { gte: 10000, lte: 20000 },
+    };
+    variantFilter.price = rangeMap[priceRange];
+  }
+
+  if (attributes) {
+    const filterPairs = attributes.split(',').map((p) => p.split(':'));
+    variantFilter.AND = filterPairs.map(([attrName, attrValue]) => ({
+      attributeValues: {
+        some: {
+          attribute: { name: attrName },
+          attributeOption: { value: attrValue },
+        },
+      },
+    }));
+  }
+
+  const where: Prisma.ProductWhereInput = {
+    categoryId: category.id,
+    isPublished: true,
+    isFeatured: true,
+    deletedAt: null,
+    variants: {
+      some: variantFilter,
+    },
+  };
+
+  // 3. Get total count first so we know how many pages actually exist
+  // BEFORE deciding what page to serve.
+  const total = await this.prisma.product.count({ where });
+  const lastPage = Math.ceil(total / limit);
+
+  // 4. Guard: if a layout exists but the requested page is beyond what
+  // products actually support (e.g. category has zero products, or
+  // client requested a stale/invalid page), snap back to page 1 so the
+  // layout is always reachable instead of returning a dead-end page.
+  if (hasLayout && (total === 0 || page > lastPage)) {
+    page = 1;
+  }
+
+  const skip = (page - 1) * limit;
+
+  const products = await this.prisma.product.findMany({
+    where,
+    skip,
+    take: limit,
+    orderBy: { createdAt: 'desc' },
+    select: this.getFeaturedProductSelect(),
+  });
+
+  return {
+    category: {
+      id: category.id,
+      name: category.name,
+      slug: category.slug,
+      availableFilters,
+    },
+    layout: {
+      hasLayout,
+      // Sections are only sent for the effective page 1 — including
+      // after being snapped back due to the guard above.
+      sections: hasLayout && page === 1 ? layouts : [],
+    },
+    products: products.map(this.processProduct),
+    pagination: {
+      total,
+      page,
+      limit,
+      lastPage,
+    },
+  };
+}
 }
